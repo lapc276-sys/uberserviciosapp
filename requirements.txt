@@ -1,3 +1,9 @@
+# Backend (Replit)
+fastapi
+uvicorn[standard]
+anthropic
+
+# Script de captura en la Mac (captura_mac.py)
 mss
 pillow
 websockets

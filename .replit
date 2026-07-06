@@ -1,0 +1,6 @@
+run = "python3 main.py"
+entrypoint = "main.py"
+
+[deployment]
+run = ["python3", "main.py"]
+deploymentTarget = "vm"
