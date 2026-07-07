@@ -50,9 +50,10 @@ VELOCIDAD_REPLAY = float(os.environ.get("VELOCIDAD_REPLAY", "1"))
 # Idioma del dúo de comentaristas: "en" (canal) o "es" (pruebas locales)
 IDIOMA = os.environ.get("IDIOMA", "en")
 
-# El dúo: narrador (play-by-play) y analista (color commentator)
+# El dúo: narrador (play-by-play) y analista (color commentator).
+# "Sam" funciona con voz masculina o femenina, según lo que haya instalado.
 NARRADOR = "Alex"
-ANALISTA = "Marcus"
+ANALISTA = "Sam"
 
 
 @contextlib.asynccontextmanager
