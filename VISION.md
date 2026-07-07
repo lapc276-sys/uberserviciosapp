@@ -97,10 +97,12 @@ carrera en vez de ~1.000 continuos.
 - **Fase 1 — EN CURSO**: clave API de Claude → narración por visión cada 10s
   → voz local de la Mac (`say`). *Es el prototipo del "cerebro que habla";
   sirve para probar con YouTube como práctica.*
-- **Fase 2**: conectar telemetría (OpenF1) → narración por eventos desde
-  datos → la visión pasa a modo gatillo (híbrido).
-- **Fase 3**: dúo de personalidades en inglés + TTS natural (OpenAI/Google
-  TTS; ElevenLabs si se justifica).
+- **Fase 2 — HECHA**: telemetría OpenF1 con modo replay → narración por
+  eventos desde datos reales, con memoria y relleno; visión de respaldo.
+- **Fase 3 — EN CURSO**: dúo de personalidades en inglés (hecho: guion de
+  ambas voces por un solo cerebro, voces distintas en Mac y visor);
+  pendiente: TTS natural (OpenAI/Google; ElevenLabs si se justifica) y
+  visión por gatillos.
 - **Fase 4**: gráficos en vivo (torre de tiempos) + escena OBS + primera
   transmisión a YouTube Live.
 - **Fase 5**: lectura del chat de YouTube (API oficial) con filtro de

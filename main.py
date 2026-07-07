@@ -47,6 +47,13 @@ MODO_TELEMETRIA = os.environ.get("MODO_TELEMETRIA", "replay")
 SESSION_KEY = os.environ.get("SESSION_KEY", "latest")
 VELOCIDAD_REPLAY = float(os.environ.get("VELOCIDAD_REPLAY", "1"))
 
+# Idioma del dúo de comentaristas: "en" (canal) o "es" (pruebas locales)
+IDIOMA = os.environ.get("IDIOMA", "en")
+
+# El dúo: narrador (play-by-play) y analista (color commentator)
+NARRADOR = "Alex"
+ANALISTA = "Marcus"
+
 
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -71,7 +78,8 @@ class Estado:
         self.clientes_mac: set[WebSocket] = set()
         self.tele: telemetria.Telemetria | None = None
         self.eventos: list[str] = []   # eventos de telemetría sin narrar
-        self.diario: list[str] = []    # memoria: últimas narraciones dichas
+        self.diario: list[str] = []    # memoria: últimas líneas dichas
+        self.lineas: list[dict] = []   # último segmento de diálogo
 
 
 estado = Estado()
@@ -105,6 +113,9 @@ async def frame_jpg():
 async def narracion():
     return JSONResponse({
         "texto": estado.narracion,
+        "lineas": [{**l, "nombre": _nombre_de(l["quien"])}
+                   for l in estado.lineas],
+        "idioma": IDIOMA,
         "hace_segundos": round(time.time() - estado.narracion_ts)
         if estado.narracion_ts else None,
     })
@@ -122,7 +133,12 @@ async def visor():
   body { font-family: sans-serif; background: #111; color: #eee;
          margin: 0; padding: 1rem; text-align: center; }
   img  { max-width: 100%; border-radius: 8px; }
-  #narracion { margin-top: 1rem; font-size: 1.2rem; min-height: 2em; }
+  #dialogo { margin-top: 1rem; font-size: 1.15rem; min-height: 3em;
+             text-align: left; max-width: 720px; margin-left: auto;
+             margin-right: auto; }
+  .narrador { color: #ffd166; }
+  .analista { color: #7fd3ff; }
+  .nombre   { font-weight: bold; }
   #voz { margin-top: .5rem; padding: .5rem 1rem; font-size: 1rem;
          border: none; border-radius: 6px; cursor: pointer;
          background: #333; color: #eee; }
@@ -132,7 +148,7 @@ async def visor():
 <body>
 <h1>Visor F1TV</h1>
 <img id="frame" src="/frame.jpg" alt="Esperando frames...">
-<p id="narracion"></p>
+<div id="dialogo"></div>
 <button id="voz">🔇 Voz desactivada — pulsa para activar</button>
 <script>
 let vozActiva = false;
@@ -146,10 +162,23 @@ btn.onclick = () => {
     : '🔇 Voz desactivada — pulsa para activar';
   if (vozActiva) speechSynthesis.speak(new SpeechSynthesisUtterance(''));
 };
-function hablar(texto) {
-  const u = new SpeechSynthesisUtterance(texto);
-  u.lang = 'es-ES';
-  speechSynthesis.speak(u);
+function vozPara(quien, idioma) {
+  const pref = idioma === 'es' ? 'es' : 'en';
+  const voces = speechSynthesis.getVoices()
+    .filter(v => v.lang.toLowerCase().startsWith(pref));
+  if (!voces.length) return null;
+  return quien === 'narrador' ? voces[0] : voces[voces.length - 1];
+}
+function hablar(lineas, idioma) {
+  for (const l of lineas) {
+    const u = new SpeechSynthesisUtterance(l.texto);
+    u.lang = idioma === 'es' ? 'es-ES' : 'en-GB';
+    const v = vozPara(l.quien, idioma);
+    if (v) u.voice = v;
+    u.rate  = l.quien === 'narrador' ? 1.12 : 0.98;
+    u.pitch = l.quien === 'narrador' ? 1.15 : 0.85;
+    speechSynthesis.speak(u);  // se encolan solas, no se pisan
+  }
 }
 setInterval(() => {
   document.getElementById('frame').src = '/frame.jpg?t=' + Date.now();
@@ -159,8 +188,20 @@ setInterval(async () => {
   const d = await r.json();
   if (d.texto && d.texto !== ultimoTexto) {
     ultimoTexto = d.texto;
-    document.getElementById('narracion').textContent = '🎙️ ' + d.texto;
-    if (vozActiva) hablar(d.texto);
+    const div = document.getElementById('dialogo');
+    div.innerHTML = '';
+    for (const l of (d.lineas || [])) {
+      const p = document.createElement('p');
+      p.className = l.quien;
+      const b = document.createElement('span');
+      b.className = 'nombre';
+      b.textContent = (l.quien === 'narrador' ? '🎙️ ' : '🧠 ')
+                      + l.nombre + ': ';
+      p.appendChild(b);
+      p.appendChild(document.createTextNode(l.texto));
+      div.appendChild(p);
+    }
+    if (vozActiva) hablar(d.lineas || [], d.idioma);
   }
 }, 2000);
 </script>
@@ -176,16 +217,16 @@ async def narrar_frame(client: anthropic.AsyncAnthropic, frame: bytes,
     response = await client.messages.create(
         model=MODELO,
         max_tokens=300,
-        system=("Eres un narrador de Fórmula 1 en español. Recibes un "
-                "fotograma de la transmisión y narras en UNA frase (máximo "
-                "dos cortas) lo más relevante: posiciones, adelantamientos, "
-                "banderas, boxes. Sé directo, como un comentarista de radio. "
-                "Tu texto será leído en voz alta por un sintetizador, así "
-                "que escribe para el oído: los números en palabras ('uno "
-                "coma dos segundos', 'vuelta veintiocho', 'tercera "
-                "posición'), sin abreviaturas ni símbolos (nada de 'P3', "
-                "'1.2s', 'T4' ni paréntesis). Si la imagen está negra o no "
-                "se ve la carrera, dilo en pocas palabras."),
+        system=(f"You are a Formula 1 race narrator speaking "
+                f"{IDIOMA_NOMBRE}. You receive one frame of the broadcast "
+                "and narrate in ONE sentence (two short ones max) the most "
+                "relevant thing: positions, overtakes, flags, pit stops. "
+                "Be direct, radio style. Your text will be read aloud by "
+                "text-to-speech, so write for the ear: numbers as words "
+                "('one point two seconds', 'lap twenty-eight', 'third "
+                "place'), no abbreviations or symbols like 'P3' or '1.2s', "
+                "no parentheses. If the image is black or shows no racing, "
+                "say so briefly."),
         messages=[{
             "role": "user",
             "content": [
@@ -206,46 +247,101 @@ async def narrar_frame(client: anthropic.AsyncAnthropic, frame: bytes,
     return next((b.text for b in response.content if b.type == "text"), "").strip()
 
 
-SYSTEM_NARRADOR_DATOS = (
-    "Eres un narrador de Fórmula 1 en español, estilo radio: directo y con "
-    "energía. Recibes eventos reales de telemetría de la carrera y el "
-    "contexto actual. Narra en UNA frase (máximo dos cortas) lo más "
-    "relevante de los eventos. Usa SOLO los datos proporcionados: no "
-    "inventes tiempos, posiciones ni causas que no estén en los datos. Tu "
-    "texto será leído en voz alta por un sintetizador: escribe para el "
-    "oído, con los números en palabras ('uno coma dos segundos', 'vuelta "
-    "veintiocho', 'tercera posición'), sin abreviaturas ni símbolos. "
-    "Recibes también tus narraciones anteriores: no las repitas y puedes "
-    "referirte a ellas para dar continuidad."
-)
+IDIOMA_NOMBRE = {"en": "English", "es": "Spanish"}.get(IDIOMA, "English")
+
+SYSTEM_DUO = f"""You are the scriptwriter for a live Formula 1 commentary \
+duo. You write BOTH voices of one continuous conversation, in {IDIOMA_NOMBRE}.
+
+THE DUO:
+- {NARRADOR} (narrador): play-by-play announcer. Emotional, fast, \
+passionate, lives the moment. Raises intensity on overtakes and incidents.
+- {ANALISTA} (analista): color commentator. Calm, technical, explains \
+strategy in simple terms, dry humor, corrects {NARRADOR} when needed.
+
+CONVERSATION RULES:
+- Write 1 to 4 SHORT lines per segment. Not every segment needs both \
+voices — sometimes one line from one of them is perfect.
+- {ANALISTA} is proactive: he may interrupt mid-thought ("Wait — look at \
+the gap."). Use an em dash to cut a line short when interrupted.
+- Add insight, don't just describe: tyre strategy, likely undercuts, what \
+a move forces rivals to do.
+- They sometimes disagree, with arguments. Gentle tension is good.
+- Use the MEMORY of what they already said: callbacks like "remember when \
+we said he was saving his tyres? Here's the payoff" make it feel human. \
+Never repeat previous lines.
+- Ground EVERYTHING in the provided data. Never invent lap times, \
+positions, gaps or causes that are not in the data. General F1 knowledge \
+(circuit history, how tyres behave) is welcome for quiet moments.
+
+WRITTEN FOR THE EAR (text-to-speech will read it):
+- Numbers as words: "one point two seconds", "lap twenty-eight", "third \
+place". No abbreviations or symbols: no "P3", "1.2s", "T4", no parentheses.
+- Short sentences. Natural spoken rhythm."""
+
+
+DUO_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "lineas": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "quien": {"type": "string",
+                              "enum": ["narrador", "analista"]},
+                    "texto": {"type": "string"},
+                },
+                "required": ["quien", "texto"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["lineas"],
+    "additionalProperties": False,
+}
+
+
+def _nombre_de(quien):
+    return NARRADOR if quien == "narrador" else ANALISTA
 
 
 async def narrar_datos(client: anthropic.AsyncAnthropic, eventos):
-    """Narra desde telemetría. Con eventos=None genera relleno de contexto."""
+    """Genera el siguiente segmento de conversación del dúo.
+
+    Con eventos=None produce relleno (contexto, estrategia, historia).
+    Devuelve una lista de líneas [{"quien", "texto"}].
+    """
     contexto = estado.tele.resumen() if estado.tele else ""
-    memoria = "\n".join(estado.diario[-6:]) or "(aún no has dicho nada)"
+    memoria = "\n".join(estado.diario[-10:]) or "(nothing said yet)"
     if eventos:
-        pedido = "EVENTOS NUEVOS:\n" + "\n".join(eventos)
+        pedido = "NEW EVENTS (from live telemetry):\n" + "\n".join(eventos)
     else:
-        pedido = ("No hay eventos nuevos. Haz un comentario breve de "
-                  "relleno con el contexto: situación de la carrera, "
-                  "estrategia posible o dato del circuito. Sin inventar "
-                  "cifras específicas.")
+        pedido = ("No new events right now. Fill the quiet moment: race "
+                  "situation, possible strategy, circuit history, how the "
+                  "tyres evolve, a prediction, or a stat — without "
+                  "inventing specific figures.")
     response = await client.messages.create(
         model=MODELO,
-        max_tokens=250,
-        system=SYSTEM_NARRADOR_DATOS,
+        max_tokens=500,
+        system=SYSTEM_DUO,
+        output_config={"format": {"type": "json_schema",
+                                  "schema": DUO_SCHEMA}},
         messages=[{
             "role": "user",
-            "content": (f"CONTEXTO: {contexto}\n\n"
-                        f"TUS NARRACIONES ANTERIORES:\n{memoria}\n\n"
-                        f"{pedido}"),
+            "content": (f"RACE CONTEXT: {contexto}\n\n"
+                        f"WHAT THE DUO ALREADY SAID (memory):\n{memoria}\n\n"
+                        f"{pedido}\n\n"
+                        "Write the next segment of the conversation."),
         }],
     )
     if response.stop_reason == "refusal":
-        return ""
-    return next((b.text for b in response.content if b.type == "text"),
-                "").strip()
+        return []
+    texto = next((b.text for b in response.content if b.type == "text"), "")
+    try:
+        return json.loads(texto).get("lineas", [])
+    except json.JSONDecodeError:
+        log.error("Respuesta del dúo no parseable: %.200s", texto)
+        return []
 
 
 async def bucle_telemetria():
@@ -270,14 +366,23 @@ async def bucle_telemetria():
         estado.tele = None
 
 
-async def difundir(texto):
-    """Publica una narración a la Mac y al visor."""
-    estado.narracion = texto
+async def difundir(lineas):
+    """Publica un segmento de diálogo a la Mac y al visor."""
+    if isinstance(lineas, str):  # ruta de visión: una sola voz
+        lineas = [{"quien": "narrador", "texto": lineas}]
+    lineas = [l for l in lineas if l.get("texto", "").strip()]
+    if not lineas:
+        return
+    estado.lineas = lineas
+    estado.narracion = " / ".join(
+        f"{_nombre_de(l['quien'])}: {l['texto']}" for l in lineas)
     estado.narracion_ts = time.time()
-    estado.diario.append(texto)
-    del estado.diario[:-20]
-    log.info("🎙️  %s", texto)
-    mensaje = json.dumps({"tipo": "narracion", "texto": texto})
+    for l in lineas:
+        estado.diario.append(f"{_nombre_de(l['quien'])}: {l['texto']}")
+        log.info("🎙️  %s: %s", _nombre_de(l["quien"]), l["texto"])
+    del estado.diario[:-24]
+    mensaje = json.dumps({"tipo": "dialogo", "idioma": IDIOMA,
+                          "lineas": lineas})
     for ws in list(estado.clientes_mac):
         try:
             await ws.send_text(mensaje)

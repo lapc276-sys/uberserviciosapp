@@ -45,55 +45,82 @@ ZONA = None
 VOZ_ACTIVADA = True  # leer las narraciones en voz alta (comando `say` de macOS)
 # =======================================
 
+# Voces preferidas por idioma para cada personaje: [narrador, analista]
+VOCES_PREFERIDAS = {
+    "en": [["Daniel", "Alex", "Fred", "Oliver", "Tom"],
+           ["Samantha", "Karen", "Moira", "Tessa", "Kate"]],
+    "es": [["Jorge", "Diego", "Carlos", "Juan"],
+           ["Mónica", "Paulina", "Marisol", "Angélica"]],
+}
+# Velocidad (palabras/minuto): el narrador habla más rápido que el analista
+VELOCIDADES = {"narrador": "195", "analista": "170"}
 
-def elegir_voz_espanola():
-    """Busca una voz en español instalada en macOS para el comando `say`."""
+
+def voces_instaladas():
+    """Nombres de las voces disponibles en macOS (`say -v ?`)."""
     try:
         salida = subprocess.run(["say", "-v", "?"], capture_output=True,
                                 text=True, timeout=10).stdout
+        nombres = set()
         for linea in salida.splitlines():
-            m = re.match(r"^(.+?)\s+es[_-]", linea)
+            m = re.match(r"^(.+?)\s{2,}[a-zA-Z]{2}[_-]", linea)
             if m:
-                return m.group(1).strip()
+                nombres.add(m.group(1).strip())
+        return nombres
     except Exception:
-        pass
+        return set()
+
+
+_INSTALADAS = voces_instaladas() if VOZ_ACTIVADA else set()
+
+
+def elegir_voz(quien, idioma):
+    """Elige una voz instalada para el personaje, o None (voz por defecto)."""
+    indice = 0 if quien == "narrador" else 1
+    preferencias = VOCES_PREFERIDAS.get(idioma, VOCES_PREFERIDAS["en"])
+    for nombre in preferencias[indice]:
+        if nombre in _INSTALADAS:
+            return nombre
     return None
 
 
-VOZ = elegir_voz_espanola() if VOZ_ACTIVADA else None
-VOZ_VELOCIDAD = "175"  # palabras por minuto del comando `say`
-
 _hablando = None   # lock creado dentro del event loop
-_pendiente = None  # última narración en espera (solo se guarda la más nueva)
+_pendiente = None  # último segmento en espera (solo se guarda el más nuevo)
 
 
-async def hablar(texto):
-    """Lee las narraciones una a la vez, sin solaparse.
+async def hablar(lineas, idioma="en"):
+    """Lee un segmento de diálogo, línea por línea, sin solaparse.
 
-    Si llega una narración nueva mientras la voz sigue ocupada, se guarda
-    solo la más reciente y se lee al terminar la actual (en vivo no tiene
-    sentido acumular retraso leyendo narraciones viejas).
+    Cada personaje usa su propia voz. Si llega un segmento nuevo mientras
+    la voz sigue ocupada, se guarda solo el más reciente y se lee al
+    terminar el actual (en vivo no tiene sentido acumular retraso).
     """
     global _hablando, _pendiente
-    if not VOZ_ACTIVADA or not texto:
+    if not VOZ_ACTIVADA or not lineas:
         return
     if _hablando is None:
         _hablando = asyncio.Lock()
-    _pendiente = texto
+    _pendiente = (lineas, idioma)
     if _hablando.locked():
         return
     async with _hablando:
         while _pendiente:
-            siguiente, _pendiente = _pendiente, None
-            cmd = (["say", "-r", VOZ_VELOCIDAD]
-                   + (["-v", VOZ] if VOZ else []) + [siguiente])
-            try:
-                proc = await asyncio.create_subprocess_exec(
-                    *cmd, stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL)
-                await proc.wait()
-            except Exception:
-                return
+            (segmento, idi), _pendiente = _pendiente, None
+            for linea in segmento:
+                quien = linea.get("quien", "narrador")
+                texto = linea.get("texto", "")
+                if not texto:
+                    continue
+                voz = elegir_voz(quien, idi)
+                cmd = (["say", "-r", VELOCIDADES.get(quien, "175")]
+                       + (["-v", voz] if voz else []) + [texto])
+                try:
+                    proc = await asyncio.create_subprocess_exec(
+                        *cmd, stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL)
+                    await proc.wait()
+                except Exception:
+                    return
 
 
 def capturar_frame(sct, zona):
@@ -158,10 +185,21 @@ async def enviar_frames():
                                 ws.recv(), timeout=0.05
                             )
                             data = json.loads(msg)
-                            if data.get("tipo") == "narracion":
+                            if data.get("tipo") == "dialogo":
+                                lineas = data.get("lineas", [])
+                                for l in lineas:
+                                    icono = ("🎙️" if l.get("quien") ==
+                                             "narrador" else "🧠")
+                                    print(f"{icono}  {l.get('texto', '')}")
+                                asyncio.ensure_future(
+                                    hablar(lineas, data.get("idioma", "en")))
+                            elif data.get("tipo") == "narracion":
+                                # compatibilidad con el formato antiguo
                                 texto = data.get("texto", "")
                                 print(f"🎙️  {texto}")
-                                asyncio.ensure_future(hablar(texto))
+                                asyncio.ensure_future(hablar(
+                                    [{"quien": "narrador", "texto": texto}],
+                                    data.get("idioma", "es")))
                         except asyncio.TimeoutError:
                             pass
 
