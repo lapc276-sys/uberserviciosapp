@@ -29,7 +29,8 @@ import websockets
 from PIL import Image
 
 # ============ CONFIGURACIÓN ============
-REPLIT_WS_URL = "wss://TU-REPL.replit.app/ws/frames"  # <-- CAMBIA ESTO
+REPLIT_WS_URL = ("wss://0208909a-afe2-4c7c-8435-db2dcf9288a7-00-3v3zicx335uw3"
+                 ".kirk.replit.dev/ws/frames")
 FPS = 1  # frames por segundo (1 es suficiente para el filtro)
 JPEG_CALIDAD = 80
 ANCHO_MAX = 1280  # se redimensiona para no gastar ancho de banda
