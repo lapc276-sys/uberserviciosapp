@@ -61,18 +61,39 @@ def elegir_voz_espanola():
 
 
 VOZ = elegir_voz_espanola() if VOZ_ACTIVADA else None
+VOZ_VELOCIDAD = "175"  # palabras por minuto del comando `say`
+
+_hablando = None   # lock creado dentro del event loop
+_pendiente = None  # última narración en espera (solo se guarda la más nueva)
 
 
-def hablar(texto):
-    """Lee el texto en voz alta sin bloquear la captura."""
+async def hablar(texto):
+    """Lee las narraciones una a la vez, sin solaparse.
+
+    Si llega una narración nueva mientras la voz sigue ocupada, se guarda
+    solo la más reciente y se lee al terminar la actual (en vivo no tiene
+    sentido acumular retraso leyendo narraciones viejas).
+    """
+    global _hablando, _pendiente
     if not VOZ_ACTIVADA or not texto:
         return
-    cmd = ["say"] + (["-v", VOZ] if VOZ else []) + [texto]
-    try:
-        subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
-                         stderr=subprocess.DEVNULL)
-    except Exception:
-        pass
+    if _hablando is None:
+        _hablando = asyncio.Lock()
+    _pendiente = texto
+    if _hablando.locked():
+        return
+    async with _hablando:
+        while _pendiente:
+            siguiente, _pendiente = _pendiente, None
+            cmd = (["say", "-r", VOZ_VELOCIDAD]
+                   + (["-v", VOZ] if VOZ else []) + [siguiente])
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd, stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL)
+                await proc.wait()
+            except Exception:
+                return
 
 
 def capturar_frame(sct, zona):
@@ -140,7 +161,7 @@ async def enviar_frames():
                             if data.get("tipo") == "narracion":
                                 texto = data.get("texto", "")
                                 print(f"🎙️  {texto}")
-                                hablar(texto)
+                                asyncio.ensure_future(hablar(texto))
                         except asyncio.TimeoutError:
                             pass
 

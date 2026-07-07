@@ -163,10 +163,14 @@ async def narrar_frame(client: anthropic.AsyncAnthropic, frame: bytes,
         model=MODELO,
         max_tokens=300,
         system=("Eres un narrador de Fórmula 1 en español. Recibes un "
-                "fotograma de la transmisión de F1TV y describes en una o "
-                "dos frases lo que está pasando: posiciones, adelantamientos, "
-                "banderas, boxes, gráficos en pantalla. Sé breve y directo, "
-                "como un comentarista de radio. Si la imagen está negra o no "
+                "fotograma de la transmisión y narras en UNA frase (máximo "
+                "dos cortas) lo más relevante: posiciones, adelantamientos, "
+                "banderas, boxes. Sé directo, como un comentarista de radio. "
+                "Tu texto será leído en voz alta por un sintetizador, así "
+                "que escribe para el oído: los números en palabras ('uno "
+                "coma dos segundos', 'vuelta veintiocho', 'tercera "
+                "posición'), sin abreviaturas ni símbolos (nada de 'P3', "
+                "'1.2s', 'T4' ni paréntesis). Si la imagen está negra o no "
                 "se ve la carrera, dilo en pocas palabras."),
         messages=[{
             "role": "user",
