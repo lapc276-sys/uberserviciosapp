@@ -85,6 +85,26 @@ carrera en vez de ~1.000 continuos.
 | OBS + YouTube Live | — | Gratis |
 | **Total típico** | | **~$4–6 por carrera** |
 
+## Norte a largo plazo: "Race Intelligence Engine"
+
+La evolución natural del cerebro (fases 7+, solo cuando el canal funcione):
+en lugar de un único razonador, un equipo de **agentes especialistas que
+debaten entre sí** antes de que el dúo hable — Estratega (paradas, ataque),
+Ingeniero de rendimiento (telemetría, pérdida de ritmo), Meteorólogo,
+Analista de rivales e Historiador (carreras pasadas similares). El dúo de
+comentaristas convierte ese debate en conversación natural.
+
+Reglas para esa fase:
+- El debate multi-agente se activa **solo en decisiones clave** (ventana de
+  boxes, probabilidad de safety car, lluvia) — mismo principio de gatillos
+  que la visión, para controlar costo.
+- El valor diferencial no es "ser más listo que Red Bull", sino ser el
+  **copiloto estratégico explicativo** accesible para aficionados, medios y
+  equipos pequeños.
+- La arquitectura (datos → agentes → debate → narración) es reutilizable en
+  otros dominios (otros deportes, etc.) — pero solo se explora si el caso
+  F1 funciona primero.
+
 ## Principios legales
 
 1. **Nunca emitir video ni audio de F1/F1TV** en el canal.
