@@ -109,20 +109,45 @@ async def visor():
          margin: 0; padding: 1rem; text-align: center; }
   img  { max-width: 100%; border-radius: 8px; }
   #narracion { margin-top: 1rem; font-size: 1.2rem; min-height: 2em; }
+  #voz { margin-top: .5rem; padding: .5rem 1rem; font-size: 1rem;
+         border: none; border-radius: 6px; cursor: pointer;
+         background: #333; color: #eee; }
+  #voz.on { background: #1a7f37; }
 </style>
 </head>
 <body>
 <h1>Visor F1TV</h1>
 <img id="frame" src="/frame.jpg" alt="Esperando frames...">
 <p id="narracion"></p>
+<button id="voz">🔇 Voz desactivada — pulsa para activar</button>
 <script>
+let vozActiva = false;
+let ultimoTexto = '';
+const btn = document.getElementById('voz');
+btn.onclick = () => {
+  vozActiva = !vozActiva;
+  btn.classList.toggle('on', vozActiva);
+  btn.textContent = vozActiva
+    ? '🔊 Voz activada — pulsa para silenciar'
+    : '🔇 Voz desactivada — pulsa para activar';
+  if (vozActiva) speechSynthesis.speak(new SpeechSynthesisUtterance(''));
+};
+function hablar(texto) {
+  const u = new SpeechSynthesisUtterance(texto);
+  u.lang = 'es-ES';
+  speechSynthesis.speak(u);
+}
 setInterval(() => {
   document.getElementById('frame').src = '/frame.jpg?t=' + Date.now();
 }, 1000);
 setInterval(async () => {
   const r = await fetch('/narracion');
   const d = await r.json();
-  if (d.texto) document.getElementById('narracion').textContent = '🎙️ ' + d.texto;
+  if (d.texto && d.texto !== ultimoTexto) {
+    ultimoTexto = d.texto;
+    document.getElementById('narracion').textContent = '🎙️ ' + d.texto;
+    if (vozActiva) hablar(d.texto);
+  }
 }, 2000);
 </script>
 </body>

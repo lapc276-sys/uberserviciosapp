@@ -21,6 +21,8 @@ Firefox antes de rendirte y pasar a la capturadora HDMI.
 import asyncio
 import io
 import json
+import re
+import subprocess
 import sys
 import time
 
@@ -39,7 +41,38 @@ ANCHO_MAX = 1280  # se redimensiona para no gastar ancho de banda
 # Tras calibrar, pon aquí el dict que te imprima el script, ej:
 # ZONA = {"left": 100, "top": 80, "width": 1600, "height": 900}
 ZONA = None
+
+VOZ_ACTIVADA = True  # leer las narraciones en voz alta (comando `say` de macOS)
 # =======================================
+
+
+def elegir_voz_espanola():
+    """Busca una voz en español instalada en macOS para el comando `say`."""
+    try:
+        salida = subprocess.run(["say", "-v", "?"], capture_output=True,
+                                text=True, timeout=10).stdout
+        for linea in salida.splitlines():
+            m = re.match(r"^(.+?)\s+es[_-]", linea)
+            if m:
+                return m.group(1).strip()
+    except Exception:
+        pass
+    return None
+
+
+VOZ = elegir_voz_espanola() if VOZ_ACTIVADA else None
+
+
+def hablar(texto):
+    """Lee el texto en voz alta sin bloquear la captura."""
+    if not VOZ_ACTIVADA or not texto:
+        return
+    cmd = ["say"] + (["-v", VOZ] if VOZ else []) + [texto]
+    try:
+        subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
 
 
 def capturar_frame(sct, zona):
@@ -105,7 +138,9 @@ async def enviar_frames():
                             )
                             data = json.loads(msg)
                             if data.get("tipo") == "narracion":
-                                print(f"🎙️  {data.get('texto', '')}")
+                                texto = data.get("texto", "")
+                                print(f"🎙️  {texto}")
+                                hablar(texto)
                         except asyncio.TimeoutError:
                             pass
 
