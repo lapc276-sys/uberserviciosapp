@@ -1,0 +1,187 @@
+"""
+telemetria.py — Datos de carrera desde OpenF1 (https://openf1.org).
+
+Modo repetición (replay): descarga la telemetría de una carrera ya
+disputada y la reproduce al ritmo original (o acelerada), emitiendo
+eventos narrables como si la carrera estuviera pasando en vivo:
+
+  - adelantamientos (cambios de posición en el top 10)
+  - paradas en boxes
+  - mensajes de dirección de carrera (banderas, safety car, incidentes)
+  - vueltas rápidas
+
+Mantiene además el estado de carrera (vuelta actual, posiciones) para
+darle contexto al narrador.
+"""
+
+import asyncio
+import datetime as dt
+import logging
+import time
+
+import httpx
+
+log = logging.getLogger("telemetria")
+
+BASE = "https://api.openf1.org/v1"
+
+
+def _fecha(texto):
+    return dt.datetime.fromisoformat(texto.replace("Z", "+00:00"))
+
+
+def _seg(valor):
+    """Formatea segundos como texto narrable: 83.456 -> 'un minuto 23.5'."""
+    if valor is None:
+        return ""
+    m, s = divmod(float(valor), 60)
+    if m >= 1:
+        return f"{int(m)} minuto{'s' if m >= 2 else ''} {s:.1f} segundos"
+    return f"{s:.1f} segundos"
+
+
+class Telemetria:
+    def __init__(self, session_key="latest", velocidad=1.0):
+        self.session_key = session_key
+        self.velocidad = max(0.1, float(velocidad))
+        self.sesion = {}
+        self.pilotos = {}     # numero -> {"nombre", "equipo"}
+        self.posiciones = {}  # numero -> posición actual
+        self.vuelta = 0
+        self.mejor_vuelta = None  # (duración, numero de piloto)
+        # timeline: lista de (fecha, tipo, dato) ordenada por fecha
+        self._timeline = []
+
+    # ---------- descarga ----------
+
+    async def _get(self, client, path, **params):
+        r = await client.get(BASE + path, params=params, timeout=60)
+        r.raise_for_status()
+        return r.json()
+
+    async def cargar(self):
+        async with httpx.AsyncClient() as client:
+            sesion = await self._elegir_sesion(client)
+            sk = sesion["session_key"]
+            self.sesion = sesion
+            drivers, posiciones, pits, control, vueltas = await asyncio.gather(
+                self._get(client, "/drivers", session_key=sk),
+                self._get(client, "/position", session_key=sk),
+                self._get(client, "/pit", session_key=sk),
+                self._get(client, "/race_control", session_key=sk),
+                self._get(client, "/laps", session_key=sk),
+            )
+        for d in drivers:
+            self.pilotos[d["driver_number"]] = {
+                "nombre": d.get("full_name") or d.get("broadcast_name")
+                or f"el piloto número {d['driver_number']}",
+                "equipo": d.get("team_name") or "",
+            }
+        tl = []
+        for p in posiciones:
+            tl.append((_fecha(p["date"]), "posicion", p))
+        for p in pits:
+            tl.append((_fecha(p["date"]), "pit", p))
+        for c in control:
+            tl.append((_fecha(c["date"]), "control", c))
+        for v in vueltas:
+            if v.get("date_start"):
+                tl.append((_fecha(v["date_start"]), "vuelta", v))
+        tl.sort(key=lambda e: e[0])
+        self._timeline = tl
+        log.info("Telemetría cargada: %s — %d filas de datos",
+                 self.descripcion(), len(tl))
+
+    async def _elegir_sesion(self, client):
+        if self.session_key != "latest":
+            sesiones = await self._get(client, "/sessions",
+                                       session_key=self.session_key)
+            if not sesiones:
+                raise RuntimeError(f"sesión {self.session_key} no encontrada")
+            return sesiones[0]
+        ahora = dt.datetime.now(dt.timezone.utc)
+        for año in (ahora.year, ahora.year - 1):
+            sesiones = await self._get(client, "/sessions",
+                                       session_type="Race", year=año)
+            pasadas = [s for s in sesiones
+                       if s.get("session_name") == "Race"
+                       and _fecha(s["date_start"]) < ahora]
+            if pasadas:
+                return pasadas[-1]
+        raise RuntimeError("no se encontró ninguna carrera pasada en OpenF1")
+
+    # ---------- estado / contexto ----------
+
+    def _nombre(self, numero):
+        return self.pilotos.get(numero, {}).get(
+            "nombre", f"el piloto número {numero}")
+
+    def descripcion(self):
+        s = self.sesion
+        return (f"{s.get('country_name', '?')} {s.get('year', '')} "
+                f"({s.get('circuit_short_name', '')})")
+
+    def resumen(self):
+        """Contexto compacto para el narrador."""
+        orden = sorted(self.posiciones.items(), key=lambda kv: kv[1])
+        top = ", ".join(f"{pos}º {self._nombre(n)}" for n, pos in orden[:6])
+        s = self.sesion
+        return (f"Gran Premio de {s.get('country_name', '?')} en "
+                f"{s.get('circuit_short_name', '?')}. Vuelta {self.vuelta}. "
+                f"Posiciones: {top or 'aún sin datos'}.")
+
+    # ---------- replay ----------
+
+    def _procesar(self, tipo, dato):
+        """Aplica una fila al estado y devuelve un texto narrable o None."""
+        if tipo == "posicion":
+            numero, pos = dato["driver_number"], dato["position"]
+            anterior = self.posiciones.get(numero)
+            self.posiciones[numero] = pos
+            if anterior is not None and pos < anterior and pos <= 10 \
+                    and self.vuelta >= 1:
+                return (f"ADELANTAMIENTO: {self._nombre(numero)} gana la "
+                        f"posición {pos} (venía {anterior}º)")
+            return None
+        if tipo == "vuelta":
+            n = dato.get("lap_number") or 0
+            if n > self.vuelta:
+                self.vuelta = n
+            dur = dato.get("lap_duration")
+            if dur and n > 1 and not dato.get("is_pit_out_lap"):
+                if self.mejor_vuelta is None or dur < self.mejor_vuelta[0]:
+                    self.mejor_vuelta = (dur, dato["driver_number"])
+                    if self.vuelta > 2:  # evitar ruido de las primeras vueltas
+                        return (f"VUELTA RÁPIDA: {self._nombre(dato['driver_number'])} "
+                                f"marca la vuelta más rápida, {_seg(dur)}")
+            return None
+        if tipo == "pit":
+            dur = dato.get("pit_duration")
+            extra = f", parada de {_seg(dur)}" if dur else ""
+            return (f"BOXES: {self._nombre(dato['driver_number'])} entra a "
+                    f"boxes en la vuelta {dato.get('lap_number', '?')}{extra}")
+        if tipo == "control":
+            msj = (dato.get("message") or "").strip()
+            if not msj or "BLUE FLAG" in msj:
+                return None  # las banderas azules son puro ruido
+            quien = ""
+            if dato.get("driver_number"):
+                quien = f" (afecta a {self._nombre(dato['driver_number'])})"
+            return f"DIRECCIÓN DE CARRERA: {msj}{quien}"
+        return None
+
+    async def correr(self, al_evento):
+        """Reproduce la línea de tiempo llamando a al_evento(texto)."""
+        if not self._timeline:
+            raise RuntimeError("timeline vacía: ¿faltó llamar a cargar()?")
+        inicio_datos = self._timeline[0][0]
+        inicio_real = time.monotonic()
+        for fecha, tipo, dato in self._timeline:
+            objetivo = (fecha - inicio_datos).total_seconds() / self.velocidad
+            espera = objetivo - (time.monotonic() - inicio_real)
+            if espera > 0:
+                await asyncio.sleep(espera)
+            texto = self._procesar(tipo, dato)
+            if texto:
+                al_evento(texto)
+        log.info("Replay terminado: %s", self.descripcion())

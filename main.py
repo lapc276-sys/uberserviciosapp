@@ -32,25 +32,36 @@ import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
+import telemetria
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 log = logging.getLogger("f1tv-backend")
 
-INTERVALO_NARRACION = 10  # segundos entre narraciones
+INTERVALO_NARRACION = 10   # segundos entre narraciones con eventos
+RELLENO_SEGUNDOS = 45      # sin eventos, cada cuánto rellenar con contexto
 MODELO = "claude-opus-4-8"
+
+# Telemetría: "replay" reproduce la última carrera disputada desde OpenF1;
+# "off" desactiva y se narra solo por visión (frames de la Mac).
+MODO_TELEMETRIA = os.environ.get("MODO_TELEMETRIA", "replay")
+SESSION_KEY = os.environ.get("SESSION_KEY", "latest")
+VELOCIDAD_REPLAY = float(os.environ.get("VELOCIDAD_REPLAY", "1"))
 
 
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
-    tarea = asyncio.create_task(bucle_narracion())
+    tareas = [asyncio.create_task(bucle_telemetria()),
+              asyncio.create_task(bucle_narracion())]
     yield
-    tarea.cancel()
+    for t in tareas:
+        t.cancel()
 
 
 app = FastAPI(title="F1TV frames backend", lifespan=lifespan)
 
 
 class Estado:
-    """Último frame y última narración, compartidos entre endpoints."""
+    """Último frame, narración y telemetría, compartidos entre endpoints."""
 
     def __init__(self):
         self.frame: bytes | None = None
@@ -58,6 +69,9 @@ class Estado:
         self.narracion: str = ""
         self.narracion_ts: float = 0.0
         self.clientes_mac: set[WebSocket] = set()
+        self.tele: telemetria.Telemetria | None = None
+        self.eventos: list[str] = []   # eventos de telemetría sin narrar
+        self.diario: list[str] = []    # memoria: últimas narraciones dichas
 
 
 estado = Estado()
@@ -192,38 +206,123 @@ async def narrar_frame(client: anthropic.AsyncAnthropic, frame: bytes,
     return next((b.text for b in response.content if b.type == "text"), "").strip()
 
 
+SYSTEM_NARRADOR_DATOS = (
+    "Eres un narrador de Fórmula 1 en español, estilo radio: directo y con "
+    "energía. Recibes eventos reales de telemetría de la carrera y el "
+    "contexto actual. Narra en UNA frase (máximo dos cortas) lo más "
+    "relevante de los eventos. Usa SOLO los datos proporcionados: no "
+    "inventes tiempos, posiciones ni causas que no estén en los datos. Tu "
+    "texto será leído en voz alta por un sintetizador: escribe para el "
+    "oído, con los números en palabras ('uno coma dos segundos', 'vuelta "
+    "veintiocho', 'tercera posición'), sin abreviaturas ni símbolos. "
+    "Recibes también tus narraciones anteriores: no las repitas y puedes "
+    "referirte a ellas para dar continuidad."
+)
+
+
+async def narrar_datos(client: anthropic.AsyncAnthropic, eventos):
+    """Narra desde telemetría. Con eventos=None genera relleno de contexto."""
+    contexto = estado.tele.resumen() if estado.tele else ""
+    memoria = "\n".join(estado.diario[-6:]) or "(aún no has dicho nada)"
+    if eventos:
+        pedido = "EVENTOS NUEVOS:\n" + "\n".join(eventos)
+    else:
+        pedido = ("No hay eventos nuevos. Haz un comentario breve de "
+                  "relleno con el contexto: situación de la carrera, "
+                  "estrategia posible o dato del circuito. Sin inventar "
+                  "cifras específicas.")
+    response = await client.messages.create(
+        model=MODELO,
+        max_tokens=250,
+        system=SYSTEM_NARRADOR_DATOS,
+        messages=[{
+            "role": "user",
+            "content": (f"CONTEXTO: {contexto}\n\n"
+                        f"TUS NARRACIONES ANTERIORES:\n{memoria}\n\n"
+                        f"{pedido}"),
+        }],
+    )
+    if response.stop_reason == "refusal":
+        return ""
+    return next((b.text for b in response.content if b.type == "text"),
+                "").strip()
+
+
+async def bucle_telemetria():
+    """Carga OpenF1 y alimenta estado.eventos durante el replay."""
+    if MODO_TELEMETRIA == "off":
+        log.info("Telemetría desactivada (MODO_TELEMETRIA=off)")
+        return
+    try:
+        tele = telemetria.Telemetria(SESSION_KEY, VELOCIDAD_REPLAY)
+        await tele.cargar()
+        estado.tele = tele
+
+        def al_evento(texto):
+            estado.eventos.append(texto)
+            del estado.eventos[:-30]  # no acumular backlog infinito
+            log.info("📊 %s", texto)
+
+        await tele.correr(al_evento)
+    except Exception as e:
+        log.error("Telemetría no disponible (%s) — se narrará por visión", e)
+    finally:
+        estado.tele = None
+
+
+async def difundir(texto):
+    """Publica una narración a la Mac y al visor."""
+    estado.narracion = texto
+    estado.narracion_ts = time.time()
+    estado.diario.append(texto)
+    del estado.diario[:-20]
+    log.info("🎙️  %s", texto)
+    mensaje = json.dumps({"tipo": "narracion", "texto": texto})
+    for ws in list(estado.clientes_mac):
+        try:
+            await ws.send_text(mensaje)
+        except Exception:
+            estado.clientes_mac.discard(ws)
+
+
 async def bucle_narracion():
-    """Cada INTERVALO_NARRACION segundos narra el frame más reciente."""
+    """Narra por telemetría (eventos) y por visión como respaldo."""
     if not os.environ.get("ANTHROPIC_API_KEY"):
         log.warning("ANTHROPIC_API_KEY no definida — narración desactivada")
         return
     client = anthropic.AsyncAnthropic()
-    log.info("Narración activada (modelo %s, cada %ds)", MODELO,
-             INTERVALO_NARRACION)
-    ultimo_ts_narrado = 0.0
+    log.info("Narración activada (modelo %s, eventos cada %ds, "
+             "relleno cada %ds)", MODELO, INTERVALO_NARRACION,
+             RELLENO_SEGUNDOS)
+    ultimo_frame_narrado = 0.0
     while True:
-        await asyncio.sleep(INTERVALO_NARRACION)
-        frame = estado.frame
-        # Solo narrar si hay un frame nuevo desde la última narración
-        if frame is None or estado.frame_ts <= ultimo_ts_narrado:
-            continue
-        ultimo_ts_narrado = estado.frame_ts
+        await asyncio.sleep(2)
+        ahora = time.time()
+        desde_ultima = ahora - estado.narracion_ts
         try:
-            texto = await narrar_frame(client, frame, estado.narracion)
+            if estado.tele is not None:
+                if estado.eventos and desde_ultima >= INTERVALO_NARRACION:
+                    lote = estado.eventos[:6]
+                    del estado.eventos[:6]
+                    texto = await narrar_datos(client, lote)
+                elif desde_ultima >= RELLENO_SEGUNDOS:
+                    texto = await narrar_datos(client, None)
+                else:
+                    continue
+            else:
+                # Respaldo por visión: frame nuevo cada INTERVALO_NARRACION
+                if (estado.frame is None
+                        or estado.frame_ts <= ultimo_frame_narrado
+                        or desde_ultima < INTERVALO_NARRACION):
+                    continue
+                ultimo_frame_narrado = estado.frame_ts
+                texto = await narrar_frame(client, estado.frame,
+                                           estado.narracion)
         except anthropic.APIError as e:
             log.error("Error de la API de Anthropic: %s", e)
             continue
-        if not texto:
-            continue
-        estado.narracion = texto
-        estado.narracion_ts = time.time()
-        log.info("🎙️  %s", texto)
-        mensaje = json.dumps({"tipo": "narracion", "texto": texto})
-        for ws in list(estado.clientes_mac):
-            try:
-                await ws.send_text(mensaje)
-            except Exception:
-                estado.clientes_mac.discard(ws)
+        if texto:
+            await difundir(texto)
 
 
 if __name__ == "__main__":

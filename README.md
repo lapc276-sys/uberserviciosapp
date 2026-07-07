@@ -9,6 +9,23 @@ Dos piezas:
    `ANTHROPIC_API_KEY`, genera una narración corta en español con Claude
    cada 10 segundos y se la devuelve a la Mac.
 
+## Telemetría (OpenF1)
+
+Por defecto el backend descarga la telemetría de la **última carrera
+disputada** desde https://openf1.org y la reproduce como si fuera en vivo
+(modo replay). El narrador narra desde datos reales (adelantamientos,
+boxes, banderas, vueltas rápidas) con memoria de lo que ya dijo; la visión
+por frames queda como respaldo si la telemetría no está disponible.
+
+Variables de entorno (Secrets en Replit, todas opcionales):
+
+| Variable | Default | Qué hace |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | — | Activa la narración con Claude |
+| `MODO_TELEMETRIA` | `replay` | `off` para narrar solo por visión |
+| `SESSION_KEY` | `latest` | Clave de sesión OpenF1 de una carrera concreta |
+| `VELOCIDAD_REPLAY` | `1` | Ej. `10` reproduce la carrera 10 veces más rápido |
+
 ## Backend en Replit
 
 1. Importa este repositorio en Replit (Create Repl → Import from GitHub).
