@@ -114,7 +114,7 @@ async def enviar_frames():
                         if restante > 0:
                             await asyncio.sleep(restante)
 
-        except (websockets.ConnectionClosed, OSError) as e:
+        except (websockets.WebSocketException, OSError) as e:
             print(f"❌ Conexión perdida ({e}). "
                   f"Reintentando en {reintento}s...")
             await asyncio.sleep(reintento)
