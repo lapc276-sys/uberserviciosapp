@@ -55,22 +55,35 @@ class Telemetria:
     # ---------- descarga ----------
 
     async def _get(self, client, path, **params):
-        r = await client.get(BASE + path, params=params, timeout=60)
+        """GET con reintentos: la API gratuita de OpenF1 limita el ritmo."""
+        for intento in range(6):
+            r = await client.get(BASE + path, params=params, timeout=60)
+            if r.status_code != 429:
+                r.raise_for_status()
+                return r.json()
+            espera = float(r.headers.get("retry-after", 0) or 0) or 2 ** intento
+            log.info("OpenF1 pide esperar (%s) — reintento en %.0fs",
+                     path, espera)
+            await asyncio.sleep(espera)
         r.raise_for_status()
-        return r.json()
 
     async def cargar(self):
         async with httpx.AsyncClient() as client:
             sesion = await self._elegir_sesion(client)
             sk = sesion["session_key"]
             self.sesion = sesion
-            drivers, posiciones, pits, control, vueltas = await asyncio.gather(
-                self._get(client, "/drivers", session_key=sk),
-                self._get(client, "/position", session_key=sk),
-                self._get(client, "/pit", session_key=sk),
-                self._get(client, "/race_control", session_key=sk),
-                self._get(client, "/laps", session_key=sk),
-            )
+            # De uno en uno y con pausa: la API gratuita limita el ritmo
+            datos = {}
+            for endpoint in ("/drivers", "/position", "/pit",
+                             "/race_control", "/laps"):
+                await asyncio.sleep(1.0)
+                datos[endpoint] = await self._get(client, endpoint,
+                                                  session_key=sk)
+            drivers = datos["/drivers"]
+            posiciones = datos["/position"]
+            pits = datos["/pit"]
+            control = datos["/race_control"]
+            vueltas = datos["/laps"]
         for d in drivers:
             self.pilotos[d["driver_number"]] = {
                 "nombre": d.get("full_name") or d.get("broadcast_name")
