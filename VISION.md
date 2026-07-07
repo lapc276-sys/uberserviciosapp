@@ -26,11 +26,46 @@ discuten y se actualizan aquí, no sobre la marcha.*
 
 ## Personalidades del dúo
 
-- **Narrador (play-by-play)**: energético, rápido, preciso con datos, sube la
-  intensidad en adelantamientos e incidentes. Referencia: David Croft.
-- **Analista (color commentator)**: calmado, humor seco, explica estrategia
-  en simple, responde las preguntas del chat. Referencia: Martin Brundle.
-- Química: se interrumpen, discrepan suavemente, se pasan la palabra.
+- **Narrador (play-by-play)**: emocional, rápido, apasionado, vive el
+  momento, sube la intensidad en adelantamientos e incidentes. Referencia:
+  David Croft.
+- **Analista (color commentator)**: tranquilo, técnico, explica en simple,
+  corrige cuando hace falta, humor seco, responde el chat. Referencia:
+  Martin Brundle.
+
+## Principios de la conversación (especificación del dúo)
+
+1. **Un solo cerebro escribe el guion de ambas voces.** No son dos IAs
+   respondiéndose por turnos (eso produce ping-pong rígido): cada segmento
+   lo escribe Claude completo — interrupciones, desacuerdos, remates — y
+   luego cada línea se lee con su voz. La química la garantiza el guionista.
+2. **El analista es proactivo**: interrumpe ("espera... fíjate en el
+   delta"), no espera su turno.
+3. **Aportar, no describir**: el espectador ya ve la pantalla; el valor está
+   en el contexto ("lleva ocho vueltas cuidando neumáticos", "Ferrari
+   probablemente intenta un undercut").
+4. **Discrepar**: opiniones distintas con argumentos ("yo entraría ahora" /
+   "no lo tengo claro: un Safety Car le borra la ventaja").
+5. **Nunca silencio**: en momentos tranquilos → historia del circuito,
+   estrategias posibles, evolución de neumáticos, estadísticas,
+   comparaciones con carreras pasadas, predicciones, chat.
+6. **Interrupciones naturales**: A empieza → B interrumpe → A responde → B
+   añade un dato → A retoma la narración.
+7. **Memoria de carrera**: un diario acumulado (eventos + lo que ellos ya
+   dijeron) entra en cada segmento, para poder decir "¿recuerdas cuando
+   comentábamos que estaba cuidando gomas? Aquí está el resultado".
+
+## Race Director AI (agente invisible)
+
+Primera encarnación del Race Intelligence Engine: un agente que **no habla
+al público** — convierte la telemetría en "notas del muro de boxes" que
+recibe el dúo:
+
+> "Probabilidad de Safety Car: 27%." · "Norris pierde 0.18s por vuelta en el
+> sector 3." · "Neumático delantero izquierdo sobre 108 °C."
+
+Los comentaristas deciden cuáles usar y cómo traducirlas al espectador. Esto
+da la sensación de una producción con acceso a información estratégica real.
 
 ## Arquitectura
 
