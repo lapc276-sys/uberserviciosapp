@@ -97,21 +97,26 @@ ELEVENLABS_VOCES = {
     "narrador": os.environ.get("ELEVENLABS_VOZ_NARRADOR",
                                "JBFqnCBsd6RMkjVDRZzb"),  # George (británico)
     "analista": os.environ.get("ELEVENLABS_VOZ_ANALISTA",
-                               "onwK4e9ZLuTAKqWW03F9"),  # Daniel (británico)
+                               "IKne3meq5aSn9XLyUdCD"),  # Charlie (natural)
+}
+# Expresividad por personaje: el narrador más variable/emocional, el
+# analista más estable y pausado (pero no plano).
+ELEVENLABS_AJUSTES = {
+    "narrador": {"stability": 0.35, "similarity_boost": 0.75, "style": 0.65},
+    "analista": {"stability": 0.55, "similarity_boost": 0.75, "style": 0.45},
 }
 
 
 async def _tts_elevenlabs(quien, texto):
     voz = ELEVENLABS_VOCES.get(quien, ELEVENLABS_VOCES["narrador"])
+    ajustes = ELEVENLABS_AJUSTES.get(quien, ELEVENLABS_AJUSTES["narrador"])
     async with httpx.AsyncClient() as cliente:
         r = await cliente.post(
             f"https://api.elevenlabs.io/v1/text-to-speech/{voz}",
             params={"output_format": "mp3_44100_128"},
             headers={"xi-api-key": ELEVENLABS_API_KEY},
             json={"text": texto, "model_id": ELEVENLABS_MODELO,
-                  "voice_settings": {"stability": 0.4,
-                                     "similarity_boost": 0.75,
-                                     "style": 0.6}},
+                  "voice_settings": ajustes},
             timeout=60,
         )
         r.raise_for_status()
@@ -365,6 +370,11 @@ strategy in simple terms, dry humor, corrects {NARRADOR} when needed.
 CONVERSATION RULES:
 - Write 1 to 4 SHORT lines per segment. Not every segment needs both \
 voices — sometimes one line from one of them is perfect.
+- Each line is SHORT: one or two brief sentences, never a paragraph. \
+If a thought is long, split it across an exchange between the two.
+- Show real emotion: they laugh ("Haha!"), they get annoyed at a bad \
+strategy call ("Oh come on, why would they box him NOW?"), they gasp, \
+they tease each other. Everyday colloquial language, not polished prose.
 - {ANALISTA} is proactive: he may interrupt mid-thought ("Wait — look at \
 the gap."). Use an em dash to cut a line short when interrupted.
 - Add insight, don't just describe: tyre strategy, likely undercuts, what \
