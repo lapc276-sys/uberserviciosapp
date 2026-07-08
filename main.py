@@ -95,9 +95,9 @@ ELEVENLABS_MODELO = os.environ.get("ELEVENLABS_MODELO",
                                    "eleven_multilingual_v2")
 ELEVENLABS_VOCES = {
     "narrador": os.environ.get("ELEVENLABS_VOZ_NARRADOR",
-                               "pNInz6obpgDQGcFmaJgB"),  # Adam
+                               "JBFqnCBsd6RMkjVDRZzb"),  # George (británico)
     "analista": os.environ.get("ELEVENLABS_VOZ_ANALISTA",
-                               "onwK4e9ZLuTAKqWW03F9"),  # Daniel
+                               "onwK4e9ZLuTAKqWW03F9"),  # Daniel (británico)
 }
 
 
