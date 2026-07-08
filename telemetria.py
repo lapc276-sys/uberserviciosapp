@@ -48,6 +48,7 @@ class Telemetria:
         self.pilotos = {}     # numero -> {"nombre", "equipo"}
         self.posiciones = {}  # numero -> posición actual
         self.vuelta = 0
+        self.total_vueltas = 0
         self.mejor_vuelta = None  # (duración, numero de piloto)
         # timeline: lista de (fecha, tipo, dato) ordenada por fecha
         self._timeline = []
@@ -100,6 +101,8 @@ class Telemetria:
         for v in vueltas:
             if v.get("date_start"):
                 tl.append((_fecha(v["date_start"]), "vuelta", v))
+        self.total_vueltas = max(
+            (v.get("lap_number") or 0 for v in vueltas), default=0)
         tl.sort(key=lambda e: e[0])
         self._timeline = tl
         log.info("Telemetría cargada: %s — %d filas de datos",
@@ -139,8 +142,10 @@ class Telemetria:
         orden = sorted(self.posiciones.items(), key=lambda kv: kv[1])
         top = ", ".join(f"{pos}º {self._nombre(n)}" for n, pos in orden[:6])
         s = self.sesion
+        vueltas = (f"Vuelta {self.vuelta} de {self.total_vueltas}"
+                   if self.total_vueltas else f"Vuelta {self.vuelta}")
         return (f"Gran Premio de {s.get('country_name', '?')} en "
-                f"{s.get('circuit_short_name', '?')}. Vuelta {self.vuelta}. "
+                f"{s.get('circuit_short_name', '?')}. {vueltas}. "
                 f"Posiciones: {top or 'aún sin datos'}.")
 
     # ---------- replay ----------

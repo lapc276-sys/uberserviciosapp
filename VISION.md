@@ -99,16 +99,57 @@ carrera en vez de ~1.000 continuos.
   sirve para probar con YouTube como práctica.*
 - **Fase 2 — HECHA**: telemetría OpenF1 con modo replay → narración por
   eventos desde datos reales, con memoria y relleno; visión de respaldo.
-- **Fase 3 — HECHA**: dúo de personalidades en inglés (guion de ambas
-  voces por un solo cerebro, con memoria e interrupciones) + voces
-  naturales con OpenAI TTS (estilo por personaje; fallback a voces del
-  sistema). Pendiente menor: visión por gatillos (pasa a Fase 4).
-- **Fase 4**: gráficos en vivo (torre de tiempos) + escena OBS + primera
-  transmisión a YouTube Live.
-- **Fase 5**: lectura del chat de YouTube (API oficial) con filtro de
-  spam/moderación vía Claude.
-- **Fase 6 — opcional**: avatar VTuber 2D gratuito, segundo canal en español,
-  mejoras de producción.
+- **Fase 3 — EN CURSO (no avanzar hasta pasar la puerta de calidad)**:
+  dúo en inglés con voces ElevenLabs (Jamie/Lucie) + sonido ambiente.
+  **Puerta de calidad** — la narración debe lograr:
+  - [x] Conversación natural, no chatbot; personalidades distintas
+  - [x] Interrupciones realistas y desacuerdos
+  - [x] Memoria de vueltas anteriores; no repetir información
+  - [ ] Tono según situación: Safety Car / accidente / pelea por el
+        liderato / última vuelta cambian la energía
+  - [ ] Silencios: si no hay nada que valga la pena, callar es
+        profesional (relleno espaciado, no charla constante)
+- **Fase 4 — Broadcast Engine "Project Apex"**: no una simple torre de
+  tiempos sino una identidad visual completa estilo "Bloomberg de la F1"
+  (ver sección Project Apex) + escena OBS + primera emisión a YouTube.
+- **Fase 4.5 — Dirección automática**: la IA como director de
+  realización. Sin video de F1 emitible, dirigir = decidir qué gráfico
+  protagoniza la pantalla en cada momento (pelea → duelo con gaps; pit
+  → panel de parada; bandera → alerta e "instant replay" de datos).
+- **Fase 5 — Race Intelligence explicable**: métricas propias calculadas
+  desde datos públicos, siempre con su porqué visible (ver sección
+  Métricas honestas).
+- **Fase 6 — Chat de YouTube con filtro**: responder solo preguntas con
+  valor (estrategia, conceptos, escenarios), nunca leer mensajes vacíos.
+- **Fase 7 — opcional**: avatar VTuber 2D, segundo canal en español.
+
+## Project Apex (identidad visual de la Fase 4)
+
+- Paleta: fondo `#0B0D12`, paneles `#151922`, texto blanco/gris claro,
+  acento rojo `#E10600`, verde esmeralda (positivo), ámbar (avisos).
+- Tipografía: Inter / IBM Plex Sans. Minimalismo, mucho aire, animaciones
+  suaves (flechas verde/rojo 2s al ganar/perder posición, sin excesos).
+- Referencias: Bloomberg Terminal, Apple TV, Formula E, paneles de EQS /
+  Taycan. Inspiración, nunca copia de F1 TV (propiedad intelectual).
+- Paneles: cabecera LIVE + vuelta + clima · leaderboard con gaps ·
+  Race Intelligence · incidentes · diálogo del dúo como tarjetas ·
+  alertas discretas · minimapa de puntos.
+
+## Métricas honestas (regla de oro de Race Intelligence)
+
+1. **Ningún número inventado.** Cada métrica sale de datos reales, un
+   modelo explicable, o no se muestra. Estimaciones etiquetadas como tal.
+2. **Pocas y fiables antes que muchas y bonitas.** Primera tanda (todas
+   calculables con OpenF1): degradación (tendencia de tiempos por vuelta),
+   ventana de pits (tiempo de pit vs. tráfico), penalización por tráfico,
+   presión (gap + DRS + ataques recientes).
+3. **Siempre con el porqué**: "Strategy Advantage 84: +neumáticos 12
+   vueltas más frescos, +aire limpio, −riesgo de lluvia en 15 min".
+4. **Predicciones condicionadas**, no proféticas: "si no hay Safety Car
+   en 10 vueltas, la estrategia de X termina delante con 81%".
+5. **Familia de métricas propias** como identidad del canal (Race IQ,
+   Attack/Defense Score, Overtake Window, Tyre Efficiency...) con
+   metodología publicada — como el xG del fútbol.
 
 ## Costos estimados por transmisión de 3 horas (referencia jul 2026)
 

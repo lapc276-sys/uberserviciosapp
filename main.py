@@ -39,7 +39,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 log = logging.getLogger("f1tv-backend")
 
 INTERVALO_NARRACION = 10   # segundos entre narraciones con eventos
-RELLENO_SEGUNDOS = 45      # sin eventos, cada cuánto rellenar con contexto
+RELLENO_SEGUNDOS = 90      # sin eventos, cada cuánto considerar rellenar
 MODELO = "claude-opus-4-8"
 
 # Telemetría: "replay" reproduce la última carrera disputada desde OpenF1;
@@ -401,6 +401,16 @@ Never repeat previous lines.
 - Ground EVERYTHING in the provided data. Never invent lap times, \
 positions, gaps or causes that are not in the data. General F1 knowledge \
 (circuit history, how tyres behave) is welcome for quiet moments.
+- MATCH THE ENERGY TO THE RACE SITUATION. Safety car or red flag: \
+urgent, focused, explaining what it changes. Crash or retirement: \
+concerned first, analysis second. Battle for the lead: maximum \
+intensity, short punchy lines. Final laps: building excitement, \
+counting down. Quiet mid-race stint: relaxed, conversational, lower \
+gear. The situation is given in the context — use it.
+- SILENCE IS PROFESSIONAL. If asked to fill a quiet moment and you have \
+nothing genuinely interesting left (memory shows recent filler already \
+covered strategy, history, tyres), return an EMPTY lineas array instead \
+of forcing chatter. Real broadcasters let the race breathe.
 
 WRITTEN FOR THE EAR (text-to-speech will read it):
 - Numbers as words: "one point two seconds", "lap twenty-eight", "third \
@@ -440,21 +450,42 @@ def _nombre_de(quien):
     return NARRADOR if quien == "narrador" else ANALISTA
 
 
+def _situacion(eventos):
+    """Clasifica el momento de carrera para calibrar la energía del dúo."""
+    texto = " ".join(eventos or []).upper()
+    tele = estado.tele
+    if "SAFETY CAR" in texto or "RED FLAG" in texto:
+        return "SAFETY CAR / RED FLAG deployed — urgent, explain the impact"
+    if any(p in texto for p in ("YELLOW", "INCIDENT", "ACCIDENT", "CRASH")):
+        return "incident on track — concerned first, then analysis"
+    if (tele and tele.total_vueltas and tele.vuelta
+            and tele.vuelta >= tele.total_vueltas - 3):
+        return "FINAL LAPS — building excitement, counting down"
+    if texto and "ADELANTAMIENTO" in texto:
+        return "overtaking happening — high energy"
+    if eventos:
+        return "normal racing — engaged"
+    return "quiet stint — relaxed, low gear"
+
+
 async def narrar_datos(client: anthropic.AsyncAnthropic, eventos):
     """Genera el siguiente segmento de conversación del dúo.
 
-    Con eventos=None produce relleno (contexto, estrategia, historia).
+    Con eventos=None produce relleno (contexto, estrategia, historia) —
+    o silencio, si el guionista decide que no hay nada que aportar.
     Devuelve una lista de líneas [{"quien", "texto"}].
     """
     contexto = estado.tele.resumen() if estado.tele else ""
+    situacion = _situacion(eventos)
     memoria = "\n".join(estado.diario[-10:]) or "(nothing said yet)"
     if eventos:
         pedido = "NEW EVENTS (from live telemetry):\n" + "\n".join(eventos)
     else:
-        pedido = ("No new events right now. Fill the quiet moment: race "
-                  "situation, possible strategy, circuit history, how the "
-                  "tyres evolve, a prediction, or a stat — without "
-                  "inventing specific figures.")
+        pedido = ("No new events right now. You MAY fill the quiet moment "
+                  "(strategy, circuit history, tyres, a prediction, a stat "
+                  "— without inventing figures), but if the memory shows "
+                  "you've already covered the interesting angles recently, "
+                  "return an empty lineas array and let the race breathe.")
     response = await client.messages.create(
         model=MODELO,
         max_tokens=500,
@@ -463,7 +494,8 @@ async def narrar_datos(client: anthropic.AsyncAnthropic, eventos):
                                   "schema": DUO_SCHEMA}},
         messages=[{
             "role": "user",
-            "content": (f"RACE CONTEXT: {contexto}\n\n"
+            "content": (f"RACE CONTEXT: {contexto}\n"
+                        f"SITUATION: {situacion}\n\n"
                         f"WHAT THE DUO ALREADY SAID (memory):\n{memoria}\n\n"
                         f"{pedido}\n\n"
                         "Write the next segment of the conversation."),
@@ -613,6 +645,7 @@ async def bucle_narracion():
              "relleno cada %ds)", MODELO, INTERVALO_NARRACION,
              RELLENO_SEGUNDOS)
     ultimo_frame_narrado = 0.0
+    ultimo_relleno = 0.0
     while True:
         await asyncio.sleep(2)
         ahora = time.time()
@@ -623,7 +656,10 @@ async def bucle_narracion():
                     lote = estado.eventos[:6]
                     del estado.eventos[:6]
                     texto = await narrar_datos(client, lote)
-                elif desde_ultima >= RELLENO_SEGUNDOS:
+                elif (desde_ultima >= RELLENO_SEGUNDOS
+                        and ahora - ultimo_relleno >= RELLENO_SEGUNDOS):
+                    # Si eligió callar, no volver a preguntar enseguida
+                    ultimo_relleno = ahora
                     texto = await narrar_datos(client, None)
                 else:
                     continue
