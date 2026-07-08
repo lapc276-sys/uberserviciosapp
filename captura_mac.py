@@ -87,8 +87,46 @@ def elegir_voz(quien, idioma):
     return None
 
 
+AMBIENTE_VOLUMEN = "0.18"  # volumen del loop de motores (0.0 a 1.0)
+
 _hablando = None   # lock creado dentro del event loop
 _pendiente = None  # último segmento en espera (solo se guarda el más nuevo)
+_ambiente_tarea = None
+_ambiente_proc = None
+
+
+async def _bucle_ambiente(ruta):
+    """Reproduce el sonido de motores en bucle hasta que lo cancelen."""
+    global _ambiente_proc
+    try:
+        while True:
+            _ambiente_proc = await asyncio.create_subprocess_exec(
+                "afplay", "-v", AMBIENTE_VOLUMEN, ruta,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            await _ambiente_proc.wait()
+    except asyncio.CancelledError:
+        if _ambiente_proc and _ambiente_proc.returncode is None:
+            _ambiente_proc.terminate()
+        raise
+
+
+def ambiente(accion, audio_b64=None):
+    """Enciende o apaga el sonido de fondo de motores."""
+    global _ambiente_tarea
+    if _ambiente_tarea:
+        _ambiente_tarea.cancel()
+        _ambiente_tarea = None
+    if accion == "start" and audio_b64:
+        ruta = os.path.join(tempfile.gettempdir(), "ambiente_f1.mp3")
+        try:
+            with open(ruta, "wb") as f:
+                f.write(base64.b64decode(audio_b64))
+        except Exception:
+            return
+        print("🔊 Motores de fondo encendidos")
+        _ambiente_tarea = asyncio.ensure_future(_bucle_ambiente(ruta))
+    elif accion == "stop":
+        print("🔇 Motores de fondo apagados")
 
 
 async def hablar(lineas, idioma="en"):
@@ -214,7 +252,10 @@ async def enviar_frames():
                                 ws.recv(), timeout=0.05
                             )
                             data = json.loads(msg)
-                            if data.get("tipo") == "dialogo":
+                            if data.get("tipo") == "ambiente":
+                                ambiente(data.get("accion"),
+                                         data.get("audio"))
+                            elif data.get("tipo") == "dialogo":
                                 lineas = data.get("lineas", [])
                                 for l in lineas:
                                     icono = ("🎙️" if l.get("quien") ==

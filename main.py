@@ -164,7 +164,8 @@ async def lifespan(app: FastAPI):
         log.warning("Sin clave de TTS (ELEVENLABS_API_KEY / OPENAI_API_KEY) "
                     "— la Mac usará sus voces del sistema (robóticas)")
     tareas = [asyncio.create_task(bucle_telemetria()),
-              asyncio.create_task(bucle_narracion())]
+              asyncio.create_task(bucle_narracion()),
+              asyncio.create_task(bucle_ambiente())]
     yield
     for t in tareas:
         t.cancel()
@@ -187,6 +188,8 @@ class Estado:
         self.eventos: list[str] = []   # eventos de telemetría sin narrar
         self.diario: list[str] = []    # memoria: últimas líneas dichas
         self.lineas: list[dict] = []   # último segmento de diálogo
+        self.ambiente_b64: str | None = None  # loop de sonido de motores
+        self.ambiente_activo: bool = False
 
 
 estado = Estado()
@@ -197,6 +200,11 @@ async def ws_frames(ws: WebSocket):
     await ws.accept()
     estado.clientes_mac.add(ws)
     log.info("Mac conectada (%d cliente(s))", len(estado.clientes_mac))
+    if estado.ambiente_activo and estado.ambiente_b64:
+        try:
+            await _enviar_ambiente(ws, "start")
+        except Exception:
+            pass
     try:
         while True:
             frame = await ws.receive_bytes()
@@ -466,6 +474,74 @@ async def narrar_datos(client: anthropic.AsyncAnthropic, eventos):
     except json.JSONDecodeError:
         log.error("Respuesta del dúo no parseable: %.200s", texto)
         return []
+
+
+AMBIENTE_ARCHIVO = "ambiente_f1.mp3"
+
+
+async def generar_ambiente():
+    """Loop de sonido de motores: lo genera ElevenLabs una vez y se cachea."""
+    if os.path.exists(AMBIENTE_ARCHIVO):
+        with open(AMBIENTE_ARCHIVO, "rb") as f:
+            return base64.standard_b64encode(f.read()).decode()
+    if not ELEVENLABS_API_KEY:
+        return None
+    try:
+        async with httpx.AsyncClient() as cliente:
+            r = await cliente.post(
+                "https://api.elevenlabs.io/v1/sound-generation",
+                headers={"xi-api-key": ELEVENLABS_API_KEY},
+                json={"text": ("Formula 1 race ambience: high-pitched V6 "
+                               "engines roaring past at full speed with "
+                               "doppler effect, distant crowd, seamless "
+                               "loop"),
+                      "duration_seconds": 18,
+                      "prompt_influence": 0.35},
+                timeout=120,
+            )
+            r.raise_for_status()
+        with open(AMBIENTE_ARCHIVO, "wb") as f:
+            f.write(r.content)
+        log.info("Sonido ambiente generado (%d KB)", len(r.content) // 1024)
+        return base64.standard_b64encode(r.content).decode()
+    except Exception as e:
+        log.warning("No se pudo generar el sonido ambiente (%s). ¿La clave "
+                    "de ElevenLabs tiene permiso de Efectos de sonido?", e)
+        return None
+
+
+async def _enviar_ambiente(ws, accion):
+    mensaje = {"tipo": "ambiente", "accion": accion}
+    if accion == "start":
+        mensaje["audio"] = estado.ambiente_b64
+    await ws.send_text(json.dumps(mensaje))
+
+
+async def bucle_ambiente():
+    """Enciende los motores de fondo cuando arranca la carrera del replay."""
+    while True:
+        await asyncio.sleep(5)
+        corriendo = estado.tele is not None and estado.tele.vuelta >= 1
+        if corriendo and not estado.ambiente_activo:
+            estado.ambiente_b64 = (estado.ambiente_b64
+                                   or await generar_ambiente())
+            if not estado.ambiente_b64:
+                continue
+            estado.ambiente_activo = True
+            log.info("🔊 Sonido de motores encendido")
+            for ws in list(estado.clientes_mac):
+                try:
+                    await _enviar_ambiente(ws, "start")
+                except Exception:
+                    pass
+        elif not corriendo and estado.ambiente_activo:
+            estado.ambiente_activo = False
+            log.info("🔇 Sonido de motores apagado")
+            for ws in list(estado.clientes_mac):
+                try:
+                    await _enviar_ambiente(ws, "stop")
+                except Exception:
+                    pass
 
 
 async def bucle_telemetria():
