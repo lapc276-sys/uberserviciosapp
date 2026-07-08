@@ -183,6 +183,41 @@ carrera en vez de ~1.000 continuos.
 | OBS + YouTube Live | — | Gratis |
 | **Total típico** | | **~$4–6 por carrera** |
 
+## Norte de plataforma: Autonomous Media Platform
+
+El activo no es el canal de F1 — es la **infraestructura capaz de operar
+canales deportivos autónomos**. F1 en inglés es la primera aplicación.
+Orden disciplinado: (1) F1 inglés totalmente automático → (2) español
+reutilizando todo → (3) segundo deporte (ej. NFL) → (4) recién entonces,
+plataforma donde añadir un deporte = configurar, no reescribir.
+
+Principios de arquitectura (aplican desde hoy):
+- **Adaptadores de datos por deporte** (`telemetria.py` es el de F1),
+  independientes del cerebro narrador.
+- **Biblioteca de personalidades**: las personas de los comentaristas son
+  configuración por deporte/idioma, no código.
+- **Supervisión por excepción**: el dueño define criterio y directrices;
+  el sistema opera solo, alerta solo ante lo inusual, y entrega un
+  reporte diario corto de lo publicado y su rendimiento.
+- **Feedback loop (futuro)**: métricas de retención ajustan qué tipo de
+  contenido se prioriza.
+
+Reglas de plataforma YouTube (autenticidad):
+- Marcar la divulgación de contenido generado por IA (transparencia; no
+  penaliza el alcance).
+- Evitar señales de fábrica: variar estructura y formatos; cada pieza
+  responde "¿por qué esto es interesante hoy?".
+- El valor humano = criterio editorial del dueño (personalidades, enfoque,
+  identidad) ejecutado por el sistema.
+- **Nunca** "transformar" visualmente contenido protegido para evadir
+  detección — eso es evasión, no protección. Nuestra vía: cero video
+  ajeno, gráficos propios desde datos.
+
+Negocio más allá de AdSense (opciones futuras): plataforma web propia
+(experiencia personalizada por idioma/zona/eventos en vivo), white-label
+para ligas menores y clubes pequeños ("un comentarista profesional para
+el equipo de tu ciudad"), y suscripciones.
+
 ## Norte a largo plazo: "Race Intelligence Engine"
 
 La evolución natural del cerebro (fases 7+, solo cuando el canal funcione):
