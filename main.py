@@ -143,13 +143,16 @@ async def _tts_openai(quien, texto):
 
 async def sintetizar(quien, texto):
     """Convierte una línea en MP3: ElevenLabs > OpenAI > None (voz Mac)."""
-    try:
-        if ELEVENLABS_API_KEY:
+    if ELEVENLABS_API_KEY:
+        try:
             return await _tts_elevenlabs(quien, texto)
-        if OPENAI_API_KEY:
+        except Exception as e:
+            log.error("ElevenLabs falló (%s) — probando OpenAI", e)
+    if OPENAI_API_KEY:
+        try:
             return await _tts_openai(quien, texto)
-    except Exception as e:
-        log.error("TTS falló (%s) — la Mac usará su voz", e)
+        except Exception as e:
+            log.error("OpenAI TTS falló (%s) — la Mac usará su voz", e)
     return None
 
 
