@@ -41,7 +41,9 @@ log = logging.getLogger("f1tv-backend")
 INTERVALO_NARRACION = 10   # segundos entre narraciones con eventos
 # Sin eventos, cada cuánto considerar rellenar (configurable por Secret)
 RELLENO_SEGUNDOS = float(os.environ.get("RELLENO_SEGUNDOS", "90"))
-MODELO = "claude-opus-4-8"
+# Modelo del guionista (Secret MODELO_NARRADOR para cambiarlo):
+# claude-opus-4-8 = máxima calidad · claude-haiku-4-5 = ~5x más barato
+MODELO = os.environ.get("MODELO_NARRADOR", "claude-opus-4-8")
 
 # Telemetría: "replay" reproduce la última carrera disputada desde OpenF1;
 # "off" desactiva y se narra solo por visión (frames de la Mac).
