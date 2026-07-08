@@ -50,6 +50,7 @@ class Telemetria:
         self.vuelta = 0
         self.total_vueltas = 0
         self.mejor_vuelta = None  # (duración, numero de piloto)
+        self.incidentes = []      # últimos avisos de dirección de carrera
         # timeline: lista de (fecha, tipo, dato) ordenada por fecha
         self._timeline = []
 
@@ -90,6 +91,8 @@ class Telemetria:
                 "nombre": d.get("full_name") or d.get("broadcast_name")
                 or f"el piloto número {d['driver_number']}",
                 "equipo": d.get("team_name") or "",
+                "acronimo": d.get("name_acronym")
+                or str(d["driver_number"]),
             }
         tl = []
         for p in posiciones:
@@ -182,11 +185,21 @@ class Telemetria:
             msj = (dato.get("message") or "").strip()
             if not msj or "BLUE FLAG" in msj:
                 return None  # las banderas azules son puro ruido
+            self.incidentes.append({"vuelta": self.vuelta, "texto": msj})
+            del self.incidentes[:-8]
             quien = ""
             if dato.get("driver_number"):
                 quien = f" (afecta a {self._nombre(dato['driver_number'])})"
             return f"DIRECCIÓN DE CARRERA: {msj}{quien}"
         return None
+
+    def tabla(self):
+        """Leaderboard para la pantalla: [{pos, acr, nombre}]."""
+        orden = sorted(self.posiciones.items(), key=lambda kv: kv[1])
+        return [{"pos": pos,
+                 "acr": self.pilotos.get(n, {}).get("acronimo", str(n)),
+                 "nombre": self._nombre(n)}
+                for n, pos in orden[:10]]
 
     async def correr(self, al_evento):
         """Reproduce la línea de tiempo llamando a al_evento(texto)."""

@@ -99,17 +99,10 @@ carrera en vez de ~1.000 continuos.
   sirve para probar con YouTube como práctica.*
 - **Fase 2 — HECHA**: telemetría OpenF1 con modo replay → narración por
   eventos desde datos reales, con memoria y relleno; visión de respaldo.
-- **Fase 3 — EN CURSO (no avanzar hasta pasar la puerta de calidad)**:
-  dúo en inglés con voces ElevenLabs (Jamie/Lucie) + sonido ambiente.
-  **Puerta de calidad** — la narración debe lograr:
-  - [x] Conversación natural, no chatbot; personalidades distintas
-  - [x] Interrupciones realistas y desacuerdos
-  - [x] Memoria de vueltas anteriores; no repetir información
-  - [ ] Tono según situación: Safety Car / accidente / pelea por el
-        liderato / última vuelta cambian la energía
-  - [ ] Silencios: si no hay nada que valga la pena, callar es
-        profesional (relleno espaciado, no charla constante)
-- **Fase 4 — Broadcast Engine "Project Apex"**: no una simple torre de
+- **Fase 3 — HECHA (aprobada por el dueño)**: dúo en inglés con voces
+  ElevenLabs (Jamie/Lucie) + sonido ambiente + tono según situación +
+  silencios profesionales + memoria. Se sigue afinando con feedback.
+- **Fase 4 — EN CURSO — Broadcast Engine "Project Apex"**: no una simple torre de
   tiempos sino una identidad visual completa estilo "Bloomberg de la F1"
   (ver sección Project Apex) + escena OBS + primera emisión a YouTube.
 - **Fase 4.5 — Dirección automática**: la IA como director de

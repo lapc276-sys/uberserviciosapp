@@ -227,6 +227,25 @@ async def frame_jpg():
     return Response(content=estado.frame, media_type="image/jpeg")
 
 
+@app.get("/apex")
+async def apex():
+    """Datos en vivo para la pantalla de transmisión Project Apex."""
+    t = estado.tele
+    return JSONResponse({
+        "en_vivo": t is not None,
+        "gp": (t.sesion.get("country_name", "") if t else ""),
+        "circuito": (t.sesion.get("circuit_short_name", "") if t else ""),
+        "vuelta": t.vuelta if t else 0,
+        "total_vueltas": t.total_vueltas if t else 0,
+        "leaderboard": t.tabla() if t else [],
+        "incidentes": list(reversed(t.incidentes)) if t else [],
+        "lineas": [{**l, "nombre": _nombre_de(l["quien"])}
+                   for l in estado.lineas],
+        "idioma": IDIOMA,
+        "hay_frame": estado.frame is not None,
+    })
+
+
 @app.get("/narracion")
 async def narracion():
     return JSONResponse({
@@ -242,86 +261,176 @@ async def narracion():
 @app.get("/", response_class=HTMLResponse)
 async def visor():
     return """<!doctype html>
-<html lang="es">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Visor F1TV</title>
+<title>APEX — Live Race Intelligence</title>
 <style>
-  body { font-family: sans-serif; background: #111; color: #eee;
-         margin: 0; padding: 1rem; text-align: center; }
-  img  { max-width: 100%; border-radius: 8px; }
-  #dialogo { margin-top: 1rem; font-size: 1.15rem; min-height: 3em;
-             text-align: left; max-width: 720px; margin-left: auto;
-             margin-right: auto; }
-  .narrador { color: #ffd166; }
-  .analista { color: #7fd3ff; }
-  .nombre   { font-weight: bold; }
-  #voz { margin-top: .5rem; padding: .5rem 1rem; font-size: 1rem;
-         border: none; border-radius: 6px; cursor: pointer;
-         background: #333; color: #eee; }
-  #voz.on { background: #1a7f37; }
+  :root {
+    --bg: #0B0D12; --panel: #151922; --line: #232936;
+    --txt: #FFFFFF; --dim: #9AA3B2; --accent: #E10600;
+    --up: #2ECC71; --down: #E10600; --amber: #FFB020;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--txt); min-height: 100vh;
+         font-family: Inter, -apple-system, "SF Pro Display",
+                      "IBM Plex Sans", "Segoe UI", sans-serif; }
+  header { display: flex; align-items: center; gap: 14px;
+           padding: 14px 22px; border-bottom: 1px solid var(--line); }
+  .dot { width: 10px; height: 10px; border-radius: 50%;
+         background: var(--accent); animation: pulse 1.6s infinite; }
+  @keyframes pulse { 50% { opacity: .35; } }
+  .live { font-weight: 700; letter-spacing: .12em; font-size: .8rem; }
+  #gp { font-weight: 600; font-size: 1rem; letter-spacing: .04em;
+        text-transform: uppercase; }
+  #lap { margin-left: auto; color: var(--dim); font-variant-numeric:
+         tabular-nums; font-size: .9rem; letter-spacing: .08em; }
+  main { display: grid; grid-template-columns: 230px 1fr 290px;
+         gap: 14px; padding: 14px 22px; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  .panel { background: var(--panel); border: 1px solid var(--line);
+           border-radius: 12px; padding: 14px 16px; }
+  .panel h3 { font-size: .68rem; letter-spacing: .18em; color: var(--dim);
+              text-transform: uppercase; margin-bottom: 10px; }
+  /* Leaderboard */
+  #board .row { display: flex; align-items: center; gap: 10px;
+                padding: 6px 4px; border-bottom: 1px solid var(--line);
+                font-variant-numeric: tabular-nums; }
+  #board .row:last-child { border-bottom: none; }
+  .p { color: var(--dim); width: 1.4em; font-size: .85rem; }
+  .acr { font-weight: 700; letter-spacing: .06em; }
+  .delta { margin-left: auto; font-size: .8rem; width: 1.2em;
+           text-align: right; transition: opacity .6s; opacity: 0; }
+  .delta.up   { color: var(--up); opacity: 1; }
+  .delta.down { color: var(--down); opacity: 1; }
+  /* Centro */
+  #centro { display: flex; flex-direction: column; gap: 14px; }
+  #framebox { display: none; }
+  #framebox img { width: 100%; border-radius: 12px; display: block; }
+  #dialogo { display: flex; flex-direction: column; gap: 12px; }
+  .card { background: var(--panel); border: 1px solid var(--line);
+          border-radius: 12px; padding: 14px 18px; }
+  .card .quien { font-size: .68rem; letter-spacing: .18em;
+                 text-transform: uppercase; margin-bottom: 6px; }
+  .card.narrador .quien { color: var(--accent); }
+  .card.analista .quien { color: var(--dim); }
+  .card .texto { font-size: 1.05rem; line-height: 1.5; }
+  #offair { color: var(--dim); text-align: center; padding: 40px 0;
+            letter-spacing: .1em; font-size: .85rem; }
+  /* Incidentes */
+  #incidentes .inc { display: flex; gap: 8px; padding: 7px 0;
+                     border-bottom: 1px solid var(--line);
+                     font-size: .82rem; color: var(--dim); }
+  #incidentes .inc:last-child { border-bottom: none; }
+  .inc .lapn { color: var(--amber); white-space: nowrap; }
+  /* Voz */
+  #voz { margin: 0 22px 20px; padding: 9px 16px; font-size: .85rem;
+         border: 1px solid var(--line); border-radius: 8px;
+         cursor: pointer; background: var(--panel); color: var(--dim); }
+  #voz.on { border-color: var(--up); color: var(--up); }
 </style>
 </head>
 <body>
-<h1>Visor F1TV</h1>
-<img id="frame" src="/frame.jpg" alt="Esperando frames...">
-<div id="dialogo"></div>
-<button id="voz">🔇 Voz desactivada — pulsa para activar</button>
+<header>
+  <span class="dot" id="dot"></span><span class="live" id="livetxt">LIVE</span>
+  <span id="gp">—</span>
+  <span id="lap"></span>
+</header>
+<main>
+  <section class="panel"><h3>Leaderboard</h3><div id="board"></div></section>
+  <section id="centro">
+    <div id="framebox"><img id="frame" alt=""></div>
+    <div id="dialogo"><div id="offair">WAITING FOR SESSION…</div></div>
+  </section>
+  <section class="panel"><h3>Race Control</h3><div id="incidentes"></div></section>
+</main>
+<button id="voz">VOICE OFF — click to enable browser voice</button>
 <script>
-let vozActiva = false;
-let ultimoTexto = '';
+let vozActiva = false, ultimoDialogo = '', posPrevias = {};
 const btn = document.getElementById('voz');
 btn.onclick = () => {
   vozActiva = !vozActiva;
   btn.classList.toggle('on', vozActiva);
-  btn.textContent = vozActiva
-    ? '🔊 Voz activada — pulsa para silenciar'
-    : '🔇 Voz desactivada — pulsa para activar';
+  btn.textContent = vozActiva ? 'VOICE ON — click to mute'
+                              : 'VOICE OFF — click to enable browser voice';
   if (vozActiva) speechSynthesis.speak(new SpeechSynthesisUtterance(''));
 };
-function vozPara(quien, idioma) {
-  const pref = idioma === 'es' ? 'es' : 'en';
-  const voces = speechSynthesis.getVoices()
-    .filter(v => v.lang.toLowerCase().startsWith(pref));
-  if (!voces.length) return null;
-  return quien === 'narrador' ? voces[0] : voces[voces.length - 1];
-}
 function hablar(lineas, idioma) {
   for (const l of lineas) {
     const u = new SpeechSynthesisUtterance(l.texto);
     u.lang = idioma === 'es' ? 'es-ES' : 'en-GB';
-    const v = vozPara(l.quien, idioma);
-    if (v) u.voice = v;
-    u.rate  = l.quien === 'narrador' ? 1.12 : 0.98;
-    u.pitch = l.quien === 'narrador' ? 1.15 : 0.85;
-    speechSynthesis.speak(u);  // se encolan solas, no se pisan
+    const voces = speechSynthesis.getVoices()
+      .filter(v => v.lang.toLowerCase().startsWith(idioma === 'es' ? 'es' : 'en'));
+    if (voces.length) u.voice = l.quien === 'narrador'
+      ? voces[0] : voces[voces.length - 1];
+    u.rate = l.quien === 'narrador' ? 1.1 : 0.97;
+    u.pitch = l.quien === 'narrador' ? 1.1 : 0.9;
+    speechSynthesis.speak(u);
   }
 }
-setInterval(() => {
-  document.getElementById('frame').src = '/frame.jpg?t=' + Date.now();
-}, 1000);
-setInterval(async () => {
-  const r = await fetch('/narracion');
-  const d = await r.json();
-  if (d.texto && d.texto !== ultimoTexto) {
-    ultimoTexto = d.texto;
-    const div = document.getElementById('dialogo');
-    div.innerHTML = '';
-    for (const l of (d.lineas || [])) {
-      const p = document.createElement('p');
-      p.className = l.quien;
-      const b = document.createElement('span');
-      b.className = 'nombre';
-      b.textContent = (l.quien === 'narrador' ? '🎙️ ' : '🧠 ')
-                      + l.nombre + ': ';
-      p.appendChild(b);
-      p.appendChild(document.createTextNode(l.texto));
-      div.appendChild(p);
+async function tick() {
+  const d = await (await fetch('/apex')).json();
+  document.getElementById('gp').textContent =
+    d.en_vivo ? (d.gp + ' — ' + d.circuito) : 'NO LIVE SESSION';
+  document.getElementById('lap').textContent =
+    d.en_vivo && d.vuelta ? 'LAP ' + d.vuelta +
+      (d.total_vueltas ? ' / ' + d.total_vueltas : '') : '';
+  document.getElementById('dot').style.display = d.en_vivo ? '' : 'none';
+  document.getElementById('livetxt').style.display = d.en_vivo ? '' : 'none';
+  // leaderboard con flechas 2s
+  const board = document.getElementById('board');
+  board.innerHTML = '';
+  for (const f of d.leaderboard) {
+    const row = document.createElement('div'); row.className = 'row';
+    const prev = posPrevias[f.acr];
+    let flecha = '', cls = '';
+    if (prev !== undefined && prev !== f.pos) {
+      flecha = f.pos < prev ? '\\u25B2' : '\\u25BC';
+      cls = f.pos < prev ? 'up' : 'down';
+      setTimeout(() => { const el = row.querySelector('.delta');
+                         if (el) el.className = 'delta'; }, 2000);
     }
-    if (vozActiva) hablar(d.lineas || [], d.idioma);
+    posPrevias[f.acr] = f.pos;
+    row.innerHTML = '<span class="p">' + f.pos + '</span>' +
+      '<span class="acr">' + f.acr + '</span>' +
+      '<span class="delta ' + cls + '">' + flecha + '</span>';
+    board.appendChild(row);
   }
-}, 2000);
+  // incidentes
+  const inc = document.getElementById('incidentes');
+  inc.innerHTML = '';
+  for (const i of d.incidentes) {
+    const el = document.createElement('div'); el.className = 'inc';
+    el.innerHTML = '<span class="lapn">L' + i.vuelta + '</span><span>' +
+      i.texto + '</span>';
+    inc.appendChild(el);
+  }
+  // frame de la Mac (solo si existe)
+  const fb = document.getElementById('framebox');
+  if (d.hay_frame) {
+    fb.style.display = '';
+    document.getElementById('frame').src = '/frame.jpg?t=' + Date.now();
+  } else { fb.style.display = 'none'; }
+  // diálogo como tarjetas
+  const clave = JSON.stringify(d.lineas);
+  if (d.lineas.length && clave !== ultimoDialogo) {
+    ultimoDialogo = clave;
+    const dl = document.getElementById('dialogo');
+    dl.innerHTML = '';
+    for (const l of d.lineas) {
+      const c = document.createElement('div');
+      c.className = 'card ' + l.quien;
+      const q = document.createElement('div');
+      q.className = 'quien'; q.textContent = l.nombre;
+      const t = document.createElement('div');
+      t.className = 'texto'; t.textContent = l.texto;
+      c.appendChild(q); c.appendChild(t); dl.appendChild(c);
+    }
+    if (vozActiva) hablar(d.lineas, d.idioma);
+  }
+}
+tick(); setInterval(tick, 2000);
 </script>
 </body>
 </html>"""
