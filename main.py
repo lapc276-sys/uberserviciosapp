@@ -39,7 +39,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 log = logging.getLogger("f1tv-backend")
 
 INTERVALO_NARRACION = 10   # segundos entre narraciones con eventos
-RELLENO_SEGUNDOS = 90      # sin eventos, cada cuánto considerar rellenar
+# Sin eventos, cada cuánto considerar rellenar (configurable por Secret)
+RELLENO_SEGUNDOS = float(os.environ.get("RELLENO_SEGUNDOS", "90"))
 MODELO = "claude-opus-4-8"
 
 # Telemetría: "replay" reproduce la última carrera disputada desde OpenF1;
