@@ -87,35 +87,74 @@ TTS_VOCES = {
 }
 
 
-async def sintetizar(quien, texto):
-    """Convierte una línea en audio MP3 con el TTS de OpenAI (o None)."""
-    if not OPENAI_API_KEY:
-        return None
+# ElevenLabs (opcional, prioridad sobre OpenAI si está la clave).
+# Los voice IDs por defecto son voces prediseñadas públicas; se cambian
+# eligiendo otra voz en la Voice Library y copiando su ID en el Secret.
+ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY", "")
+ELEVENLABS_MODELO = os.environ.get("ELEVENLABS_MODELO",
+                                   "eleven_multilingual_v2")
+ELEVENLABS_VOCES = {
+    "narrador": os.environ.get("ELEVENLABS_VOZ_NARRADOR",
+                               "pNInz6obpgDQGcFmaJgB"),  # Adam
+    "analista": os.environ.get("ELEVENLABS_VOZ_ANALISTA",
+                               "onwK4e9ZLuTAKqWW03F9"),  # Daniel
+}
+
+
+async def _tts_elevenlabs(quien, texto):
+    voz = ELEVENLABS_VOCES.get(quien, ELEVENLABS_VOCES["narrador"])
+    async with httpx.AsyncClient() as cliente:
+        r = await cliente.post(
+            f"https://api.elevenlabs.io/v1/text-to-speech/{voz}",
+            params={"output_format": "mp3_44100_128"},
+            headers={"xi-api-key": ELEVENLABS_API_KEY},
+            json={"text": texto, "model_id": ELEVENLABS_MODELO,
+                  "voice_settings": {"stability": 0.4,
+                                     "similarity_boost": 0.75,
+                                     "style": 0.6}},
+            timeout=60,
+        )
+        r.raise_for_status()
+        return r.content
+
+
+async def _tts_openai(quien, texto):
     cfg = TTS_VOCES.get(quien, TTS_VOCES["narrador"])
+    async with httpx.AsyncClient() as cliente:
+        r = await cliente.post(
+            "https://api.openai.com/v1/audio/speech",
+            headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
+            json={"model": TTS_MODELO, "voice": cfg["voice"],
+                  "instructions": cfg["instructions"],
+                  "input": texto, "response_format": "mp3"},
+            timeout=60,
+        )
+        r.raise_for_status()
+        return r.content
+
+
+async def sintetizar(quien, texto):
+    """Convierte una línea en MP3: ElevenLabs > OpenAI > None (voz Mac)."""
     try:
-        async with httpx.AsyncClient() as cliente:
-            r = await cliente.post(
-                "https://api.openai.com/v1/audio/speech",
-                headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
-                json={"model": TTS_MODELO, "voice": cfg["voice"],
-                      "instructions": cfg["instructions"],
-                      "input": texto, "response_format": "mp3"},
-                timeout=60,
-            )
-            r.raise_for_status()
-            return r.content
+        if ELEVENLABS_API_KEY:
+            return await _tts_elevenlabs(quien, texto)
+        if OPENAI_API_KEY:
+            return await _tts_openai(quien, texto)
     except Exception as e:
-        log.error("TTS de OpenAI falló (%s) — la Mac usará su voz", e)
-        return None
+        log.error("TTS falló (%s) — la Mac usará su voz", e)
+    return None
 
 
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
-    if OPENAI_API_KEY:
+    if ELEVENLABS_API_KEY:
+        log.info("Voces naturales activadas (ElevenLabs %s)",
+                 ELEVENLABS_MODELO)
+    elif OPENAI_API_KEY:
         log.info("Voces naturales activadas (OpenAI %s)", TTS_MODELO)
     else:
-        log.warning("OPENAI_API_KEY no definida — la Mac usará sus voces "
-                    "del sistema (robóticas)")
+        log.warning("Sin clave de TTS (ELEVENLABS_API_KEY / OPENAI_API_KEY) "
+                    "— la Mac usará sus voces del sistema (robóticas)")
     tareas = [asyncio.create_task(bucle_telemetria()),
               asyncio.create_task(bucle_narracion())]
     yield

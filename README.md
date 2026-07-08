@@ -22,6 +22,11 @@ Variables de entorno (Secrets en Replit, todas opcionales):
 | Variable | Default | Qué hace |
 |---|---|---|
 | `ANTHROPIC_API_KEY` | — | Activa la narración con Claude |
+| `OPENAI_API_KEY` | — | Voces naturales con OpenAI TTS |
+| `ELEVENLABS_API_KEY` | — | Voces con ElevenLabs (prioridad sobre OpenAI) |
+| `ELEVENLABS_VOZ_NARRADOR` | Adam | Voice ID de la Voice Library para Alex |
+| `ELEVENLABS_VOZ_ANALISTA` | Daniel | Voice ID de la Voice Library para Sam |
+| `IDIOMA` | `en` | Idioma del dúo (`es` disponible) |
 | `MODO_TELEMETRIA` | `replay` | `off` para narrar solo por visión |
 | `SESSION_KEY` | `latest` | Clave de sesión OpenF1 de una carrera concreta |
 | `VELOCIDAD_REPLAY` | `1` | Ej. `10` reproduce la carrera 10 veces más rápido |
