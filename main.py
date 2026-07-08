@@ -136,6 +136,7 @@ class Estado:
         self.narracion_ts: float = 0.0
         self.clientes_mac: set[WebSocket] = set()
         self.tele: telemetria.Telemetria | None = None
+        self.tele_cargando: bool = False
         self.eventos: list[str] = []   # eventos de telemetría sin narrar
         self.diario: list[str] = []    # memoria: últimas líneas dichas
         self.lineas: list[dict] = []   # último segmento de diálogo
@@ -419,6 +420,7 @@ async def bucle_telemetria():
     if MODO_TELEMETRIA == "off":
         log.info("Telemetría desactivada (MODO_TELEMETRIA=off)")
         return
+    estado.tele_cargando = True
     try:
         tele = telemetria.Telemetria(SESSION_KEY, VELOCIDAD_REPLAY)
         await tele.cargar()
@@ -434,6 +436,7 @@ async def bucle_telemetria():
         log.error("Telemetría no disponible (%s) — se narrará por visión", e)
     finally:
         estado.tele = None
+        estado.tele_cargando = False
 
 
 async def difundir(lineas):
@@ -494,7 +497,9 @@ async def bucle_narracion():
                     continue
             else:
                 # Respaldo por visión: frame nuevo cada INTERVALO_NARRACION
-                if (estado.frame is None
+                # (y nunca mientras la telemetría todavía está cargando)
+                if (estado.tele_cargando
+                        or estado.frame is None
                         or estado.frame_ts <= ultimo_frame_narrado
                         or desde_ultima < INTERVALO_NARRACION):
                     continue
