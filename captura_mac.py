@@ -19,11 +19,14 @@ Firefox antes de rendirte y pasar a la capturadora HDMI.
 """
 
 import asyncio
+import base64
 import io
 import json
+import os
 import re
 import subprocess
 import sys
+import tempfile
 import time
 
 import mss
@@ -107,20 +110,46 @@ async def hablar(lineas, idioma="en"):
         while _pendiente:
             (segmento, idi), _pendiente = _pendiente, None
             for linea in segmento:
-                quien = linea.get("quien", "narrador")
-                texto = linea.get("texto", "")
-                if not texto:
-                    continue
-                voz = elegir_voz(quien, idi)
-                cmd = (["say", "-r", VELOCIDADES.get(quien, "175")]
-                       + (["-v", voz] if voz else []) + [texto])
+                await _reproducir_linea(linea, idi)
+
+
+async def _reproducir_linea(linea, idioma):
+    """Reproduce una línea: audio natural si viene, si no la voz del sistema."""
+    quien = linea.get("quien", "narrador")
+    texto = linea.get("texto", "")
+    audio_b64 = linea.get("audio")
+    if audio_b64:
+        ruta = None
+        try:
+            datos = base64.b64decode(audio_b64)
+            with tempfile.NamedTemporaryFile(suffix=".mp3",
+                                             delete=False) as f:
+                f.write(datos)
+                ruta = f.name
+            proc = await asyncio.create_subprocess_exec(
+                "afplay", ruta, stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL)
+            await proc.wait()
+            return
+        except Exception:
+            pass  # si el audio falla, caer a la voz del sistema
+        finally:
+            if ruta:
                 try:
-                    proc = await asyncio.create_subprocess_exec(
-                        *cmd, stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL)
-                    await proc.wait()
-                except Exception:
-                    return
+                    os.unlink(ruta)
+                except OSError:
+                    pass
+    if not texto:
+        return
+    voz = elegir_voz(quien, idioma)
+    cmd = (["say", "-r", VELOCIDADES.get(quien, "175")]
+           + (["-v", voz] if voz else []) + [texto])
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        await proc.wait()
+    except Exception:
+        pass
 
 
 def capturar_frame(sct, zona):

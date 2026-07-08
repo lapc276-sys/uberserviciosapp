@@ -28,6 +28,7 @@ import os
 import time
 
 import anthropic
+import httpx
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse, Response
@@ -54,6 +55,49 @@ IDIOMA = os.environ.get("IDIOMA", "en")
 # "Sam" funciona con voz masculina o femenina, según lo que haya instalado.
 NARRADOR = "Alex"
 ANALISTA = "Sam"
+
+# Voces naturales (opcional): con OPENAI_API_KEY definida, cada línea se
+# sintetiza con el TTS de OpenAI y la Mac la reproduce tal cual. Sin la
+# clave, la Mac usa sus voces del sistema (say).
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+TTS_MODELO = os.environ.get("TTS_MODELO", "gpt-4o-mini-tts")
+TTS_VOCES = {
+    "narrador": {
+        "voice": "ash",
+        "instructions": ("Excited Formula 1 play-by-play announcer, live "
+                         "on air. Fast, energetic, dynamic intonation; "
+                         "peaks of excitement on overtakes and incidents. "
+                         "Breathes naturally at commas and periods."),
+    },
+    "analista": {
+        "voice": "onyx",
+        "instructions": ("Calm, seasoned Formula 1 color commentator. "
+                         "Relaxed pace, thoughtful, slightly dry humor. "
+                         "Conversational, like chatting in the booth."),
+    },
+}
+
+
+async def sintetizar(quien, texto):
+    """Convierte una línea en audio MP3 con el TTS de OpenAI (o None)."""
+    if not OPENAI_API_KEY:
+        return None
+    cfg = TTS_VOCES.get(quien, TTS_VOCES["narrador"])
+    try:
+        async with httpx.AsyncClient() as cliente:
+            r = await cliente.post(
+                "https://api.openai.com/v1/audio/speech",
+                headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
+                json={"model": TTS_MODELO, "voice": cfg["voice"],
+                      "instructions": cfg["instructions"],
+                      "input": texto, "response_format": "mp3"},
+                timeout=60,
+            )
+            r.raise_for_status()
+            return r.content
+    except Exception as e:
+        log.error("TTS de OpenAI falló (%s) — la Mac usará su voz", e)
+        return None
 
 
 @contextlib.asynccontextmanager
@@ -277,7 +321,13 @@ positions, gaps or causes that are not in the data. General F1 knowledge \
 WRITTEN FOR THE EAR (text-to-speech will read it):
 - Numbers as words: "one point two seconds", "lap twenty-eight", "third \
 place". No abbreviations or symbols: no "P3", "1.2s", "T4", no parentheses.
-- Short sentences. Natural spoken rhythm."""
+- Write like people actually SPEAK, not like a script being read. \
+Punctuation is your breathing: commas for short breaths, periods for full \
+stops, "..." for hesitation or built-up tension, exclamation marks for \
+excitement, questions for real questions.
+- Short sentences. Vary the rhythm: a quick burst, then a longer thought. \
+Interjections are welcome: "Oh!", "Wow,", "Right,", "Hang on...".
+- Never write a long unbroken sentence — the voice needs to breathe."""
 
 
 DUO_SCHEMA = {
@@ -382,8 +432,16 @@ async def difundir(lineas):
         estado.diario.append(f"{_nombre_de(l['quien'])}: {l['texto']}")
         log.info("🎙️  %s: %s", _nombre_de(l["quien"]), l["texto"])
     del estado.diario[:-24]
+    lineas_ws = []
+    for l in lineas:
+        audio = await sintetizar(l["quien"], l["texto"])
+        if audio:
+            lineas_ws.append(
+                {**l, "audio": base64.standard_b64encode(audio).decode()})
+        else:
+            lineas_ws.append(l)
     mensaje = json.dumps({"tipo": "dialogo", "idioma": IDIOMA,
-                          "lineas": lineas})
+                          "lineas": lineas_ws})
     for ws in list(estado.clientes_mac):
         try:
             await ws.send_text(mensaje)
