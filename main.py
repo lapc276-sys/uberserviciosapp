@@ -111,6 +111,11 @@ async def sintetizar(quien, texto):
 
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
+    if OPENAI_API_KEY:
+        log.info("Voces naturales activadas (OpenAI %s)", TTS_MODELO)
+    else:
+        log.warning("OPENAI_API_KEY no definida — la Mac usará sus voces "
+                    "del sistema (robóticas)")
     tareas = [asyncio.create_task(bucle_telemetria()),
               asyncio.create_task(bucle_narracion())]
     yield
