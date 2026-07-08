@@ -122,6 +122,26 @@ carrera en vez de ~1.000 continuos.
 - **Fase 6 — Chat de YouTube con filtro**: responder solo preguntas con
   valor (estrategia, conceptos, escenarios), nunca leer mensajes vacíos.
 - **Fase 7 — opcional**: avatar VTuber 2D, segundo canal en español.
+- **Fase 8 — Canal Autónomo ("el director de orquesta")**: el canal se
+  administra solo, sin que el dueño encienda ni apague nada. Componentes:
+  1. **Programador**: lee el calendario de la temporada (OpenF1 publica
+     fecha y hora de cada sesión: libres, clasificación, carrera) y
+     arranca solo — ej. 30 min antes de la carrera del domingo con un
+     pre-show que repasa la clasificación del sábado (también desde
+     datos OpenF1).
+  2. **Estación siempre encendida**: el backend deja el modo "Repl con
+     pestaña abierta" y pasa a un despliegue permanente (Replit
+     Deployment / VPS, ~$10-20 USD/mes) con reinicio automático.
+  3. **Emisión sin Mac**: el propio servidor renderiza la pantalla
+     Project Apex y la envía a YouTube por RTMP (ffmpeg + navegador
+     headless). La Mac deja de ser parte de la cadena.
+  4. **Parrilla de contenido**: cuando no hay sesión en vivo —
+     post-shows con análisis, repeticiones de carreras históricas
+     (OpenF1 tiene temporadas completas: "Classic Races" narradas por el
+     dúo), resumen de noticias F1 (con búsqueda web + fuentes citadas).
+  5. **Operación sin manos**: vigilancia propia (si algo se cae, se
+     reinicia y avisa al dueño por mensaje), límites de gasto diarios
+     en las APIs.
 
 ## Project Apex (identidad visual de la Fase 4)
 
