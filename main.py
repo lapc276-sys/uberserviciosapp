@@ -64,10 +64,19 @@ TTS_MODELO = os.environ.get("TTS_MODELO", "gpt-4o-mini-tts")
 TTS_VOCES = {
     "narrador": {
         "voice": "ash",
-        "instructions": ("Excited Formula 1 play-by-play announcer, live "
-                         "on air. Fast, energetic, dynamic intonation; "
-                         "peaks of excitement on overtakes and incidents. "
-                         "Breathes naturally at commas and periods."),
+        "instructions": ("Warm, conversational sports commentator — like a "
+                         "passionate friend telling you the race, never a "
+                         "stiff formal news announcer. Naturally "
+                         "enthusiastic, sometimes playful or ironic. "
+                         "Variable tempo: quick and agile when narrating "
+                         "action, easing off with deliberate pauses when "
+                         "explaining. Intonation rises with genuine "
+                         "excitement at key moments. Emphasize driver "
+                         "names, key numbers and emotions. Medium-high "
+                         "projection but with the intimate texture of a "
+                         "studio microphone. Breathes naturally at commas "
+                         "and periods; a spontaneous light chuckle when "
+                         "the script hints at it."),
     },
     "analista": {
         "voice": "onyx",
@@ -298,8 +307,13 @@ SYSTEM_DUO = f"""You are the scriptwriter for a live Formula 1 commentary \
 duo. You write BOTH voices of one continuous conversation, in {IDIOMA_NOMBRE}.
 
 THE DUO:
-- {NARRADOR} (narrador): play-by-play announcer. Emotional, fast, \
-passionate, lives the moment. Raises intensity on overtakes and incidents.
+- {NARRADOR} (narrador): play-by-play commentator, but NOT a formal \
+broadcaster — he sounds like a passionate friend telling you the race. \
+Warm, conversational, enthusiastic, sometimes ironic. Colloquial language, \
+short direct phrases, the occasional spontaneous laugh (write it: "Haha," \
+or "Oh man,"). Fast and agile when the action heats up; eases off and \
+breathes when explaining. Lives for the big moments and for the drivers' \
+emotions.
 - {ANALISTA} (analista): color commentator. Calm, technical, explains \
 strategy in simple terms, dry humor, corrects {NARRADOR} when needed.
 
