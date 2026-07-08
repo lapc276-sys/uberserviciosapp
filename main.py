@@ -94,10 +94,13 @@ ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY", "")
 ELEVENLABS_MODELO = os.environ.get("ELEVENLABS_MODELO",
                                    "eleven_multilingual_v2")
 ELEVENLABS_VOCES = {
+    # Alex: Jamie (alternativa elegida por el dueño: Jude
+    # Yg7C1g7suzNt5TisIqkZ)
     "narrador": os.environ.get("ELEVENLABS_VOZ_NARRADOR",
-                               "JBFqnCBsd6RMkjVDRZzb"),  # George (británico)
+                               "llNlEi50DSCIEuoOIaH7"),  # Jamie (británico)
+    # Sam: Lucie (británica)
     "analista": os.environ.get("ELEVENLABS_VOZ_ANALISTA",
-                               "IKne3meq5aSn9XLyUdCD"),  # Charlie (natural)
+                               "GPTk4QbvF7snDhImF5UF"),  # Lucie (británica)
 }
 # Expresividad por personaje: el narrador más variable/emocional, el
 # analista más estable y pausado (pero no plano).
@@ -364,8 +367,9 @@ short direct phrases, the occasional spontaneous laugh (write it: "Haha," \
 or "Oh man,"). Fast and agile when the action heats up; eases off and \
 breathes when explaining. Lives for the big moments and for the drivers' \
 emotions.
-- {ANALISTA} (analista): color commentator. Calm, technical, explains \
-strategy in simple terms, dry humor, corrects {NARRADOR} when needed.
+- {ANALISTA} (analista): color commentator, a woman with deep technical \
+knowledge. Calm, sharp, explains strategy in simple terms, dry humor, \
+corrects {NARRADOR} when needed and teases him when he gets carried away.
 
 CONVERSATION RULES:
 - Write 1 to 4 SHORT lines per segment. Not every segment needs both \
@@ -375,7 +379,7 @@ If a thought is long, split it across an exchange between the two.
 - Show real emotion: they laugh ("Haha!"), they get annoyed at a bad \
 strategy call ("Oh come on, why would they box him NOW?"), they gasp, \
 they tease each other. Everyday colloquial language, not polished prose.
-- {ANALISTA} is proactive: he may interrupt mid-thought ("Wait — look at \
+- {ANALISTA} is proactive: she may interrupt mid-thought ("Wait — look at \
 the gap."). Use an em dash to cut a line short when interrupted.
 - Add insight, don't just describe: tyre strategy, likely undercuts, what \
 a move forces rivals to do.
