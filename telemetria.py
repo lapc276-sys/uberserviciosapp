@@ -17,6 +17,7 @@ darle contexto al narrador.
 import asyncio
 import datetime as dt
 import logging
+import random
 import time
 
 import httpx
@@ -57,6 +58,30 @@ async def proximas_sesiones(n=5):
               if s.get("date_start") and _fecha(s["date_start"]) > ahora]
     futuras.sort(key=lambda s: s["date_start"])
     return futuras[:n]
+
+
+async def carreras_clasicas(n=15):
+    """Carreras reales ya disputadas (temporadas recientes) para rotar
+    como maratón de 'clásicos' cuando no hay nada en vivo. Nunca inventa
+    nada — solo reordena al azar carreras que sí ocurrieron."""
+    ahora = dt.datetime.now(dt.timezone.utc)
+    candidatas = []
+    async with httpx.AsyncClient() as client:
+        for año in (ahora.year, ahora.year - 1, ahora.year - 2):
+            try:
+                r = await client.get(f"{BASE}/sessions",
+                                     params={"session_type": "Race",
+                                            "year": año}, timeout=30)
+                r.raise_for_status()
+                for s in r.json():
+                    if (s.get("session_name") == "Race"
+                            and s.get("date_start")
+                            and _fecha(s["date_start"]) < ahora):
+                        candidatas.append(s)
+            except Exception:
+                continue
+    random.shuffle(candidatas)
+    return candidatas[:n]
 
 
 class Telemetria:

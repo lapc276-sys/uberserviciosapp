@@ -981,27 +981,47 @@ async def narrar_calendario(client: anthropic.AsyncAnthropic):
 
 
 async def bucle_telemetria():
-    """Carga OpenF1 y alimenta estado.eventos durante el replay."""
+    """Programación continua: la sesión configurada primero, y luego un
+    maratón infinito de carreras clásicas reales (nunca queda "al aire
+    en blanco" si hay datos disponibles)."""
     if MODO_TELEMETRIA == "off":
         log.info("Telemetría desactivada (MODO_TELEMETRIA=off)")
         return
-    estado.tele_cargando = True
-    try:
-        tele = telemetria.Telemetria(SESSION_KEY, VELOCIDAD_REPLAY)
-        await tele.cargar()
-        estado.tele = tele
+    cola = [SESSION_KEY]
+    while True:
+        clave = cola.pop(0)
+        estado.tele_cargando = True
+        try:
+            tele = telemetria.Telemetria(clave, VELOCIDAD_REPLAY)
+            await tele.cargar()
+            estado.tele = tele
+            log.info("📺 Al aire: %s", tele.descripcion())
 
-        def al_evento(texto):
-            estado.eventos.append(texto)
-            del estado.eventos[:-30]  # no acumular backlog infinito
-            log.info("📊 %s", texto)
+            def al_evento(texto):
+                estado.eventos.append(texto)
+                del estado.eventos[:-30]
+                log.info("📊 %s", texto)
 
-        await tele.correr(al_evento)
-    except Exception as e:
-        log.error("Telemetría no disponible (%s) — se narrará por visión", e)
-    finally:
-        estado.tele = None
-        estado.tele_cargando = False
+            await tele.correr(al_evento)
+        except Exception as e:
+            log.error("Sesión '%s' no disponible (%s)", clave, e)
+        finally:
+            estado.tele = None
+            estado.tele_cargando = False
+
+        if not cola:
+            try:
+                clasicas = await telemetria.carreras_clasicas(15)
+                cola = [c["session_key"] for c in clasicas]
+                for c in clasicas[:3]:
+                    log.info("📺 En cola: %s %s",
+                            c.get("country_name"), c.get("year"))
+            except Exception as e:
+                log.warning("No se pudo armar el maratón de clásicos (%s)",
+                           e)
+        if not cola:
+            await asyncio.sleep(60)  # sin candidatas: reintentar más tarde
+            cola = [SESSION_KEY]
 
 
 async def difundir(lineas):
