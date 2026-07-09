@@ -240,6 +240,39 @@ async def frame_jpg():
     return Response(content=estado.frame, media_type="image/jpeg")
 
 
+def foco_director(t):
+    """Decide qué panel protagoniza la pantalla ahora mismo (dirección
+    automática, Fase 4.5): bandera/incidente > pelea > pit stop reciente
+    > últimas vueltas > nada. Devuelve {"etiqueta", "panel"} o None."""
+    if t is None:
+        return None
+    if t.incidentes:
+        ultimo = t.incidentes[-1]
+        if ultimo["vuelta"] >= t.vuelta - 1:
+            msg = ultimo["texto"].upper()
+            if any(k in msg for k in ("SAFETY CAR", "RED FLAG")):
+                return {"etiqueta": "SAFETY CAR", "panel": "incidentes"}
+            if any(k in msg for k in ("YELLOW", "INCIDENT", "ACCIDENT",
+                                      "CRASH")):
+                return {"etiqueta": "INCIDENT ON TRACK",
+                       "panel": "incidentes"}
+    if t.hay_pelea():
+        tabla = t.tabla()
+        fila = next((f for f in tabla if f["pelea"]), None)
+        if fila:
+            etiqueta = ("BATTLE FOR THE LEAD" if fila["pos"] == 1
+                       else f"BATTLE FOR P{fila['pos']}")
+            return {"etiqueta": etiqueta, "panel": "board"}
+    if t.ultimo_pit and t.ultimo_pit["vuelta"] >= t.vuelta - 1:
+        return {"etiqueta": f"PIT STOP — {t.ultimo_pit['nombre'].upper()}",
+               "panel": "board"}
+    if (t.total_vueltas and t.vuelta
+            and t.vuelta >= t.total_vueltas - 3):
+        return {"etiqueta": f"FINAL LAPS — {t.total_vueltas - t.vuelta} TO GO",
+               "panel": "board"}
+    return None
+
+
 @app.get("/apex")
 async def apex():
     """Datos en vivo para la pantalla de transmisión Project Apex."""
@@ -251,6 +284,7 @@ async def apex():
         "vuelta": t.vuelta if t else 0,
         "total_vueltas": t.total_vueltas if t else 0,
         "clima": t.clima if t else {},
+        "foco": foco_director(t),
         "leaderboard": t.tabla() if t else [],
         "incidentes": list(reversed(t.incidentes)) if t else [],
         "lineas": [{**l, "nombre": _nombre_de(l["quien"])}
@@ -326,9 +360,23 @@ async def visor():
          gap: 14px; padding: 14px 22px; }
   @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
   .panel { background: var(--panel); border: 1px solid var(--line);
-           border-radius: 12px; padding: 14px 16px; }
+           border-radius: 12px; padding: 14px 16px;
+           transition: border-color .3s, box-shadow .3s; }
   .panel h3 { font-size: .68rem; letter-spacing: .18em; color: var(--dim);
               text-transform: uppercase; margin-bottom: 10px; }
+  @keyframes focoPulse {
+    0%, 100% { box-shadow: 0 0 0 1px var(--accent) inset,
+                          0 0 14px rgba(225,6,0,.25); }
+    50% { box-shadow: 0 0 0 1px var(--accent) inset,
+                     0 0 22px rgba(225,6,0,.5); }
+  }
+  .panel.foco { border-color: var(--accent);
+               animation: focoPulse 1.4s infinite; }
+  #director { text-align: center; padding: 5px 0;
+             font-size: .75rem; font-weight: 700; letter-spacing: .16em;
+             color: var(--accent); text-transform: uppercase;
+             opacity: 0; transition: opacity .3s; }
+  #director.on { opacity: 1; }
   /* Leaderboard */
   #board .row { display: flex; align-items: center; gap: 8px;
                 padding: 6px 4px; border-bottom: 1px solid var(--line);
@@ -391,13 +439,14 @@ async def visor():
   <span id="clima"></span>
   <span id="lap"></span>
 </header>
+<div id="director"></div>
 <main>
-  <section class="panel"><h3>Leaderboard</h3><div id="board"></div></section>
+  <section class="panel" id="panel-board"><h3>Leaderboard</h3><div id="board"></div></section>
   <section id="centro">
     <div id="framebox"><img id="frame" alt=""></div>
     <div id="dialogo"><div id="offair">WAITING FOR SESSION…</div></div>
   </section>
-  <section class="panel"><h3>Race Control</h3><div id="incidentes"></div></section>
+  <section class="panel" id="panel-incidentes"><h3>Race Control</h3><div id="incidentes"></div></section>
 </main>
 <button id="voz">VOICE OFF — click to enable browser voice</button>
 <script>
@@ -449,6 +498,18 @@ async function tick() {
     (c.pista != null ? 'TRACK ' + Math.round(c.pista) + '°C' : '');
   document.getElementById('dot').style.display = d.en_vivo ? '' : 'none';
   document.getElementById('livetxt').style.display = d.en_vivo ? '' : 'none';
+  // dirección automática: resalta el panel protagonista del momento
+  const dir = document.getElementById('director');
+  document.getElementById('panel-board').classList.remove('foco');
+  document.getElementById('panel-incidentes').classList.remove('foco');
+  if (d.foco) {
+    dir.textContent = '● ' + d.foco.etiqueta;
+    dir.classList.add('on');
+    const el = document.getElementById('panel-' + d.foco.panel);
+    if (el) el.classList.add('foco');
+  } else {
+    dir.classList.remove('on');
+  }
   // leaderboard: color de equipo, gaps en vivo, flechas y peleas
   const board = document.getElementById('board');
   board.innerHTML = '';

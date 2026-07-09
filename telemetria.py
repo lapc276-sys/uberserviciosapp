@@ -52,6 +52,7 @@ class Telemetria:
         self.mejor_vuelta = None  # (duración, numero de piloto)
         self.incidentes = []      # últimos avisos de dirección de carrera
         self.gaps = {}            # numero -> intervalo con el coche de delante
+        self.ultimo_pit = None    # {"vuelta", "nombre"} de la última parada
         self.neumaticos = {}      # numero -> {"compuesto", "vueltas"}
         self.clima = {}           # {"aire", "pista"}
         self._stints = []         # stints ordenados por vuelta de inicio
@@ -206,6 +207,8 @@ class Telemetria:
         if tipo == "pit":
             dur = dato.get("pit_duration")
             extra = f", parada de {_seg(dur)}" if dur else ""
+            self.ultimo_pit = {"vuelta": dato.get("lap_number", self.vuelta),
+                               "nombre": self._nombre(dato["driver_number"])}
             return (f"BOXES: {self._nombre(dato['driver_number'])} entra a "
                     f"boxes en la vuelta {dato.get('lap_number', '?')}{extra}")
         if tipo == "intervalo":

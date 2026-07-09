@@ -109,10 +109,10 @@ carrera en vez de ~1.000 continuos.
   No una simple torre de
   tiempos sino una identidad visual completa estilo "Bloomberg de la F1"
   (ver sección Project Apex) + escena OBS + primera emisión a YouTube.
-- **Fase 4.5 — Dirección automática**: la IA como director de
-  realización. Sin video de F1 emitible, dirigir = decidir qué gráfico
-  protagoniza la pantalla en cada momento (pelea → duelo con gaps; pit
-  → panel de parada; bandera → alerta e "instant replay" de datos).
+- **Fase 4.5 — HECHA — Dirección automática**: la IA decide qué panel
+  protagoniza la pantalla (rótulo + resalte con borde pulsante), por
+  prioridad: bandera/incidente > pelea (por el liderato o por posición)
+  > pit stop reciente > últimas vueltas > nada especial.
 - **Fase 5 — Race Intelligence explicable**: métricas propias calculadas
   desde datos públicos, siempre con su porqué visible (ver sección
   Métricas honestas).
