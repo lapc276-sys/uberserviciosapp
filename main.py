@@ -180,6 +180,14 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="F1TV frames backend", lifespan=lifespan)
 
 
+@app.middleware("http")
+async def sin_cache(request, call_next):
+    """El navegador nunca debe guardar versiones viejas de la pantalla."""
+    respuesta = await call_next(request)
+    respuesta.headers["Cache-Control"] = "no-store"
+    return respuesta
+
+
 class Estado:
     """Último frame, narración y telemetría, compartidos entre endpoints."""
 
