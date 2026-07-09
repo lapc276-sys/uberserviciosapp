@@ -215,6 +215,35 @@ Negocio más allá de AdSense (opciones futuras): plataforma web propia
 para ligas menores y clubes pequeños ("un comentarista profesional para
 el equipo de tu ciudad"), y suscripciones.
 
+## Norte V3 (muy largo plazo): producción cinematográfica con Unreal Engine
+
+Visión recibida del dueño: un "Director AI" que no solo resalta paneles
+(lo que ya hace la Fase 4.5) sino que controla cámaras virtuales y
+reconstruye la carrera en 3D vía Unreal Engine — Battle Score numérico
+por cada duelo, "Bubble Rendering" (solo se renderiza la zona de la
+pelea más interesante, no el circuito completo), Mini Battle Window,
+gráficos inteligentes disparados por tema de conversación, salida a OBS
+por NDI.
+
+**Realidad técnica que hay que tener clara antes de perseguir esto:**
+- Unreal Engine requiere un editor gráfico con GPU potente, operado por
+  un humano (o un desarrollador de Unreal) — está fuera de lo que un
+  agente de código por terminal puede construir o probar directamente.
+- La telemetría pública (OpenF1) da posiciones con mucha menor
+  frecuencia y precisión que la necesaria para una reconstrucción
+  cinematográfica fiel — sirve para un mapa de puntos simple, no (sin
+  verificar primero) para el nivel de detalle de la imagen de
+  referencia generada por IA.
+- El propio documento de visión confirma el orden correcto: cerebro
+  primero, Unreal después — coincide con nuestras fases 0-8.
+
+**Puente honesto: el Battle Score se puede construir HOY, sin Unreal.**
+Un número (no solo sí/no) que mida intensidad de cada pelea a partir de
+datos reales (gap + velocidad de cierre) — mejora la Fase 4.5 (el
+director elige la pelea de mayor score cuando hay varias a la vez) y es
+la misma pieza que un futuro Director AI de Unreal reutilizaría para
+decidir qué cámara seguir. Primer candidato de la Fase 5.
+
 ## Norte a largo plazo: "Race Intelligence Engine"
 
 La evolución natural del cerebro (fases 7+, solo cuando el canal funcione):
