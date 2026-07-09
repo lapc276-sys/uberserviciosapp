@@ -113,9 +113,13 @@ carrera en vez de ~1.000 continuos.
   protagoniza la pantalla (rótulo + resalte con borde pulsante), por
   prioridad: bandera/incidente > pelea (por el liderato o por posición)
   > pit stop reciente > últimas vueltas > nada especial.
-- **Fase 5 — Race Intelligence explicable**: métricas propias calculadas
-  desde datos públicos, siempre con su porqué visible (ver sección
-  Métricas honestas).
+- **Fase 5 — EN CURSO — Race Intelligence explicable**: primera métrica
+  hecha — **Battle Score** (0-100 por duelo entre posiciones
+  consecutivas, cercanía + tendencia de cierre, con su razón siempre
+  visible). Alimenta el director (Fase 4.5, elige la pelea de mayor
+  score) y un panel propio en la pantalla. Puente honesto hacia el
+  futuro "Battle Score" de la visión V3 (Unreal). Pendientes: más
+  métricas (degradación de neumáticos, ventana de undercut).
 - **Fase 6 — Chat de YouTube con filtro**: responder solo preguntas con
   valor (estrategia, conceptos, escenarios), nunca leer mensajes vacíos.
 - **Fase 7 — opcional**: avatar VTuber 2D, segundo canal en español.

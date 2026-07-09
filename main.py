@@ -256,13 +256,12 @@ def foco_director(t):
                                       "CRASH")):
                 return {"etiqueta": "INCIDENT ON TRACK",
                        "panel": "incidentes"}
-    if t.hay_pelea():
-        tabla = t.tabla()
-        fila = next((f for f in tabla if f["pelea"]), None)
-        if fila:
-            etiqueta = ("BATTLE FOR THE LEAD" if fila["pos"] == 1
-                       else f"BATTLE FOR P{fila['pos']}")
-            return {"etiqueta": etiqueta, "panel": "board"}
+    duelos = t.battle_scores()
+    if duelos and duelos[0]["score"] >= 40:
+        top = duelos[0]
+        base = ("BATTLE FOR THE LEAD" if top["pos_delante"] == 1
+               else f"BATTLE FOR P{top['pos_delante']}")
+        return {"etiqueta": f"{base} — {top['score']}", "panel": "board"}
     if t.ultimo_pit and t.ultimo_pit["vuelta"] >= t.vuelta - 1:
         return {"etiqueta": f"PIT STOP — {t.ultimo_pit['nombre'].upper()}",
                "panel": "board"}
@@ -285,6 +284,7 @@ async def apex():
         "total_vueltas": t.total_vueltas if t else 0,
         "clima": t.clima if t else {},
         "foco": foco_director(t),
+        "duelos": t.battle_scores()[:4] if t else [],
         "leaderboard": t.tabla() if t else [],
         "incidentes": list(reversed(t.incidentes)) if t else [],
         "lineas": [{**l, "nombre": _nombre_de(l["quien"])}
@@ -425,6 +425,16 @@ async def visor():
                      font-size: .82rem; color: var(--dim); }
   #incidentes .inc:last-child { border-bottom: none; }
   .inc .lapn { color: var(--amber); white-space: nowrap; }
+  #right-col { display: flex; flex-direction: column; gap: 14px; }
+  #intel .duelo { padding: 7px 0; border-bottom: 1px solid var(--line); }
+  #intel .duelo:last-child { border-bottom: none; }
+  #intel .top { display: flex; justify-content: space-between;
+               font-size: .82rem; font-weight: 700; }
+  #intel .score.high { color: var(--accent); }
+  #intel .score.mid { color: var(--amber); }
+  #intel .score.low { color: var(--dim); }
+  #intel .razon { color: var(--dim); font-size: .68rem; margin-top: 2px; }
+  #intel .vacio { color: var(--dim); font-size: .78rem; }
   /* Voz */
   #voz { margin: 0 22px 20px; padding: 9px 16px; font-size: .85rem;
          border: 1px solid var(--line); border-radius: 8px;
@@ -446,7 +456,10 @@ async def visor():
     <div id="framebox"><img id="frame" alt=""></div>
     <div id="dialogo"><div id="offair">WAITING FOR SESSION…</div></div>
   </section>
-  <section class="panel" id="panel-incidentes"><h3>Race Control</h3><div id="incidentes"></div></section>
+  <div id="right-col">
+    <section class="panel" id="panel-incidentes"><h3>Race Control</h3><div id="incidentes"></div></section>
+    <section class="panel"><h3>Race Intelligence</h3><div id="intel"></div></section>
+  </div>
 </main>
 <button id="voz">VOICE OFF — click to enable browser voice</button>
 <script>
@@ -535,6 +548,25 @@ async function tick() {
       '<span class="gap">' + (f.gap || '') + '</span>' +
       '<span class="delta ' + cls + '">' + flecha + '</span>';
     board.appendChild(row);
+  }
+  // Race Intelligence: duelos con puntaje y su porqué (nunca un número
+  // sin explicación — regla de oro de métricas honestas)
+  const intel = document.getElementById('intel');
+  intel.innerHTML = '';
+  const duelos = d.duelos || [];
+  if (!duelos.length) {
+    intel.innerHTML = '<div class="vacio">No close battles right now</div>';
+  }
+  for (const dl of duelos) {
+    const row = document.createElement('div'); row.className = 'duelo';
+    const cls = dl.score >= 70 ? 'high' : dl.score >= 40 ? 'mid' : 'low';
+    const top = document.createElement('div'); top.className = 'top';
+    top.innerHTML = '<span>' + dl.entre + '</span><span class="score ' +
+      cls + '">' + dl.score + '</span>';
+    const razon = document.createElement('div'); razon.className = 'razon';
+    razon.textContent = dl.razon;
+    row.appendChild(top); row.appendChild(razon);
+    intel.appendChild(row);
   }
   // sonido de pista de fondo (con la voz activada)
   if (vozActiva && d.ambiente && !amb) {

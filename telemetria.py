@@ -52,6 +52,7 @@ class Telemetria:
         self.mejor_vuelta = None  # (duración, numero de piloto)
         self.incidentes = []      # últimos avisos de dirección de carrera
         self.gaps = {}            # numero -> intervalo con el coche de delante
+        self.gaps_anteriores = {} # numero -> intervalo de la lectura previa
         self.ultimo_pit = None    # {"vuelta", "nombre"} de la última parada
         self.neumaticos = {}      # numero -> {"compuesto", "vueltas"}
         self.clima = {}           # {"aire", "pista"}
@@ -212,7 +213,11 @@ class Telemetria:
             return (f"BOXES: {self._nombre(dato['driver_number'])} entra a "
                     f"boxes en la vuelta {dato.get('lap_number', '?')}{extra}")
         if tipo == "intervalo":
-            self.gaps[dato["driver_number"]] = dato.get("interval")
+            n = dato["driver_number"]
+            anterior = self.gaps.get(n)
+            if isinstance(anterior, (int, float)):
+                self.gaps_anteriores[n] = anterior
+            self.gaps[n] = dato.get("interval")
             return None
         if tipo == "control":
             msj = (dato.get("message") or "").strip()
@@ -259,6 +264,59 @@ class Telemetria:
     def hay_pelea(self):
         """True si hay lucha rueda a rueda en el top 10."""
         return any(f["pelea"] for f in self.tabla())
+
+    def battle_scores(self):
+        """Puntaje 0-100 por cada duelo entre posiciones consecutivas.
+
+        Metodología (100% explicable, sin cifras inventadas):
+        - Cercanía: 70 puntos como máximo, decreciendo linealmente desde
+          gap=0s (70 pts) hasta gap=3s (0 pts) — más allá de 3s no cuenta
+          como duelo.
+        - Tendencia: hasta 30 puntos extra si el gap se está CERRANDO
+          respecto a la lectura anterior (velocidad de cierre), o hasta
+          -30 si se está abriendo. Sin dato anterior, tendencia = 0.
+        Devuelve lista [{"entre": "VER vs NOR", "score": 87,
+        "razon": "..."}] ordenada de mayor a menor score.
+        """
+        tabla = self.tabla()
+        resultados = []
+        for i in range(1, len(tabla)):
+            delante, detras = tabla[i - 1], tabla[i]
+            gap_txt = detras["gap"]
+            if not gap_txt:
+                continue
+            gap = float(gap_txt.lstrip("+"))
+            if gap > 3.0:
+                continue
+            cercania = max(0.0, 70.0 * (1 - gap / 3.0))
+            numero = next((n for n, p in self.posiciones.items()
+                          if p == detras["pos"]), None)
+            anterior = self.gaps_anteriores.get(numero) if numero else None
+            tendencia = 0.0
+            razon_tendencia = "sin lectura anterior para medir tendencia"
+            if isinstance(anterior, (int, float)) and anterior > 0:
+                cierre = (anterior - gap) / anterior  # >0 se acerca
+                tendencia = max(-30.0, min(30.0, cierre * 30.0))
+                if cierre > 0.02:
+                    razon_tendencia = (f"cerrando el hueco "
+                                      f"({anterior:.2f}s → {gap:.2f}s)")
+                elif cierre < -0.02:
+                    razon_tendencia = (f"el hueco se abre "
+                                      f"({anterior:.2f}s → {gap:.2f}s)")
+                else:
+                    razon_tendencia = f"hueco estable en {gap:.2f}s"
+            score = round(max(0.0, min(100.0, cercania + tendencia)))
+            resultados.append({
+                "entre": f"{delante['acr']} vs {detras['acr']}",
+                "score": score,
+                "pos_delante": delante["pos"],
+                "pos_detras": detras["pos"],
+                "razon": f"gap de {gap:.2f}s ({round(cercania)} pts de "
+                        f"cercanía) — {razon_tendencia} "
+                        f"({round(tendencia):+d} pts de tendencia)",
+            })
+        resultados.sort(key=lambda r: -r["score"])
+        return resultados
 
     async def correr(self, al_evento):
         """Reproduce la línea de tiempo llamando a al_evento(texto)."""
