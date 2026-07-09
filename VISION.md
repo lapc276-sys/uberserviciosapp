@@ -102,7 +102,11 @@ carrera en vez de ~1.000 continuos.
 - **Fase 3 — HECHA (aprobada por el dueño)**: dúo en inglés con voces
   ElevenLabs (Jamie/Lucie) + sonido ambiente + tono según situación +
   silencios profesionales + memoria. Se sigue afinando con feedback.
-- **Fase 4 — EN CURSO — Broadcast Engine "Project Apex"**: no una simple torre de
+- **Fase 4 — Broadcast Engine "Project Apex" (núcleo visual hecho)**:
+  cabecera LIVE/vuelta/clima, leaderboard con color de equipo, gaps en
+  vivo, animación de pelea y compuesto de neumático, diálogo como
+  tarjetas, Race Control. Pendiente: escena OBS + primera emisión.
+  No una simple torre de
   tiempos sino una identidad visual completa estilo "Bloomberg de la F1"
   (ver sección Project Apex) + escena OBS + primera emisión a YouTube.
 - **Fase 4.5 — Dirección automática**: la IA como director de
