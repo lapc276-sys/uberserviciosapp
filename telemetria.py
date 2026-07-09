@@ -52,6 +52,9 @@ class Telemetria:
         self.mejor_vuelta = None  # (duración, numero de piloto)
         self.incidentes = []      # últimos avisos de dirección de carrera
         self.gaps = {}            # numero -> intervalo con el coche de delante
+        self.neumaticos = {}      # numero -> {"compuesto", "vueltas"}
+        self.clima = {}           # {"aire", "pista"}
+        self._stints = []         # stints ordenados por vuelta de inicio
         # timeline: lista de (fecha, tipo, dato) ordenada por fecha
         self._timeline = []
 
@@ -78,7 +81,8 @@ class Telemetria:
             # De uno en uno y con pausa: la API gratuita limita el ritmo
             datos = {}
             for endpoint in ("/drivers", "/position", "/pit",
-                             "/race_control", "/laps", "/intervals"):
+                             "/race_control", "/laps", "/intervals",
+                             "/stints", "/weather"):
                 await asyncio.sleep(1.0)
                 datos[endpoint] = await self._get(client, endpoint,
                                                   session_key=sk)
@@ -88,6 +92,8 @@ class Telemetria:
             control = datos["/race_control"]
             vueltas = datos["/laps"]
             intervalos = datos["/intervals"]
+            stints = datos["/stints"]
+            clima = datos["/weather"]
         for d in drivers:
             self.pilotos[d["driver_number"]] = {
                 "nombre": d.get("full_name") or d.get("broadcast_name")
@@ -109,6 +115,12 @@ class Telemetria:
                 tl.append((_fecha(v["date_start"]), "vuelta", v))
         for i in intervalos:
             tl.append((_fecha(i["date"]), "intervalo", i))
+        for c in clima:
+            tl.append((_fecha(c["date"]), "clima", c))
+        # Los stints no traen fecha (solo vuelta de inicio/fin), así que se
+        # consultan por número de vuelta en _procesar en vez de ir en la
+        # timeline ordenada por fecha.
+        self._stints = sorted(stints, key=lambda s: s.get("lap_start") or 0)
         self.total_vueltas = max(
             (v.get("lap_number") or 0 for v in vueltas), default=0)
         tl.sort(key=lambda e: e[0])
@@ -169,10 +181,20 @@ class Telemetria:
                 return (f"ADELANTAMIENTO: {self._nombre(numero)} gana la "
                         f"posición {pos} (venía {anterior}º)")
             return None
+        if tipo == "clima":
+            self.clima = {"aire": dato.get("air_temperature"),
+                         "pista": dato.get("track_temperature")}
+            return None
         if tipo == "vuelta":
             n = dato.get("lap_number") or 0
             if n > self.vuelta:
                 self.vuelta = n
+                for s in self._stints:
+                    if (s.get("lap_start") or 0) <= n:
+                        self.neumaticos[s["driver_number"]] = {
+                            "compuesto": (s.get("compound") or "")[:1],
+                            "vueltas": n - (s.get("lap_start") or n) + 1,
+                        }
             dur = dato.get("lap_duration")
             if dur and n > 1 and not dato.get("is_pit_out_lap"):
                 if self.mejor_vuelta is None or dur < self.mejor_vuelta[0]:
@@ -202,7 +224,7 @@ class Telemetria:
         return None
 
     def tabla(self):
-        """Leaderboard: [{pos, acr, nombre, color, gap, pelea}]."""
+        """Leaderboard: [{pos, acr, nombre, color, gap, pelea, neumatico}]."""
         orden = sorted(self.posiciones.items(), key=lambda kv: kv[1])
         filas = []
         for n, pos in orden[:10]:
@@ -216,12 +238,15 @@ class Telemetria:
                 gap_txt = str(gap)
             pelea = (pos > 1 and isinstance(gap, (int, float))
                      and gap < 1.0)
+            neu = self.neumaticos.get(n, {})
             filas.append({"pos": pos,
                           "acr": p.get("acronimo", str(n)),
                           "nombre": self._nombre(n),
                           "color": p.get("color", ""),
                           "gap": gap_txt,
-                          "pelea": pelea})
+                          "pelea": pelea,
+                          "neumatico": neu.get("compuesto", ""),
+                          "vueltas_neumatico": neu.get("vueltas", 0)})
         # una pelea involucra a los dos coches: marcar también al de delante
         for i in range(1, len(filas)):
             if filas[i]["pelea"]:

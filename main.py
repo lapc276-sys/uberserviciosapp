@@ -250,6 +250,7 @@ async def apex():
         "circuito": (t.sesion.get("circuit_short_name", "") if t else ""),
         "vuelta": t.vuelta if t else 0,
         "total_vueltas": t.total_vueltas if t else 0,
+        "clima": t.clima if t else {},
         "leaderboard": t.tabla() if t else [],
         "incidentes": list(reversed(t.incidentes)) if t else [],
         "lineas": [{**l, "nombre": _nombre_de(l["quien"])}
@@ -319,6 +320,8 @@ async def visor():
         text-transform: uppercase; }
   #lap { margin-left: auto; color: var(--dim); font-variant-numeric:
          tabular-nums; font-size: .9rem; letter-spacing: .08em; }
+  #clima { color: var(--dim); font-size: .78rem; font-variant-numeric:
+           tabular-nums; letter-spacing: .04em; }
   main { display: grid; grid-template-columns: 230px 1fr 290px;
          gap: 14px; padding: 14px 22px; }
   @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
@@ -335,6 +338,12 @@ async def visor():
   .chip { width: 4px; height: 15px; border-radius: 2px;
           background: var(--line); flex: none; }
   .acr { font-weight: 700; letter-spacing: .06em; }
+  .tyre { font-size: .68rem; font-weight: 700; color: var(--dim);
+          border: 1px solid var(--line); border-radius: 4px;
+          width: 1.3em; text-align: center; flex: none; }
+  .tyre.S { color: var(--down); border-color: var(--down); }
+  .tyre.M { color: var(--amber); border-color: var(--amber); }
+  .tyre.H { color: var(--txt); border-color: var(--dim); }
   .gap { margin-left: auto; color: var(--dim); font-size: .78rem; }
   .delta { font-size: .8rem; width: 1.1em; text-align: right;
            transition: opacity .6s; opacity: 0; }
@@ -379,6 +388,7 @@ async def visor():
 <header>
   <span class="dot" id="dot"></span><span class="live" id="livetxt">LIVE</span>
   <span id="gp">—</span>
+  <span id="clima"></span>
   <span id="lap"></span>
 </header>
 <main>
@@ -433,6 +443,10 @@ async function tick() {
   document.getElementById('lap').textContent =
     d.en_vivo && d.vuelta ? 'LAP ' + d.vuelta +
       (d.total_vueltas ? ' / ' + d.total_vueltas : '') : '';
+  const c = d.clima || {};
+  document.getElementById('clima').textContent =
+    (c.aire != null ? 'AIR ' + Math.round(c.aire) + '°C  ' : '') +
+    (c.pista != null ? 'TRACK ' + Math.round(c.pista) + '°C' : '');
   document.getElementById('dot').style.display = d.en_vivo ? '' : 'none';
   document.getElementById('livetxt').style.display = d.en_vivo ? '' : 'none';
   // leaderboard: color de equipo, gaps en vivo, flechas y peleas
@@ -451,9 +465,12 @@ async function tick() {
     }
     posPrevias[f.acr] = f.pos;
     const color = f.color ? '#' + f.color : 'var(--line)';
+    const tyre = f.neumatico
+      ? '<span class="tyre ' + f.neumatico + '">' + f.neumatico + '</span>'
+      : '<span class="tyre"></span>';
     row.innerHTML = '<span class="p">' + f.pos + '</span>' +
       '<span class="chip" style="background:' + color + '"></span>' +
-      '<span class="acr">' + f.acr + '</span>' +
+      '<span class="acr">' + f.acr + '</span>' + tyre +
       '<span class="gap">' + (f.gap || '') + '</span>' +
       '<span class="delta ' + cls + '">' + flecha + '</span>';
     board.appendChild(row);
