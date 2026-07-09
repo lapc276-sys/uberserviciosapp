@@ -257,7 +257,17 @@ async def apex():
         "segmento": estado.segmento_id,
         "idioma": IDIOMA,
         "hay_frame": estado.frame is not None,
+        "ambiente": estado.ambiente_activo,
     })
+
+
+@app.get("/ambiente.mp3")
+async def ambiente_mp3():
+    """Loop de motores para el visor web."""
+    if not estado.ambiente_b64:
+        return Response(status_code=404)
+    return Response(content=base64.b64decode(estado.ambiente_b64),
+                    media_type="audio/mpeg")
 
 
 @app.get("/audio/{seg}/{idx}")
@@ -317,16 +327,27 @@ async def visor():
   .panel h3 { font-size: .68rem; letter-spacing: .18em; color: var(--dim);
               text-transform: uppercase; margin-bottom: 10px; }
   /* Leaderboard */
-  #board .row { display: flex; align-items: center; gap: 10px;
+  #board .row { display: flex; align-items: center; gap: 8px;
                 padding: 6px 4px; border-bottom: 1px solid var(--line);
                 font-variant-numeric: tabular-nums; }
   #board .row:last-child { border-bottom: none; }
   .p { color: var(--dim); width: 1.4em; font-size: .85rem; }
+  .chip { width: 4px; height: 15px; border-radius: 2px;
+          background: var(--line); flex: none; }
   .acr { font-weight: 700; letter-spacing: .06em; }
-  .delta { margin-left: auto; font-size: .8rem; width: 1.2em;
-           text-align: right; transition: opacity .6s; opacity: 0; }
+  .gap { margin-left: auto; color: var(--dim); font-size: .78rem; }
+  .delta { font-size: .8rem; width: 1.1em; text-align: right;
+           transition: opacity .6s; opacity: 0; }
   .delta.up   { color: var(--up); opacity: 1; }
   .delta.down { color: var(--down); opacity: 1; }
+  @keyframes lucha {
+    0%, 100% { transform: translateX(0); }
+    20% { transform: translateX(3px); }
+    45% { transform: translateX(-2px); }
+    70% { transform: translateX(2px); }
+  }
+  #board .row.pelea { animation: lucha .55s infinite; }
+  #board .row.pelea .gap { color: var(--amber); font-weight: 600; }
   /* Centro */
   #centro { display: flex; flex-direction: column; gap: 14px; }
   #framebox { display: none; }
@@ -371,7 +392,7 @@ async def visor():
 <button id="voz">VOICE OFF — click to enable browser voice</button>
 <script>
 let vozActiva = false, ultimoSegmento = -1, posPrevias = {};
-let reproduciendo = false, pendiente = null;
+let reproduciendo = false, pendiente = null, amb = null;
 const btn = document.getElementById('voz');
 btn.onclick = () => {
   vozActiva = !vozActiva;
@@ -414,11 +435,12 @@ async function tick() {
       (d.total_vueltas ? ' / ' + d.total_vueltas : '') : '';
   document.getElementById('dot').style.display = d.en_vivo ? '' : 'none';
   document.getElementById('livetxt').style.display = d.en_vivo ? '' : 'none';
-  // leaderboard con flechas 2s
+  // leaderboard: color de equipo, gaps en vivo, flechas y peleas
   const board = document.getElementById('board');
   board.innerHTML = '';
   for (const f of d.leaderboard) {
-    const row = document.createElement('div'); row.className = 'row';
+    const row = document.createElement('div');
+    row.className = 'row' + (f.pelea ? ' pelea' : '');
     const prev = posPrevias[f.acr];
     let flecha = '', cls = '';
     if (prev !== undefined && prev !== f.pos) {
@@ -428,10 +450,21 @@ async function tick() {
                          if (el) el.className = 'delta'; }, 2000);
     }
     posPrevias[f.acr] = f.pos;
+    const color = f.color ? '#' + f.color : 'var(--line)';
     row.innerHTML = '<span class="p">' + f.pos + '</span>' +
+      '<span class="chip" style="background:' + color + '"></span>' +
       '<span class="acr">' + f.acr + '</span>' +
+      '<span class="gap">' + (f.gap || '') + '</span>' +
       '<span class="delta ' + cls + '">' + flecha + '</span>';
     board.appendChild(row);
+  }
+  // sonido de pista de fondo (con la voz activada)
+  if (vozActiva && d.ambiente && !amb) {
+    amb = new Audio('/ambiente.mp3');
+    amb.loop = true; amb.volume = 0.15;
+    amb.play().catch(() => { amb = null; });
+  } else if (amb && (!d.ambiente || !vozActiva)) {
+    amb.pause(); amb = null;
   }
   // incidentes
   const inc = document.getElementById('incidentes');
@@ -534,11 +567,27 @@ CONVERSATION RULES:
 voices — sometimes one line from one of them is perfect.
 - Each line is SHORT: one or two brief sentences, never a paragraph. \
 If a thought is long, split it across an exchange between the two.
-- Show real emotion: they laugh ("Haha!"), they get annoyed at a bad \
-strategy call ("Oh come on, why would they box him NOW?"), they gasp, \
-they tease each other. Everyday colloquial language, not polished prose.
+- VARY LENGTH WILDLY. They ask each other questions, and some answers \
+are just "Yes.", "No chance.", "Every single time." A one-word reply \
+after a long thought sounds human. Same rhythm every time sounds robotic.
+- PEAK MOMENTS ARE THEATRE. On a big overtake or crash, {NARRADOR} \
+explodes: "OHHH my word — around the OUTSIDE! That is the move of a \
+CHAMPION!" Stretch words in the heat ("Hamiltooon hangs it out wide!"). \
+{ANALISTA} rides the wave for a beat, then brings it back to earth.
+- INTERRUPT LIKE LIVE TV. When action bursts in mid-thought: "—sorry, \
+hold that thought, THERE'S CONTACT at turn four!" ... and once it \
+settles: "okay, phew... go on, you were saying." Use the em dash to cut \
+a line short.
+- BREATHE. In wheel-to-wheel battles they sound breathless: "...phew.", \
+"my heart, honestly...", a gasp before the words come out. After a big \
+shout, a short recovery line.
+- LAUGH LIKE HUMANS, never as a written token. No "Haha," as a word. \
+Real laughter breaks into the sentence: "oh— hahaha no way,", "pfff—", \
+"hah! fair enough." It should read like it escaped, not like a line read.
+- They get annoyed at bad strategy ("Oh come on, why would they box him \
+NOW?"), they tease each other. Everyday colloquial language.
 - {ANALISTA} is proactive: she may interrupt mid-thought ("Wait — look at \
-the gap."). Use an em dash to cut a line short when interrupted.
+the gap.").
 - Add insight, don't just describe: tyre strategy, likely undercuts, what \
 a move forces rivals to do.
 - They sometimes disagree, with arguments. Gentle tension is good.
@@ -609,7 +658,10 @@ def _situacion(eventos):
             and tele.vuelta >= tele.total_vueltas - 3):
         return "FINAL LAPS — building excitement, counting down"
     if texto and "ADELANTAMIENTO" in texto:
-        return "overtaking happening — high energy"
+        return "OVERTAKE HAPPENING — explosive, this is the theatre moment"
+    if tele and tele.vuelta >= 1 and tele.hay_pelea():
+        return ("wheel-to-wheel BATTLE under way — breathless, urgent, "
+                "hearts racing")
     if eventos:
         return "normal racing — engaged"
     return "quiet stint — relaxed, low gear"

@@ -51,6 +51,7 @@ class Telemetria:
         self.total_vueltas = 0
         self.mejor_vuelta = None  # (duración, numero de piloto)
         self.incidentes = []      # últimos avisos de dirección de carrera
+        self.gaps = {}            # numero -> intervalo con el coche de delante
         # timeline: lista de (fecha, tipo, dato) ordenada por fecha
         self._timeline = []
 
@@ -77,7 +78,7 @@ class Telemetria:
             # De uno en uno y con pausa: la API gratuita limita el ritmo
             datos = {}
             for endpoint in ("/drivers", "/position", "/pit",
-                             "/race_control", "/laps"):
+                             "/race_control", "/laps", "/intervals"):
                 await asyncio.sleep(1.0)
                 datos[endpoint] = await self._get(client, endpoint,
                                                   session_key=sk)
@@ -86,6 +87,7 @@ class Telemetria:
             pits = datos["/pit"]
             control = datos["/race_control"]
             vueltas = datos["/laps"]
+            intervalos = datos["/intervals"]
         for d in drivers:
             self.pilotos[d["driver_number"]] = {
                 "nombre": d.get("full_name") or d.get("broadcast_name")
@@ -93,6 +95,7 @@ class Telemetria:
                 "equipo": d.get("team_name") or "",
                 "acronimo": d.get("name_acronym")
                 or str(d["driver_number"]),
+                "color": d.get("team_colour") or "",
             }
         tl = []
         for p in posiciones:
@@ -104,6 +107,8 @@ class Telemetria:
         for v in vueltas:
             if v.get("date_start"):
                 tl.append((_fecha(v["date_start"]), "vuelta", v))
+        for i in intervalos:
+            tl.append((_fecha(i["date"]), "intervalo", i))
         self.total_vueltas = max(
             (v.get("lap_number") or 0 for v in vueltas), default=0)
         tl.sort(key=lambda e: e[0])
@@ -181,6 +186,9 @@ class Telemetria:
             extra = f", parada de {_seg(dur)}" if dur else ""
             return (f"BOXES: {self._nombre(dato['driver_number'])} entra a "
                     f"boxes en la vuelta {dato.get('lap_number', '?')}{extra}")
+        if tipo == "intervalo":
+            self.gaps[dato["driver_number"]] = dato.get("interval")
+            return None
         if tipo == "control":
             msj = (dato.get("message") or "").strip()
             if not msj or "BLUE FLAG" in msj:
@@ -194,12 +202,35 @@ class Telemetria:
         return None
 
     def tabla(self):
-        """Leaderboard para la pantalla: [{pos, acr, nombre}]."""
+        """Leaderboard: [{pos, acr, nombre, color, gap, pelea}]."""
         orden = sorted(self.posiciones.items(), key=lambda kv: kv[1])
-        return [{"pos": pos,
-                 "acr": self.pilotos.get(n, {}).get("acronimo", str(n)),
-                 "nombre": self._nombre(n)}
-                for n, pos in orden[:10]]
+        filas = []
+        for n, pos in orden[:10]:
+            p = self.pilotos.get(n, {})
+            gap = self.gaps.get(n)
+            if pos == 1 or gap is None:
+                gap_txt = ""
+            elif isinstance(gap, (int, float)):
+                gap_txt = f"+{gap:.3f}"
+            else:
+                gap_txt = str(gap)
+            pelea = (pos > 1 and isinstance(gap, (int, float))
+                     and gap < 1.0)
+            filas.append({"pos": pos,
+                          "acr": p.get("acronimo", str(n)),
+                          "nombre": self._nombre(n),
+                          "color": p.get("color", ""),
+                          "gap": gap_txt,
+                          "pelea": pelea})
+        # una pelea involucra a los dos coches: marcar también al de delante
+        for i in range(1, len(filas)):
+            if filas[i]["pelea"]:
+                filas[i - 1]["pelea"] = True
+        return filas
+
+    def hay_pelea(self):
+        """True si hay lucha rueda a rueda en el top 10."""
+        return any(f["pelea"] for f in self.tabla())
 
     async def correr(self, al_evento):
         """Reproduce la línea de tiempo llamando a al_evento(texto)."""
