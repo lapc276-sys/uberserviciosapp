@@ -123,13 +123,17 @@ carrera en vez de ~1.000 continuos.
 - **Fase 6 — Chat de YouTube con filtro**: responder solo preguntas con
   valor (estrategia, conceptos, escenarios), nunca leer mensajes vacíos.
 - **Fase 7 — opcional**: avatar VTuber 2D, segundo canal en español.
-- **Fase 8 — Canal Autónomo ("el director de orquesta")**: el canal se
-  administra solo, sin que el dueño encienda ni apague nada. Componentes:
-  1. **Programador**: lee el calendario de la temporada (OpenF1 publica
-     fecha y hora de cada sesión: libres, clasificación, carrera) y
-     arranca solo — ej. 30 min antes de la carrera del domingo con un
-     pre-show que repasa la clasificación del sábado (también desde
-     datos OpenF1).
+- **Fase 8 — EN CURSO — Canal Autónomo ("el director de orquesta")**: el
+  canal se administra solo, sin que el dueño encienda ni apague nada.
+  Componentes:
+  1. **Calendario / Programador — HECHO (primera pieza)**: lee las
+     próximas sesiones reales de OpenF1 (nunca inventa fechas); cuando
+     no hay carrera en vivo, el leaderboard se convierte en "Upcoming
+     Sessions" con horarios en 4 zonas horarias, y el dúo anuncia en voz
+     el próximo fin de semana cada `ANUNCIO_SEGUNDOS` (comercial propio,
+     con invitación natural a suscribirse). Pendiente: arrancar
+     automáticamente la carga de la sesión correcta 30 min antes de que
+     empiece (hoy sigue siendo "latest"/manual).
   2. **Estación siempre encendida**: el backend deja el modo "Repl con
      pestaña abierta" y pasa a un despliegue permanente (Replit
      Deployment / VPS, ~$10-20 USD/mes) con reinicio automático.
@@ -143,6 +147,13 @@ carrera en vez de ~1.000 continuos.
   5. **Operación sin manos**: vigilancia propia (si algo se cae, se
      reinicia y avisa al dueño por mensaje), límites de gasto diarios
      en las APIs.
+
+  **Límite ético explícito**: nunca bots que se suscriban, den "me
+  gusta" o comenten simulando ser espectadores reales — es manipulación
+  de engagement y viola los Términos de Servicio de YouTube (riesgo real
+  de cierre del canal). La promoción del canal es siempre: el dúo
+  invitando en voz a los espectadores reales a suscribirse, nunca
+  actividad automatizada haciéndose pasar por audiencia.
 
 ## Project Apex (identidad visual de la Fase 4)
 

@@ -22,10 +22,12 @@ Ejecutar localmente:  python3 main.py   (puerto 8080 o $PORT)
 import asyncio
 import base64
 import contextlib
+import datetime as dt
 import json
 import logging
 import os
 import time
+from zoneinfo import ZoneInfo
 
 import anthropic
 import httpx
@@ -41,6 +43,13 @@ log = logging.getLogger("f1tv-backend")
 INTERVALO_NARRACION = 10   # segundos entre narraciones con eventos
 # Sin eventos, cada cuánto considerar rellenar (configurable por Secret)
 RELLENO_SEGUNDOS = float(os.environ.get("RELLENO_SEGUNDOS", "90"))
+# Fuera de vivo: cada cuánto anuncia el dúo la próxima sesión (segundos)
+ANUNCIO_SEGUNDOS = float(os.environ.get("ANUNCIO_SEGUNDOS", "600"))
+
+# Zonas horarias para el calendario (par de etiqueta, zona IANA)
+ZONAS_CALENDARIO = [("UTC", "UTC"), ("ET", "America/New_York"),
+                    ("Madrid", "Europe/Madrid"),
+                    ("CDMX", "America/Mexico_City")]
 # Modelo del guionista (Secret MODELO_NARRADOR para cambiarlo):
 # claude-opus-4-8 = máxima calidad · claude-haiku-4-5 = ~5x más barato
 MODELO = os.environ.get("MODELO_NARRADOR", "claude-opus-4-8")
@@ -171,7 +180,8 @@ async def lifespan(app: FastAPI):
                     "— la Mac usará sus voces del sistema (robóticas)")
     tareas = [asyncio.create_task(bucle_telemetria()),
               asyncio.create_task(bucle_narracion()),
-              asyncio.create_task(bucle_ambiente())]
+              asyncio.create_task(bucle_ambiente()),
+              asyncio.create_task(bucle_calendario())]
     yield
     for t in tareas:
         t.cancel()
@@ -204,6 +214,8 @@ class Estado:
         self.lineas: list[dict] = []   # último segmento de diálogo
         self.ambiente_b64: str | None = None  # loop de sonido de motores
         self.ambiente_activo: bool = False
+        self.calendario: list[dict] = []  # próximas sesiones (datos reales)
+        self.ultimo_anuncio: float = 0.0
         self.segmento_id: int = 0      # id del último segmento con audio
         self.audios: list = []         # mp3 por línea del último segmento
 
@@ -285,6 +297,7 @@ async def apex():
         "clima": t.clima if t else {},
         "foco": foco_director(t),
         "duelos": t.battle_scores()[:4] if t else [],
+        "calendario": estado.calendario,
         "leaderboard": t.tabla() if t else [],
         "incidentes": list(reversed(t.incidentes)) if t else [],
         "lineas": [{**l, "nombre": _nombre_de(l["quien"])}
@@ -433,8 +446,8 @@ async def visor():
   #intel .score.high { color: var(--accent); }
   #intel .score.mid { color: var(--amber); }
   #intel .score.low { color: var(--dim); }
-  #intel .razon { color: var(--dim); font-size: .68rem; margin-top: 2px; }
-  #intel .vacio { color: var(--dim); font-size: .78rem; }
+  .razon { color: var(--dim); font-size: .68rem; margin-top: 2px; }
+  .vacio { color: var(--dim); font-size: .78rem; }
   /* Voz */
   #voz { margin: 0 22px 20px; padding: 9px 16px; font-size: .85rem;
          border: 1px solid var(--line); border-radius: 8px;
@@ -451,7 +464,7 @@ async def visor():
 </header>
 <div id="director"></div>
 <main>
-  <section class="panel" id="panel-board"><h3>Leaderboard</h3><div id="board"></div></section>
+  <section class="panel" id="panel-board"><h3 id="board-title">Leaderboard</h3><div id="board"></div></section>
   <section id="centro">
     <div id="framebox"><img id="frame" alt=""></div>
     <div id="dialogo"><div id="offair">WAITING FOR SESSION…</div></div>
@@ -523,31 +536,50 @@ async function tick() {
   } else {
     dir.classList.remove('on');
   }
-  // leaderboard: color de equipo, gaps en vivo, flechas y peleas
+  // leaderboard en vivo, o calendario de próximas sesiones si no hay carrera
   const board = document.getElementById('board');
+  const boardTitle = document.getElementById('board-title');
   board.innerHTML = '';
-  for (const f of d.leaderboard) {
-    const row = document.createElement('div');
-    row.className = 'row' + (f.pelea ? ' pelea' : '');
-    const prev = posPrevias[f.acr];
-    let flecha = '', cls = '';
-    if (prev !== undefined && prev !== f.pos) {
-      flecha = f.pos < prev ? '\\u25B2' : '\\u25BC';
-      cls = f.pos < prev ? 'up' : 'down';
-      setTimeout(() => { const el = row.querySelector('.delta');
-                         if (el) el.className = 'delta'; }, 2000);
+  if (d.en_vivo) {
+    boardTitle.textContent = 'Leaderboard';
+    for (const f of d.leaderboard) {
+      const row = document.createElement('div');
+      row.className = 'row' + (f.pelea ? ' pelea' : '');
+      const prev = posPrevias[f.acr];
+      let flecha = '', cls = '';
+      if (prev !== undefined && prev !== f.pos) {
+        flecha = f.pos < prev ? '\\u25B2' : '\\u25BC';
+        cls = f.pos < prev ? 'up' : 'down';
+        setTimeout(() => { const el = row.querySelector('.delta');
+                           if (el) el.className = 'delta'; }, 2000);
+      }
+      posPrevias[f.acr] = f.pos;
+      const color = f.color ? '#' + f.color : 'var(--line)';
+      const tyre = f.neumatico
+        ? '<span class="tyre ' + f.neumatico + '">' + f.neumatico + '</span>'
+        : '<span class="tyre"></span>';
+      row.innerHTML = '<span class="p">' + f.pos + '</span>' +
+        '<span class="chip" style="background:' + color + '"></span>' +
+        '<span class="acr">' + f.acr + '</span>' + tyre +
+        '<span class="gap">' + (f.gap || '') + '</span>' +
+        '<span class="delta ' + cls + '">' + flecha + '</span>';
+      board.appendChild(row);
     }
-    posPrevias[f.acr] = f.pos;
-    const color = f.color ? '#' + f.color : 'var(--line)';
-    const tyre = f.neumatico
-      ? '<span class="tyre ' + f.neumatico + '">' + f.neumatico + '</span>'
-      : '<span class="tyre"></span>';
-    row.innerHTML = '<span class="p">' + f.pos + '</span>' +
-      '<span class="chip" style="background:' + color + '"></span>' +
-      '<span class="acr">' + f.acr + '</span>' + tyre +
-      '<span class="gap">' + (f.gap || '') + '</span>' +
-      '<span class="delta ' + cls + '">' + flecha + '</span>';
-    board.appendChild(row);
+  } else if ((d.calendario || []).length) {
+    boardTitle.textContent = 'Upcoming Sessions';
+    for (const s of d.calendario) {
+      const row = document.createElement('div'); row.className = 'row';
+      row.innerHTML = '<span class="acr">' + s.sesion.toUpperCase() +
+        '</span><span class="gap">' + s.pais + '</span>';
+      board.appendChild(row);
+      const sub = document.createElement('div');
+      sub.className = 'razon'; sub.style.padding = '0 2px 8px 2px';
+      sub.textContent = s.horarios.join('   ·   ');
+      board.appendChild(sub);
+    }
+  } else {
+    boardTitle.textContent = 'Leaderboard';
+    board.innerHTML = '<div class="vacio">No live session</div>';
   }
   // Race Intelligence: duelos con puntaje y su porqué (nunca un número
   // sin explicación — regla de oro de métricas honestas)
@@ -888,6 +920,66 @@ async def bucle_ambiente():
                     pass
 
 
+def _horarios(fecha_iso):
+    """Convierte una fecha ISO (UTC) a texto legible en varias zonas."""
+    base = dt.datetime.fromisoformat(fecha_iso.replace("Z", "+00:00"))
+    return [f"{etq} {base.astimezone(ZoneInfo(zona)):%a %d %b %H:%M}"
+            for etq, zona in ZONAS_CALENDARIO]
+
+
+async def bucle_calendario():
+    """Refresca cada 30 min la lista real de próximas sesiones (OpenF1)."""
+    while True:
+        try:
+            sesiones = await telemetria.proximas_sesiones(5)
+            estado.calendario = [{
+                "pais": s.get("country_name", "?"),
+                "sesion": s.get("session_name", "?"),
+                "circuito": s.get("circuit_short_name", "?"),
+                "horarios": _horarios(s["date_start"]),
+            } for s in sesiones]
+        except Exception as e:
+            log.warning("Calendario no disponible (%s)", e)
+        await asyncio.sleep(1800)
+
+
+SYSTEM_CALENDARIO = f"""You are the scriptwriter for {NARRADOR} and \
+{ANALISTA}, a Formula 1 commentary duo, currently OFF AIR between \
+sessions. Write ONE short segment (1 to 3 short lines) in \
+{IDIOMA_NOMBRE} announcing the upcoming schedule so viewers know when \
+to come back. Use ONLY the real schedule data given below — never \
+invent dates, times, or session names. Warm, inviting channel-promo \
+tone. Natural to remind viewers to subscribe so they don't miss it — \
+brief and friendly, never pushy or repetitive with previous mentions."""
+
+
+async def narrar_calendario(client: anthropic.AsyncAnthropic):
+    if not estado.calendario:
+        return []
+    lineas_cal = "\n".join(
+        f"{s['pais']} — {s['sesion']} ({s['circuito']}): "
+        f"{' / '.join(s['horarios'])}"
+        for s in estado.calendario[:3])
+    memoria = "\n".join(estado.diario[-6:]) or "(nothing said yet)"
+    response = await client.messages.create(
+        model=MODELO, max_tokens=300, system=SYSTEM_CALENDARIO,
+        output_config={"format": {"type": "json_schema",
+                                  "schema": DUO_SCHEMA}},
+        messages=[{
+            "role": "user",
+            "content": (f"UPCOMING SCHEDULE (real data):\n{lineas_cal}\n\n"
+                        f"RECENTLY SAID (avoid repeating):\n{memoria}"),
+        }],
+    )
+    if response.stop_reason == "refusal":
+        return []
+    texto = next((b.text for b in response.content if b.type == "text"), "")
+    try:
+        return json.loads(texto).get("lineas", [])
+    except json.JSONDecodeError:
+        return []
+
+
 async def bucle_telemetria():
     """Carga OpenF1 y alimenta estado.eventos durante el replay."""
     if MODO_TELEMETRIA == "off":
@@ -976,17 +1068,22 @@ async def bucle_narracion():
                     texto = await narrar_datos(client, None)
                 else:
                     continue
-            else:
+            elif estado.frame is not None:
                 # Respaldo por visión: frame nuevo cada INTERVALO_NARRACION
-                # (y nunca mientras la telemetría todavía está cargando)
                 if (estado.tele_cargando
-                        or estado.frame is None
                         or estado.frame_ts <= ultimo_frame_narrado
                         or desde_ultima < INTERVALO_NARRACION):
                     continue
                 ultimo_frame_narrado = estado.frame_ts
                 texto = await narrar_frame(client, estado.frame,
                                            estado.narracion)
+            elif (not estado.tele_cargando and estado.calendario
+                    and ahora - estado.ultimo_anuncio >= ANUNCIO_SEGUNDOS):
+                # Verdadero fuera de vivo: sin carrera y sin frame de la Mac
+                estado.ultimo_anuncio = ahora
+                texto = await narrar_calendario(client)
+            else:
+                continue
         except anthropic.APIError as e:
             log.error("Error de la API de Anthropic: %s", e)
             continue

@@ -40,6 +40,25 @@ def _seg(valor):
     return f"{s:.1f} segundos"
 
 
+async def proximas_sesiones(n=5):
+    """Próximas sesiones de F1 (libres, clasificación, carrera) desde
+    OpenF1. Lista real y verificable; vacía si no hay datos disponibles
+    — nunca se inventa una fecha."""
+    ahora = dt.datetime.now(dt.timezone.utc)
+    async with httpx.AsyncClient() as client:
+        try:
+            r = await client.get(f"{BASE}/sessions",
+                                 params={"year": ahora.year}, timeout=30)
+            r.raise_for_status()
+            sesiones = r.json()
+        except Exception:
+            return []
+    futuras = [s for s in sesiones
+              if s.get("date_start") and _fecha(s["date_start"]) > ahora]
+    futuras.sort(key=lambda s: s["date_start"])
+    return futuras[:n]
+
+
 class Telemetria:
     def __init__(self, session_key="latest", velocidad=1.0):
         self.session_key = session_key
