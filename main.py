@@ -183,9 +183,9 @@ async def sintetizar(quien, texto):
 
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
+    estado.director_auto = bool(PROGRAMAS_AUTO)
     if DEMO_PROGRAMA == "historia":
-        estado.programa = {"tipo": "historia", "titulo": "F1 HISTORY",
-                          "fondo": "historia"}
+        poner_al_aire("historia")
         log.info("Modo demo: programa de Historia (sin telemetría)")
     if ELEVENLABS_API_KEY:
         log.info("Voces naturales activadas (ElevenLabs %s)",
@@ -235,6 +235,7 @@ class Estado:
         self.calendario: list[dict] = []  # próximas sesiones (datos reales)
         self.ultimo_anuncio: float = 0.0
         self.programa: dict | None = None  # {"tipo","titulo","fondo"} o None
+        self.director_auto: bool = False   # el director rota shows solo
         self.segmento_id: int = 0      # id del último segmento con audio
         self.audios: list = []         # mp3 por línea del último segmento
 
@@ -301,6 +302,111 @@ def foco_director(t):
         return {"etiqueta": f"FINAL LAPS — {t.total_vueltas - t.vuelta} TO GO",
                "panel": "board"}
     return None
+
+
+@app.get("/control/estado")
+async def control_estado():
+    """Estado actual para el panel de botones."""
+    return JSONResponse({
+        "programa": estado.programa,
+        "director_auto": estado.director_auto,
+        "shows": [{"tipo": k, "titulo": v["titulo"]}
+                  for k, v in PROGRAMAS.items()],
+    })
+
+
+@app.post("/control/show/{tipo}")
+async def control_show(tipo: str):
+    """Pone un show en pantalla ahora (apaga el automático)."""
+    if tipo not in PROGRAMAS:
+        return JSONResponse({"ok": False, "error": "show desconocido"},
+                            status_code=404)
+    estado.director_auto = False
+    poner_al_aire(tipo)
+    log.info("🕹️  Panel: al aire %s", PROGRAMAS[tipo]["titulo"])
+    return JSONResponse({"ok": True})
+
+
+@app.post("/control/carrera")
+async def control_carrera():
+    """Vuelve al modo carrera/leaderboard (apaga el automático)."""
+    estado.director_auto = False
+    poner_al_aire(None)
+    log.info("🕹️  Panel: modo carrera")
+    return JSONResponse({"ok": True})
+
+
+@app.post("/control/auto/{valor}")
+async def control_auto(valor: str):
+    """Prende o apaga el director automático (rotación de shows)."""
+    estado.director_auto = (valor == "on")
+    log.info("🕹️  Panel: director automático %s",
+             "ON" if estado.director_auto else "OFF")
+    return JSONResponse({"ok": True, "director_auto": estado.director_auto})
+
+
+@app.get("/panel", response_class=HTMLResponse)
+async def panel():
+    return """<!doctype html>
+<html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Panel — Control del canal</title>
+<style>
+  :root { --bg:#0B0D12; --panel:#151922; --line:#232936; --txt:#fff;
+          --dim:#9AA3B2; --accent:#E10600; --on:#2ECC71; }
+  * { box-sizing:border-box; } body { margin:0; background:var(--bg);
+    color:var(--txt); font-family:Inter,-apple-system,"Segoe UI",sans-serif;
+    padding:22px; max-width:640px; margin:0 auto; }
+  h1 { font-size:1.1rem; letter-spacing:.1em; text-transform:uppercase; }
+  .estado { background:var(--panel); border:1px solid var(--line);
+    border-radius:12px; padding:14px 16px; margin:14px 0; }
+  .estado b { color:var(--accent); }
+  h2 { font-size:.72rem; letter-spacing:.16em; color:var(--dim);
+    text-transform:uppercase; margin:20px 0 8px; }
+  button { display:block; width:100%; text-align:left; margin:8px 0;
+    padding:14px 18px; font-size:1rem; border:1px solid var(--line);
+    border-radius:10px; background:var(--panel); color:var(--txt);
+    cursor:pointer; transition:border-color .2s; }
+  button:hover { border-color:var(--accent); }
+  button.auto { border-color:var(--on); color:var(--on); }
+  .row { display:flex; gap:10px; } .row button { flex:1; }
+  a { color:var(--dim); font-size:.8rem; }
+</style></head><body>
+<h1>🕹️ Control del canal</h1>
+<div class="estado" id="estado">Cargando…</div>
+
+<h2>Programación automática</h2>
+<div class="row">
+  <button class="auto" onclick="post('/control/auto/on')">▶ Automático ON</button>
+  <button onclick="post('/control/auto/off')">⏸ Automático OFF</button>
+</div>
+
+<h2>Poner un programa ahora</h2>
+<div id="shows"></div>
+<button onclick="post('/control/carrera')">🏁 Modo carrera / leaderboard</button>
+
+<p><a href="/" target="_blank">Abrir la pantalla del canal ↗</a></p>
+<script>
+async function post(u){ await fetch(u,{method:'POST'}); refrescar(); }
+async function refrescar(){
+  const d = await (await fetch('/control/estado')).json();
+  const prog = d.programa ? d.programa.titulo : 'Carrera / Leaderboard';
+  document.getElementById('estado').innerHTML =
+    'Al aire: <b>' + prog + '</b><br>Director automático: <b>' +
+    (d.director_auto ? 'ON' : 'OFF') + '</b>';
+  const cont = document.getElementById('shows');
+  if (!cont.dataset.built) {
+    for (const s of d.shows) {
+      const b = document.createElement('button');
+      b.textContent = '▶ ' + s.titulo;
+      b.onclick = () => post('/control/show/' + s.tipo);
+      cont.appendChild(b);
+    }
+    cont.dataset.built = '1';
+  }
+}
+refrescar(); setInterval(refrescar, 3000);
+</script></body></html>"""
 
 
 @app.get("/apex")
@@ -1100,24 +1206,32 @@ async def narrar_programa(client: anthropic.AsyncAnthropic, tipo):
         return []
 
 
-async def bucle_director():
-    """Director de programación: rota los shows de PLAYLIST solo, sin que
-    nadie toque nada. Una carrera en vivo siempre tiene prioridad."""
-    if not PROGRAMAS_AUTO:
+def poner_al_aire(tipo):
+    """Pone un show en pantalla (o None = volver a carrera/leaderboard)."""
+    if tipo is None:
+        estado.programa = None
         return
-    playlist = [p for p in PLAYLIST if p in PROGRAMAS] or ["historia"]
-    log.info("🎬 Director de programación activo: %s (rota cada %g min)",
-             " → ".join(playlist), ROTACION_MINUTOS)
-    i = 0
-    while True:
-        tipo = playlist[i % len(playlist)]
-        prog = PROGRAMAS[tipo]
+    prog = PROGRAMAS.get(tipo)
+    if prog:
         estado.programa = {"tipo": tipo, "titulo": prog["titulo"],
                           "fondo": prog["fondo"]}
         estado.ultimo_anuncio = 0.0  # contenido nuevo cuanto antes
-        log.info("🎬 Ahora al aire: %s", prog["titulo"])
-        i += 1
-        await asyncio.sleep(ROTACION_MINUTOS * 60)
+
+
+async def bucle_director():
+    """Director de programación: cuando está en automático, rota los shows
+    de PLAYLIST solo, sin que nadie toque nada. Se puede prender/apagar y
+    saltar de show desde el panel de botones (sin Secrets)."""
+    playlist = [p for p in PLAYLIST if p in PROGRAMAS] or ["historia"]
+    i = 0
+    while True:
+        if estado.director_auto:
+            poner_al_aire(playlist[i % len(playlist)])
+            log.info("🎬 Ahora al aire: %s", estado.programa["titulo"])
+            i += 1
+            await asyncio.sleep(ROTACION_MINUTOS * 60)
+        else:
+            await asyncio.sleep(2)
 
 
 async def bucle_telemetria():
