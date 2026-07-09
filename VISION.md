@@ -143,7 +143,22 @@ carrera en vez de ~1.000 continuos.
   4. **Parrilla de contenido**: cuando no hay sesión en vivo —
      post-shows con análisis, repeticiones de carreras históricas
      (OpenF1 tiene temporadas completas: "Classic Races" narradas por el
-     dúo), resumen de noticias F1 (con búsqueda web + fuentes citadas).
+     dúo — HECHO: maratón continuo), resumen de noticias F1 (con
+     búsqueda web + fuentes citadas). Parrilla semanal propuesta:
+     - **Lunes** — Debrief técnico/estratégico post-carrera.
+     - **Miércoles** — Tech & Physics (educativo, evergreen).
+     - **Viernes** — Previa + simulación del circuito.
+     - **Sáb/Dom** — Transmisión en vivo / watch-along.
+     Cada programa con su **modo visual** propio (ver Modos de programa).
+
+  **Modos de programa (motor de pantalla, primera pieza HECHA)**: la
+  pantalla Apex no es un layout fijo — cambia según qué está al aire:
+  - **Carrera**: leaderboard + Race Control + Race Intelligence (actual).
+  - **Historia / educativo / previa**: oculta la telemetría, muestra
+    fondo (gradiente propio o imagen libre/generada por IA — nunca fotos
+    con copyright de F1), título del programa y el diálogo del dúo en
+    grande.
+  Todo con la misma identidad visual (fondo oscuro, acento rojo, Inter).
   5. **Operación sin manos**: vigilancia propia (si algo se cae, se
      reinicia y avisa al dueño por mensaje), límites de gasto diarios
      en las APIs.

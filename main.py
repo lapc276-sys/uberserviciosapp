@@ -50,6 +50,11 @@ ANUNCIO_SEGUNDOS = float(os.environ.get("ANUNCIO_SEGUNDOS", "600"))
 ZONAS_CALENDARIO = [("UTC", "UTC"), ("ET", "America/New_York"),
                     ("Madrid", "Europe/Madrid"),
                     ("CDMX", "America/Mexico_City")]
+
+# Programa en demostración: "historia" muestra el Modo Historia (sin
+# telemetría) para probar el motor de pantalla. Vacío = canal normal.
+DEMO_PROGRAMA = os.environ.get("DEMO_PROGRAMA", "")
+INTERVALO_HISTORIA = 30  # segundos entre segmentos de historia
 # Modelo del guionista (Secret MODELO_NARRADOR para cambiarlo):
 # claude-opus-4-8 = máxima calidad · claude-haiku-4-5 = ~5x más barato
 MODELO = os.environ.get("MODELO_NARRADOR", "claude-opus-4-8")
@@ -170,6 +175,10 @@ async def sintetizar(quien, texto):
 
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
+    if DEMO_PROGRAMA == "historia":
+        estado.programa = {"tipo": "historia", "titulo": "F1 HISTORY",
+                          "fondo": "historia"}
+        log.info("Modo demo: programa de Historia (sin telemetría)")
     if ELEVENLABS_API_KEY:
         log.info("Voces naturales activadas (ElevenLabs %s)",
                  ELEVENLABS_MODELO)
@@ -216,6 +225,7 @@ class Estado:
         self.ambiente_activo: bool = False
         self.calendario: list[dict] = []  # próximas sesiones (datos reales)
         self.ultimo_anuncio: float = 0.0
+        self.programa: dict | None = None  # {"tipo","titulo","fondo"} o None
         self.segmento_id: int = 0      # id del último segmento con audio
         self.audios: list = []         # mp3 por línea del último segmento
 
@@ -298,6 +308,7 @@ async def apex():
         "foco": foco_director(t),
         "duelos": t.battle_scores()[:4] if t else [],
         "calendario": estado.calendario,
+        "programa": estado.programa,
         "leaderboard": t.tabla() if t else [],
         "incidentes": list(reversed(t.incidentes)) if t else [],
         "lineas": [{**l, "nombre": _nombre_de(l["quien"])}
@@ -390,6 +401,27 @@ async def visor():
              color: var(--accent); text-transform: uppercase;
              opacity: 0; transition: opacity .3s; }
   #director.on { opacity: 1; }
+  /* Modos de programa (Historia, etc.): fondo a pantalla completa */
+  #fondo { position: fixed; inset: 0; z-index: -1; background: var(--bg);
+           background-size: cover; background-position: center;
+           opacity: 0; transition: opacity .6s; }
+  #fondo.on { opacity: 1; }
+  #fondo.historia {
+    background:
+      radial-gradient(120% 80% at 70% 15%, rgba(225,6,0,.20), transparent 60%),
+      radial-gradient(90% 70% at 15% 90%, rgba(40,60,90,.35), transparent 55%),
+      linear-gradient(160deg, #0B0D12 20%, #10141c 100%); }
+  #progtitle { text-align: center; padding: 8px 0 2px;
+               font-size: 1rem; font-weight: 700; letter-spacing: .22em;
+               color: var(--accent); text-transform: uppercase;
+               display: none; }
+  body.programa main { grid-template-columns: 1fr; }
+  body.programa #panel-board,
+  body.programa #right-col { display: none; }
+  body.programa #centro { max-width: 820px; margin: 0 auto;
+                          min-height: 62vh; justify-content: center; }
+  body.programa .card { background: rgba(21,25,34,.72);
+                        backdrop-filter: blur(4px); }
   /* Leaderboard */
   #board .row { display: flex; align-items: center; gap: 8px;
                 padding: 6px 4px; border-bottom: 1px solid var(--line);
@@ -456,6 +488,7 @@ async def visor():
 </style>
 </head>
 <body>
+<div id="fondo"></div>
 <header>
   <span class="dot" id="dot"></span><span class="live" id="livetxt">LIVE</span>
   <span id="gp">—</span>
@@ -463,6 +496,7 @@ async def visor():
   <span id="lap"></span>
 </header>
 <div id="director"></div>
+<div id="progtitle"></div>
 <main>
   <section class="panel" id="panel-board"><h3 id="board-title">Leaderboard</h3><div id="board"></div></section>
   <section id="centro">
@@ -511,8 +545,26 @@ async function reproducirSegmento(seg, lineas, idioma) {
   }
   reproduciendo = false;
 }
+function aplicarPrograma(p) {
+  const fondo = document.getElementById('fondo');
+  const titulo = document.getElementById('progtitle');
+  if (p && p.tipo && p.tipo !== 'carrera') {
+    document.body.classList.add('programa');
+    fondo.className = 'on ' + (p.fondo || '');
+    if (p.fondo && (p.fondo.startsWith('http') || p.fondo.startsWith('data:')))
+      fondo.style.backgroundImage = 'url(' + p.fondo + ')';
+    else fondo.style.backgroundImage = '';
+    titulo.textContent = p.titulo || '';
+    titulo.style.display = 'block';
+  } else {
+    document.body.classList.remove('programa');
+    fondo.className = '';
+    titulo.style.display = 'none';
+  }
+}
 async function tick() {
   const d = await (await fetch('/apex')).json();
+  aplicarPrograma(d.programa);
   document.getElementById('gp').textContent =
     d.en_vivo ? (d.gp + ' — ' + d.circuito) : 'NO LIVE SESSION';
   document.getElementById('lap').textContent =
@@ -980,12 +1032,44 @@ async def narrar_calendario(client: anthropic.AsyncAnthropic):
         return []
 
 
+SYSTEM_HISTORIA = f"""You are the scriptwriter for {NARRADOR} and \
+{ANALISTA}, a Formula 1 commentary duo hosting a HISTORY segment (no \
+live race). Write ONE short segment (2 to 4 short lines) in \
+{IDIOMA_NOMBRE} telling a genuine, well-known piece of Formula 1 \
+history — a legendary race, driver, rivalry, car, or circuit moment. \
+Conversational and warm, {NARRADOR} storytelling and {ANALISTA} adding \
+the technical or strategic angle. Only real, widely-documented facts — \
+if unsure of a specific number, speak generally rather than inventing \
+it. Vary the topic from what was recently said."""
+
+
+async def narrar_historia(client: anthropic.AsyncAnthropic):
+    memoria = "\n".join(estado.diario[-8:]) or "(nothing said yet)"
+    response = await client.messages.create(
+        model=MODELO, max_tokens=350, system=SYSTEM_HISTORIA,
+        output_config={"format": {"type": "json_schema",
+                                  "schema": DUO_SCHEMA}},
+        messages=[{
+            "role": "user",
+            "content": ("Tell the next short piece of F1 history. Avoid "
+                        f"repeating these recent ones:\n{memoria}"),
+        }],
+    )
+    if response.stop_reason == "refusal":
+        return []
+    texto = next((b.text for b in response.content if b.type == "text"), "")
+    try:
+        return json.loads(texto).get("lineas", [])
+    except json.JSONDecodeError:
+        return []
+
+
 async def bucle_telemetria():
     """Programación continua: la sesión configurada primero, y luego un
     maratón infinito de carreras clásicas reales (nunca queda "al aire
     en blanco" si hay datos disponibles)."""
-    if MODO_TELEMETRIA == "off":
-        log.info("Telemetría desactivada (MODO_TELEMETRIA=off)")
+    if MODO_TELEMETRIA == "off" or DEMO_PROGRAMA:
+        log.info("Telemetría en pausa (modo programa/off)")
         return
     cola = [SESSION_KEY]
     while True:
@@ -1097,6 +1181,14 @@ async def bucle_narracion():
                 ultimo_frame_narrado = estado.frame_ts
                 texto = await narrar_frame(client, estado.frame,
                                            estado.narracion)
+            elif (estado.programa
+                    and estado.programa.get("tipo") == "historia"):
+                # Modo Historia: el dúo cuenta historia de la F1
+                if ahora - estado.ultimo_anuncio >= INTERVALO_HISTORIA:
+                    estado.ultimo_anuncio = ahora
+                    texto = await narrar_historia(client)
+                else:
+                    continue
             elif (not estado.tele_cargando and estado.calendario
                     and ahora - estado.ultimo_anuncio >= ANUNCIO_SEGUNDOS):
                 # Verdadero fuera de vivo: sin carrera y sin frame de la Mac
