@@ -51,10 +51,18 @@ ZONAS_CALENDARIO = [("UTC", "UTC"), ("ET", "America/New_York"),
                     ("Madrid", "Europe/Madrid"),
                     ("CDMX", "America/Mexico_City")]
 
-# Programa en demostración: "historia" muestra el Modo Historia (sin
+# Programa en demostración: "historia" muestra un modo fijo (sin
 # telemetría) para probar el motor de pantalla. Vacío = canal normal.
 DEMO_PROGRAMA = os.environ.get("DEMO_PROGRAMA", "")
-INTERVALO_HISTORIA = 30  # segundos entre segmentos de historia
+INTERVALO_PROGRAMA = 30  # segundos entre segmentos de un programa
+
+# Director de programación automático: rota los shows de PLAYLIST sin
+# intervención manual. PROGRAMAS_AUTO=on lo activa.
+PROGRAMAS_AUTO = os.environ.get("PROGRAMAS_AUTO", "")
+PLAYLIST = [p.strip() for p in
+            os.environ.get("PLAYLIST", "historia,tech").split(",")
+            if p.strip()]
+ROTACION_MINUTOS = float(os.environ.get("ROTACION_MINUTOS", "8"))
 # Modelo del guionista (Secret MODELO_NARRADOR para cambiarlo):
 # claude-opus-4-8 = máxima calidad · claude-haiku-4-5 = ~5x más barato
 MODELO = os.environ.get("MODELO_NARRADOR", "claude-opus-4-8")
@@ -190,7 +198,8 @@ async def lifespan(app: FastAPI):
     tareas = [asyncio.create_task(bucle_telemetria()),
               asyncio.create_task(bucle_narracion()),
               asyncio.create_task(bucle_ambiente()),
-              asyncio.create_task(bucle_calendario())]
+              asyncio.create_task(bucle_calendario()),
+              asyncio.create_task(bucle_director())]
     yield
     for t in tareas:
         t.cancel()
@@ -411,6 +420,11 @@ async def visor():
       radial-gradient(120% 80% at 70% 15%, rgba(225,6,0,.20), transparent 60%),
       radial-gradient(90% 70% at 15% 90%, rgba(40,60,90,.35), transparent 55%),
       linear-gradient(160deg, #0B0D12 20%, #10141c 100%); }
+  #fondo.tech {
+    background:
+      radial-gradient(110% 75% at 20% 15%, rgba(40,120,200,.25), transparent 60%),
+      radial-gradient(90% 70% at 85% 85%, rgba(20,180,160,.18), transparent 55%),
+      linear-gradient(160deg, #0B0D12 20%, #0d1420 100%); }
   #progtitle { text-align: center; padding: 8px 0 2px;
                font-size: 1rem; font-weight: 700; letter-spacing: .22em;
                color: var(--accent); text-transform: uppercase;
@@ -1032,27 +1046,49 @@ async def narrar_calendario(client: anthropic.AsyncAnthropic):
         return []
 
 
-SYSTEM_HISTORIA = f"""You are the scriptwriter for {NARRADOR} and \
-{ANALISTA}, a Formula 1 commentary duo hosting a HISTORY segment (no \
-live race). Write ONE short segment (2 to 4 short lines) in \
-{IDIOMA_NOMBRE} telling a genuine, well-known piece of Formula 1 \
-history — a legendary race, driver, rivalry, car, or circuit moment. \
-Conversational and warm, {NARRADOR} storytelling and {ANALISTA} adding \
-the technical or strategic angle. Only real, widely-documented facts — \
-if unsure of a specific number, speak generally rather than inventing \
-it. Vary the topic from what was recently said."""
+# Catálogo de programas (shows sin telemetría). Cada uno: título en
+# pantalla, fondo (gradiente con nombre), y las instrucciones del guion.
+def _sys_show(rol):
+    return (f"You are the scriptwriter for {NARRADOR} and {ANALISTA}, a "
+            f"Formula 1 commentary duo hosting a segment (no live race), "
+            f"in {IDIOMA_NOMBRE}. {rol} Write ONE short segment (2 to 4 "
+            "short lines), conversational and warm, alternating both "
+            "voices. Only real, widely-documented facts — if unsure of a "
+            "specific number, speak generally rather than inventing it. "
+            "Vary the topic from what was recently said.")
 
 
-async def narrar_historia(client: anthropic.AsyncAnthropic):
+PROGRAMAS = {
+    "historia": {
+        "titulo": "F1 HISTORY", "fondo": "historia",
+        "sys": _sys_show("Tell a genuine, well-known piece of Formula 1 "
+                        "history — a legendary race, driver, rivalry, car "
+                        "or circuit moment; storyteller tone."),
+        "pedido": "Tell the next short piece of F1 history.",
+    },
+    "tech": {
+        "titulo": "TECH & PHYSICS", "fondo": "tech",
+        "sys": _sys_show("Explain one Formula 1 technical or physics "
+                        "concept in simple, vivid terms — aerodynamics, "
+                        "tyres, ERS, DRS, ground effect, braking, fuel."),
+        "pedido": "Explain the next tech concept simply.",
+    },
+}
+
+
+async def narrar_programa(client: anthropic.AsyncAnthropic, tipo):
+    prog = PROGRAMAS.get(tipo)
+    if not prog:
+        return []
     memoria = "\n".join(estado.diario[-8:]) or "(nothing said yet)"
     response = await client.messages.create(
-        model=MODELO, max_tokens=350, system=SYSTEM_HISTORIA,
+        model=MODELO, max_tokens=350, system=prog["sys"],
         output_config={"format": {"type": "json_schema",
                                   "schema": DUO_SCHEMA}},
         messages=[{
             "role": "user",
-            "content": ("Tell the next short piece of F1 history. Avoid "
-                        f"repeating these recent ones:\n{memoria}"),
+            "content": (f"{prog['pedido']} Avoid repeating these "
+                        f"recent ones:\n{memoria}"),
         }],
     )
     if response.stop_reason == "refusal":
@@ -1064,11 +1100,31 @@ async def narrar_historia(client: anthropic.AsyncAnthropic):
         return []
 
 
+async def bucle_director():
+    """Director de programación: rota los shows de PLAYLIST solo, sin que
+    nadie toque nada. Una carrera en vivo siempre tiene prioridad."""
+    if not PROGRAMAS_AUTO:
+        return
+    playlist = [p for p in PLAYLIST if p in PROGRAMAS] or ["historia"]
+    log.info("🎬 Director de programación activo: %s (rota cada %g min)",
+             " → ".join(playlist), ROTACION_MINUTOS)
+    i = 0
+    while True:
+        tipo = playlist[i % len(playlist)]
+        prog = PROGRAMAS[tipo]
+        estado.programa = {"tipo": tipo, "titulo": prog["titulo"],
+                          "fondo": prog["fondo"]}
+        estado.ultimo_anuncio = 0.0  # contenido nuevo cuanto antes
+        log.info("🎬 Ahora al aire: %s", prog["titulo"])
+        i += 1
+        await asyncio.sleep(ROTACION_MINUTOS * 60)
+
+
 async def bucle_telemetria():
     """Programación continua: la sesión configurada primero, y luego un
     maratón infinito de carreras clásicas reales (nunca queda "al aire
     en blanco" si hay datos disponibles)."""
-    if MODO_TELEMETRIA == "off" or DEMO_PROGRAMA:
+    if MODO_TELEMETRIA == "off" or DEMO_PROGRAMA or PROGRAMAS_AUTO:
         log.info("Telemetría en pausa (modo programa/off)")
         return
     cola = [SESSION_KEY]
@@ -1182,11 +1238,13 @@ async def bucle_narracion():
                 texto = await narrar_frame(client, estado.frame,
                                            estado.narracion)
             elif (estado.programa
-                    and estado.programa.get("tipo") == "historia"):
-                # Modo Historia: el dúo cuenta historia de la F1
-                if ahora - estado.ultimo_anuncio >= INTERVALO_HISTORIA:
+                    and estado.programa.get("tipo") in PROGRAMAS):
+                # Programa sin telemetría (Historia, Tech...): el dúo
+                # genera contenido del show que el director puso al aire
+                if ahora - estado.ultimo_anuncio >= INTERVALO_PROGRAMA:
                     estado.ultimo_anuncio = ahora
-                    texto = await narrar_historia(client)
+                    texto = await narrar_programa(
+                        client, estado.programa["tipo"])
                 else:
                     continue
             elif (not estado.tele_cargando and estado.calendario

@@ -151,6 +151,17 @@ carrera en vez de ~1.000 continuos.
      - **Sáb/Dom** — Transmisión en vivo / watch-along.
      Cada programa con su **modo visual** propio (ver Modos de programa).
 
+  **Director de programación (HECHO, primera versión)**: UN solo
+  servidor con varios programas dentro (no muchas pestañas/Repls — eso
+  sería frágil y caro). Un bucle director rota los shows de una PLAYLIST
+  automáticamente cada `ROTACION_MINUTOS`, sin intervención manual —
+  exactamente "ya terminó esto, ahora toca aquello". Catálogo inicial:
+  `historia` (F1 HISTORY) y `tech` (TECH & PHYSICS), cada uno con su
+  guion y su fondo. Activar con `PROGRAMAS_AUTO=on`. Pendiente: que el
+  director también intercale carreras en vivo/clásicas con los shows
+  (hoy son ramas separadas), y que respete horarios de la parrilla
+  semanal en vez de solo rotación por tiempo.
+
   **Modos de programa (motor de pantalla, primera pieza HECHA)**: la
   pantalla Apex no es un layout fijo — cambia según qué está al aire:
   - **Carrera**: leaderboard + Race Control + Race Intelligence (actual).
