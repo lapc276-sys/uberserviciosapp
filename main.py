@@ -204,6 +204,8 @@ class Estado:
         self.lineas: list[dict] = []   # último segmento de diálogo
         self.ambiente_b64: str | None = None  # loop de sonido de motores
         self.ambiente_activo: bool = False
+        self.segmento_id: int = 0      # id del último segmento con audio
+        self.audios: list = []         # mp3 por línea del último segmento
 
 
 estado = Estado()
@@ -252,9 +254,19 @@ async def apex():
         "incidentes": list(reversed(t.incidentes)) if t else [],
         "lineas": [{**l, "nombre": _nombre_de(l["quien"])}
                    for l in estado.lineas],
+        "segmento": estado.segmento_id,
         "idioma": IDIOMA,
         "hay_frame": estado.frame is not None,
     })
+
+
+@app.get("/audio/{seg}/{idx}")
+async def audio_linea(seg: int, idx: int):
+    """MP3 de una línea del segmento actual (para el visor web)."""
+    if (seg != estado.segmento_id or idx < 0
+            or idx >= len(estado.audios) or not estado.audios[idx]):
+        return Response(status_code=404)
+    return Response(content=estado.audios[idx], media_type="audio/mpeg")
 
 
 @app.get("/narracion")
@@ -358,27 +370,40 @@ async def visor():
 </main>
 <button id="voz">VOICE OFF — click to enable browser voice</button>
 <script>
-let vozActiva = false, ultimoDialogo = '', posPrevias = {};
+let vozActiva = false, ultimoSegmento = -1, posPrevias = {};
+let reproduciendo = false, pendiente = null;
 const btn = document.getElementById('voz');
 btn.onclick = () => {
   vozActiva = !vozActiva;
   btn.classList.toggle('on', vozActiva);
   btn.textContent = vozActiva ? 'VOICE ON — click to mute'
-                              : 'VOICE OFF — click to enable browser voice';
-  if (vozActiva) speechSynthesis.speak(new SpeechSynthesisUtterance(''));
+                              : 'VOICE OFF — click to enable voice';
 };
-function hablar(lineas, idioma) {
-  for (const l of lineas) {
-    const u = new SpeechSynthesisUtterance(l.texto);
-    u.lang = idioma === 'es' ? 'es-ES' : 'en-GB';
-    const voces = speechSynthesis.getVoices()
-      .filter(v => v.lang.toLowerCase().startsWith(idioma === 'es' ? 'es' : 'en'));
-    if (voces.length) u.voice = l.quien === 'narrador'
-      ? voces[0] : voces[voces.length - 1];
-    u.rate = l.quien === 'narrador' ? 1.1 : 0.97;
-    u.pitch = l.quien === 'narrador' ? 1.1 : 0.9;
-    speechSynthesis.speak(u);
+function reproducirLinea(seg, i) {
+  return new Promise(res => {
+    const a = new Audio('/audio/' + seg + '/' + i);
+    a.onended = () => res(true);
+    a.onerror = () => res(false);
+    a.play().catch(() => res(false));
+  });
+}
+function fallbackTTS(l, idioma) {
+  const u = new SpeechSynthesisUtterance(l.texto);
+  u.lang = idioma === 'es' ? 'es-ES' : 'en-GB';
+  speechSynthesis.speak(u);
+}
+async function reproducirSegmento(seg, lineas, idioma) {
+  pendiente = { seg, lineas, idioma };  // si ya habla, gana el más nuevo
+  if (reproduciendo) return;
+  reproduciendo = true;
+  while (pendiente) {
+    const t = pendiente; pendiente = null;
+    for (let i = 0; i < t.lineas.length; i++) {
+      const ok = await reproducirLinea(t.seg, i);
+      if (!ok) fallbackTTS(t.lineas[i], t.idioma);
+    }
   }
+  reproduciendo = false;
 }
 async function tick() {
   const d = await (await fetch('/apex')).json();
@@ -424,9 +449,9 @@ async function tick() {
     document.getElementById('frame').src = '/frame.jpg?t=' + Date.now();
   } else { fb.style.display = 'none'; }
   // diálogo como tarjetas
-  const clave = JSON.stringify(d.lineas);
-  if (d.lineas.length && clave !== ultimoDialogo) {
-    ultimoDialogo = clave;
+  if (d.lineas.length && d.segmento !== ultimoSegmento) {
+    const esPrimeraCarga = ultimoSegmento === -1;
+    ultimoSegmento = d.segmento;
     const dl = document.getElementById('dialogo');
     dl.innerHTML = '';
     for (const l of d.lineas) {
@@ -438,7 +463,9 @@ async function tick() {
       t.className = 'texto'; t.textContent = l.texto;
       c.appendChild(q); c.appendChild(t); dl.appendChild(c);
     }
-    if (vozActiva) hablar(d.lineas, d.idioma);
+    if (vozActiva && !esPrimeraCarga) {
+      reproducirSegmento(d.segmento, d.lineas, d.idioma);
+    }
   }
 }
 tick(); setInterval(tick, 2000);
@@ -739,13 +766,17 @@ async def difundir(lineas):
         log.info("🎙️  %s: %s", _nombre_de(l["quien"]), l["texto"])
     del estado.diario[:-24]
     lineas_ws = []
+    audios = []
     for l in lineas:
         audio = await sintetizar(l["quien"], l["texto"])
+        audios.append(audio)
         if audio:
             lineas_ws.append(
                 {**l, "audio": base64.standard_b64encode(audio).decode()})
         else:
             lineas_ws.append(l)
+    estado.audios = audios
+    estado.segmento_id += 1
     mensaje = json.dumps({"tipo": "dialogo", "idioma": IDIOMA,
                           "lineas": lineas_ws})
     for ws in list(estado.clientes_mac):
