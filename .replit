@@ -5,3 +5,8 @@ entrypoint = "main.py"
 [deployment]
 run = ["python3", "main.py"]
 deploymentTarget = "vm"
+
+# La app escucha en 8080; Replit lo expone como HTTPS público (443)
+[[ports]]
+localPort = 8080
+externalPort = 80
