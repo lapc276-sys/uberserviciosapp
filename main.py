@@ -109,6 +109,11 @@ TTS_VOCES = {
                          "Relaxed pace, thoughtful, slightly dry humor. "
                          "Conversational, like chatting in the booth."),
     },
+    "historiador": {
+        "voice": "fable",
+        "instructions": ("Warm British storyteller narrating a Formula 1 "
+                         "documentary. Measured, evocative, unhurried."),
+    },
 }
 
 
@@ -126,12 +131,18 @@ ELEVENLABS_VOCES = {
     # Sam: Lucie (británica)
     "analista": os.environ.get("ELEVENLABS_VOZ_ANALISTA",
                                "GPTk4QbvF7snDhImF5UF"),  # Lucie (británica)
+    # Historiador: una sola voz británica de cuentacuentos (documental).
+    # Cambiar con el Secret ELEVENLABS_VOZ_HISTORIA (Voice ID de la
+    # Voice Library — busca "British storyteller"/"documentary narrator").
+    "historiador": os.environ.get("ELEVENLABS_VOZ_HISTORIA",
+                                  "JBFqnCBsd6RMkjVDRZzb"),  # George
 }
 # Expresividad por personaje: el narrador más variable/emocional, el
 # analista más estable y pausado (pero no plano).
 ELEVENLABS_AJUSTES = {
     "narrador": {"stability": 0.35, "similarity_boost": 0.75, "style": 0.65},
     "analista": {"stability": 0.55, "similarity_boost": 0.75, "style": 0.45},
+    "historiador": {"stability": 0.55, "similarity_boost": 0.8, "style": 0.35},
 }
 
 
@@ -542,6 +553,10 @@ async def visor():
                           min-height: 62vh; justify-content: center; }
   body.programa .card { background: rgba(21,25,34,.72);
                         backdrop-filter: blur(4px); }
+  .card.historiador .quien { color: var(--dim); }
+  #credito { position: fixed; right: 12px; bottom: 10px; z-index: 2;
+             font-size: .62rem; color: var(--dim); opacity: .7;
+             letter-spacing: .04em; display: none; }
   /* Leaderboard */
   #board .row { display: flex; align-items: center; gap: 8px;
                 padding: 6px 4px; border-bottom: 1px solid var(--line);
@@ -609,6 +624,7 @@ async def visor():
 </head>
 <body>
 <div id="fondo"></div>
+<div id="credito"></div>
 <header>
   <span class="dot" id="dot"></span><span class="live" id="livetxt">LIVE</span>
   <span id="gp">—</span>
@@ -668,18 +684,23 @@ async function reproducirSegmento(seg, lineas, idioma) {
 function aplicarPrograma(p) {
   const fondo = document.getElementById('fondo');
   const titulo = document.getElementById('progtitle');
+  const credito = document.getElementById('credito');
   if (p && p.tipo && p.tipo !== 'carrera') {
     document.body.classList.add('programa');
-    fondo.className = 'on ' + (p.fondo || '');
-    if (p.fondo && (p.fondo.startsWith('http') || p.fondo.startsWith('data:')))
-      fondo.style.backgroundImage = 'url(' + p.fondo + ')';
-    else fondo.style.backgroundImage = '';
+    const esImg = p.fondo && (p.fondo.startsWith('http') ||
+                              p.fondo.startsWith('data:'));
+    fondo.className = 'on ' + (esImg ? 'historia' : (p.fondo || ''));
+    fondo.style.backgroundImage = esImg ? 'url(' + p.fondo + ')' : '';
     titulo.textContent = p.titulo || '';
     titulo.style.display = 'block';
+    if (p.credito) { credito.textContent = p.credito;
+                     credito.style.display = 'block'; }
+    else credito.style.display = 'none';
   } else {
     document.body.classList.remove('programa');
     fondo.className = '';
     titulo.style.display = 'none';
+    credito.style.display = 'none';
   }
 }
 async function tick() {
@@ -957,6 +978,8 @@ DUO_SCHEMA = {
 
 
 def _nombre_de(quien):
+    if quien == "historiador":
+        return "Narrator"
     return NARRADOR if quien == "narrador" else ANALISTA
 
 
@@ -1182,6 +1205,92 @@ PROGRAMAS = {
 }
 
 
+HISTORIA_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "titulo": {"type": "string"},
+        "tema": {"type": "string"},
+        "lineas": {"type": "array", "items": {
+            "type": "object",
+            "properties": {"texto": {"type": "string"}},
+            "required": ["texto"], "additionalProperties": False}},
+    },
+    "required": ["titulo", "tema", "lineas"],
+    "additionalProperties": False,
+}
+
+SYSTEM_HISTORIA_SOLO = (
+    f"You are a single British storyteller narrating a Formula 1 history "
+    f"documentary in {IDIOMA_NOMBRE}. Write ONE short segment as 2 to 4 "
+    "narration lines — SINGLE VOICE, no dialogue, no two speakers. Cover "
+    "a real, well-documented F1 story. Produce three fields:\n"
+    "- titulo: a broadcast title in UPPERCASE with the era, team, driver "
+    "and circuit where relevant, separated by ' · ' (e.g. "
+    "'AYRTON SENNA · McLAREN-HONDA · 1988 · SUZUKA').\n"
+    "- tema: the single best subject to show a photo of — a real driver's "
+    "full name, a car, or a circuit that has an English Wikipedia page "
+    "(e.g. 'Ayrton Senna' or 'Suzuka Circuit'). Just the name.\n"
+    "- lineas: the narration, written for the ear (numbers as words). "
+    "Only real, widely-documented facts; if unsure of a figure, speak "
+    "generally rather than inventing it.")
+
+
+async def imagen_wikimedia(query):
+    """Foto de libre uso desde Wikipedia/Wikimedia Commons para un tema
+    (piloto, auto o circuito). Devuelve URL o None. Nota: las imágenes
+    principales de Wikipedia para pilotos/autos/circuitos provienen casi
+    siempre de Commons (licencia libre); se muestra crédito en pantalla."""
+    if not query:
+        return None
+    try:
+        async with httpx.AsyncClient() as c:
+            r = await c.get("https://en.wikipedia.org/w/api.php", params={
+                "action": "query", "prop": "pageimages",
+                "piprop": "original", "format": "json",
+                "titles": query, "redirects": 1}, timeout=20,
+                headers={"User-Agent": "F1FanChannel/1.0 (fan project)"})
+            r.raise_for_status()
+            for p in r.json().get("query", {}).get("pages", {}).values():
+                url = p.get("original", {}).get("source")
+                if url:
+                    return url
+    except Exception as e:
+        log.info("Sin imagen de Wikimedia para '%s' (%s)", query, e)
+    return None
+
+
+async def segmento_historia(client: anthropic.AsyncAnthropic):
+    """Genera un segmento de Historia: un solo narrador + título
+    descriptivo + foto de fondo de libre uso del tema."""
+    memoria = "\n".join(estado.diario[-8:]) or "(nothing said yet)"
+    response = await client.messages.create(
+        model=MODELO, max_tokens=500, system=SYSTEM_HISTORIA_SOLO,
+        output_config={"format": {"type": "json_schema",
+                                  "schema": HISTORIA_SCHEMA}},
+        messages=[{
+            "role": "user",
+            "content": ("Tell the next piece of F1 history. Avoid "
+                        f"repeating these recent ones:\n{memoria}"),
+        }],
+    )
+    if response.stop_reason == "refusal":
+        return []
+    texto = next((b.text for b in response.content if b.type == "text"), "")
+    try:
+        data = json.loads(texto)
+    except json.JSONDecodeError:
+        return []
+    imagen = await imagen_wikimedia(data.get("tema", ""))
+    estado.programa = {
+        "tipo": "historia",
+        "titulo": data.get("titulo", "F1 HISTORY"),
+        "fondo": imagen or "historia",
+        "credito": "Image: Wikimedia Commons" if imagen else "",
+    }
+    return [{"quien": "historiador", "texto": l["texto"]}
+            for l in data.get("lineas", []) if l.get("texto")]
+
+
 async def narrar_programa(client: anthropic.AsyncAnthropic, tipo):
     prog = PROGRAMAS.get(tipo)
     if not prog:
@@ -1357,8 +1466,11 @@ async def bucle_narracion():
                 # genera contenido del show que el director puso al aire
                 if ahora - estado.ultimo_anuncio >= INTERVALO_PROGRAMA:
                     estado.ultimo_anuncio = ahora
-                    texto = await narrar_programa(
-                        client, estado.programa["tipo"])
+                    if estado.programa["tipo"] == "historia":
+                        texto = await segmento_historia(client)
+                    else:
+                        texto = await narrar_programa(
+                            client, estado.programa["tipo"])
                 else:
                     continue
             elif (not estado.tele_cargando and estado.calendario

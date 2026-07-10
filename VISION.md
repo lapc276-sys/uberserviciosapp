@@ -256,6 +256,46 @@ Negocio más allá de AdSense (opciones futuras): plataforma web propia
 para ligas menores y clubes pequeños ("un comentarista profesional para
 el equipo de tu ciudad"), y suscripciones.
 
+## Ideas por construir (ordenadas, con honestidad técnica)
+
+Pedidas por el dueño; anotadas para no perderlas y priorizar bien:
+
+1. **Carreras por horario automático** (todas las series a su hora, con
+   husos horarios y cambios de hora DST). Factible para F1 (OpenF1 tiene
+   fecha/hora reales). Para otras series, solo si conseguimos su fuente
+   de horarios. Es el "tejido de la parrilla" — pieza grande de la Fase 8.
+2. **Interludios foto + música** (foto del circuito de la semana con
+   música de fondo entre programas, estilo Telemundo). Factible: fotos
+   libres (Wikimedia) + música libre de derechos (no cualquier canción —
+   solo librerías libres/CC).
+3. **Más animaciones** en fondo y en el leaderboard. Factible (CSS/JS).
+4. **Gráficos con nuestras fórmulas** (métricas propias sobre muchas
+   carreras — degradación, etc.). Factible; es continuar la Fase 5.
+5. **Periodista de campo** con ruido de pista de fondo. La voz sí; el
+   "ruido ambiente real de esa pista" sería genérico (no audio con
+   copyright de la transmisión). Factible como efecto.
+6. **Noticias** citando fuentes (YouTube/Google News). Factible con
+   búsqueda web **citando la fuente siempre**; ojo: se puede *resumir y
+   citar*, no copiar textos completos ni leer video ajeno.
+7. **Estadísticas de apuestas / cuotas**: técnicamente se pueden mostrar
+   citando la casa. PERO ⚠️ **advertencia seria**: YouTube tiene reglas
+   estrictas sobre contenido de apuestas (restricción de edad,
+   desmonetización, o baneo si se promociona apuesta). No lo recomiendo
+   como eje del canal; si se hace, con extremo cuidado y avisos. Los
+   anuncios de casas de apuestas los pone YouTube, no nosotros, y solo
+   si el canal está monetizado.
+
+**Multi-deporte (NASCAR, MotoGP, Le Mans, motocross)**: los *programas
+de charla* (historia, noticias, tech) sí aplican a cualquier serie. Los
+*datos en vivo* (leaderboard/telemetría) necesitan una fuente por serie
+como OpenF1 — investigación pendiente por deporte, no prometido.
+
+**Monetización (AdSense)**: en un directo de YouTube los anuncios los
+inserta YouTube automáticamente, no nosotros "cada 10 min a mano", y
+solo tras cumplir requisitos del Programa de Socios (1.000 subs + 4.000
+horas). Nuestra tarea es hacer buen contenido y crecer; la publicidad
+llega después, sola.
+
 ## Norte V3 (muy largo plazo): producción cinematográfica con Unreal Engine
 
 Visión recibida del dueño: un "Director AI" que no solo resalta paneles
