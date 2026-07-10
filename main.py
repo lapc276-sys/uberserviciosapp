@@ -474,6 +474,7 @@ async def apex():
         "clima": t.clima if t else {},
         "foco": foco_director(t),
         "duelos": t.battle_scores()[:4] if t else [],
+        "pit": t.perdida_pit() if t else None,
         "calendario": estado.calendario,
         "programa": estado.programa,
         "leaderboard": t.tabla() if t else [],
@@ -678,6 +679,11 @@ async def visor():
   #intel .score.mid { color: var(--amber); }
   #intel .score.low { color: var(--dim); }
   .razon { color: var(--dim); font-size: .68rem; margin-top: 2px; }
+  .estr { color: var(--amber); font-size: .68rem; margin-top: 3px; }
+  #pitloss { margin-top: 8px; padding-top: 7px;
+             border-top: 1px solid var(--line); font-size: .7rem;
+             color: var(--txt); letter-spacing: .04em; display: none; }
+  #pitloss b { color: var(--amber); }
   .vacio { color: var(--dim); font-size: .78rem; }
   /* Voz */
   #voz { margin: 0 22px 20px; padding: 9px 16px; font-size: .85rem;
@@ -711,7 +717,7 @@ async def visor():
   </section>
   <div id="right-col">
     <section class="panel" id="panel-incidentes"><h3>Race Control</h3><div id="incidentes"></div></section>
-    <section class="panel"><h3>Race Intelligence</h3><div id="intel"></div></section>
+    <section class="panel"><h3>Race Intelligence</h3><div id="intel"></div><div id="pitloss"></div></section>
   </div>
 </main>
 <button id="voz">VOICE OFF — click to enable browser voice</button>
@@ -877,7 +883,22 @@ async function tick() {
     const razon = document.createElement('div'); razon.className = 'razon';
     razon.textContent = dl.razon;
     row.appendChild(top); row.appendChild(razon);
+    if (dl.estrategia) {
+      const estr = document.createElement('div'); estr.className = 'estr';
+      estr.textContent = dl.estrategia;
+      row.appendChild(estr);
+    }
     intel.appendChild(row);
+  }
+  // Coste de parada medido de las paradas reales de ESTA carrera
+  const pitloss = document.getElementById('pitloss');
+  if (d.pit) {
+    pitloss.innerHTML = 'PIT LOSS <b>~' + d.pit.segundos.toFixed(1) +
+      's</b> — median of ' + d.pit.muestras + ' measured stop' +
+      (d.pit.muestras > 1 ? 's' : '') + ' this race';
+    pitloss.style.display = 'block';
+  } else {
+    pitloss.style.display = 'none';
   }
   // sonido de pista de fondo (con la voz activada)
   if (vozActiva && d.ambiente && !amb) {
@@ -1098,6 +1119,11 @@ async def narrar_datos(client: anthropic.AsyncAnthropic, eventos):
     Devuelve una lista de líneas [{"quien", "texto"}].
     """
     contexto = estado.tele.resumen() if estado.tele else ""
+    if estado.tele:
+        estrategia = estado.tele.estrategia_resumen()
+        if estrategia:
+            contexto += (f"\nMEASURED STRATEGY DATA (real, quotable): "
+                         f"{estrategia}")
     situacion = _situacion(eventos)
     memoria = "\n".join(estado.diario[-10:]) or "(nothing said yet)"
     if eventos:

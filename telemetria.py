@@ -41,6 +41,17 @@ def _seg(valor):
     return f"{s:.1f} segundos"
 
 
+def _pendiente(puntos):
+    """Pendiente por mínimos cuadrados de [(x, y)] — s por vuelta."""
+    n = len(puntos)
+    sx = sum(x for x, _ in puntos)
+    sy = sum(y for _, y in puntos)
+    sxx = sum(x * x for x, _ in puntos)
+    sxy = sum(x * y for x, y in puntos)
+    d = n * sxx - sx * sx
+    return (n * sxy - sx * sy) / d if d else 0.0
+
+
 # Duración estimada por tipo de sesión (minutos) para la ventana de aire
 _DURACION = {"Race": 135, "Sprint": 70, "Qualifying": 80,
              "Sprint Qualifying": 80, "Practice 1": 80, "Practice 2": 80,
@@ -136,9 +147,12 @@ class Telemetria:
         self.gaps = {}            # numero -> intervalo con el coche de delante
         self.gaps_anteriores = {} # numero -> intervalo de la lectura previa
         self.ultimo_pit = None    # {"vuelta", "nombre"} de la última parada
-        self.neumaticos = {}      # numero -> {"compuesto", "vueltas"}
+        self.neumaticos = {}      # numero -> {"compuesto", "vueltas", "desde"}
         self.clima = {}           # {"aire", "pista"}
         self._stints = []         # stints ordenados por vuelta de inicio
+        self._vueltas = {}        # numero -> [{"n", "dur", "out"}] cronológico
+        self._pit_laps = {}       # numero -> {vueltas en las que entró a boxes}
+        self._pits = []           # [{"numero", "vuelta"}] paradas ya ocurridas
         # timeline: lista de (fecha, tipo, dato) ordenada por fecha
         self._timeline = []
 
@@ -278,7 +292,13 @@ class Telemetria:
                         self.neumaticos[s["driver_number"]] = {
                             "compuesto": (s.get("compound") or "")[:1],
                             "vueltas": n - (s.get("lap_start") or n) + 1,
+                            "desde": s.get("lap_start") or n,
                         }
+            if dato.get("lap_duration"):
+                self._vueltas.setdefault(dato["driver_number"], []).append({
+                    "n": n, "dur": dato["lap_duration"],
+                    "out": bool(dato.get("is_pit_out_lap")),
+                })
             dur = dato.get("lap_duration")
             if dur and n > 1 and not dato.get("is_pit_out_lap"):
                 if self.mejor_vuelta is None or dur < self.mejor_vuelta[0]:
@@ -292,6 +312,11 @@ class Telemetria:
             extra = f", parada de {_seg(dur)}" if dur else ""
             self.ultimo_pit = {"vuelta": dato.get("lap_number", self.vuelta),
                                "nombre": self._nombre(dato["driver_number"])}
+            vuelta_pit = dato.get("lap_number") or self.vuelta
+            self._pit_laps.setdefault(
+                dato["driver_number"], set()).add(vuelta_pit)
+            self._pits.append({"numero": dato["driver_number"],
+                               "vuelta": vuelta_pit})
             return (f"BOXES: {self._nombre(dato['driver_number'])} entra a "
                     f"boxes en la vuelta {dato.get('lap_number', '?')}{extra}")
         if tipo == "intervalo":
@@ -398,7 +423,104 @@ class Telemetria:
                         f"({round(tendencia):+d} pts de tendencia)",
             })
         resultados.sort(key=lambda r: -r["score"])
+        # A los duelos más calientes se les añade la lectura de estrategia
+        # (degradación medida de ambos coches) cuando hay datos suficientes
+        nums = {p: n for n, p in self.posiciones.items()}
+        for r in resultados[:3]:
+            estr = self._estrategia_duelo(nums.get(r["pos_delante"]),
+                                          nums.get(r["pos_detras"]))
+            if estr:
+                r["estrategia"] = estr
         return resultados
+
+    # ---------- estrategia (métricas medidas, nunca inventadas) ----------
+
+    def degradacion(self, numero):
+        """Tendencia de ritmo del stint actual: pendiente (s/vuelta) por
+        mínimos cuadrados sobre las vueltas limpias — se excluyen la
+        vuelta de entrada y salida de boxes y las vueltas 7% más lentas
+        que la mejor del stint (tráfico, safety car). Positiva = el
+        neumático está cayendo. Devuelve dict o None si no hay al menos
+        cuatro vueltas limpias que medir."""
+        neu = self.neumaticos.get(numero) or {}
+        desde = neu.get("desde") or 1
+        en_boxes = self._pit_laps.get(numero, set())
+        stint = [v for v in self._vueltas.get(numero, [])
+                 if v["n"] >= desde and not v["out"]
+                 and v["n"] not in en_boxes]
+        if len(stint) < 4:
+            return None
+        mejor = min(v["dur"] for v in stint)
+        limpias = [v for v in stint if v["dur"] <= mejor * 1.07]
+        if len(limpias) < 4:
+            return None
+        return {
+            "pendiente": _pendiente([(v["n"], v["dur"]) for v in limpias]),
+            "muestras": len(limpias),
+            "compuesto": neu.get("compuesto", ""),
+            "edad": neu.get("vueltas", 0),
+        }
+
+    def perdida_pit(self):
+        """Cuánto cuesta una parada EN ESTA carrera, medido de las paradas
+        que ya ocurrieron: (vuelta de entrada + vuelta de salida) menos dos
+        vueltas al ritmo previo del propio piloto (mediana de sus últimas
+        vueltas limpias). Devuelve {"segundos", "muestras"} o None si aún
+        no hay paradas medibles."""
+        perdidas = []
+        for p in self._pits:
+            n, lap = p["numero"], p["vuelta"]
+            por_n = {v["n"]: v for v in self._vueltas.get(n, [])}
+            entrada, salida = por_n.get(lap), por_n.get(lap + 1)
+            if not entrada or not salida:
+                continue
+            previas = [v["dur"] for v in self._vueltas.get(n, [])
+                       if v["n"] < lap and not v["out"]
+                       and v["n"] not in self._pit_laps.get(n, set())][-8:]
+            if len(previas) < 3:
+                continue
+            base = sorted(previas)[len(previas) // 2]
+            perdida = entrada["dur"] + salida["dur"] - 2 * base
+            if 5 < perdida < 60:  # fuera de esto hubo SC/bandera: no sirve
+                perdidas.append(perdida)
+        if not perdidas:
+            return None
+        return {"segundos": sorted(perdidas)[len(perdidas) // 2],
+                "muestras": len(perdidas)}
+
+    def _estrategia_duelo(self, delante, detras):
+        """Lectura de estrategia de un duelo: degradación medida de ambos
+        y a quién favorece la tendencia. Texto vacío si faltan datos."""
+        if delante is None or detras is None:
+            return ""
+        dd, dt_ = self.degradacion(delante), self.degradacion(detras)
+        if not dd or not dt_:
+            return ""
+        def parte(num, d):
+            acr = self.pilotos.get(num, {}).get("acronimo", str(num))
+            return (f"{acr} {d['pendiente']:+.2f}s/v "
+                    f"({d['compuesto'] or '?'}×{d['edad']}, "
+                    f"{d['muestras']} vueltas limpias)")
+        texto = f"Ritmo del stint: {parte(delante, dd)} · {parte(detras, dt_)}"
+        dif = dd["pendiente"] - dt_["pendiente"]
+        if abs(dif) >= 0.05:
+            quien = (self.pilotos.get(delante if dif > 0 else detras, {})
+                     .get("acronimo", "?"))
+            texto += (f" — el neumático de {quien} cae "
+                      f"{abs(dif):.2f}s/v más rápido")
+        return texto
+
+    def estrategia_resumen(self):
+        """Datos de estrategia medidos, en una línea, para el narrador."""
+        partes = []
+        pit = self.perdida_pit()
+        if pit:
+            partes.append(f"una parada cuesta ~{pit['segundos']:.1f}s "
+                          f"(mediana de {pit['muestras']} paradas medidas)")
+        for r in self.battle_scores()[:2]:
+            if r.get("estrategia"):
+                partes.append(f"duelo {r['entre']}: {r['estrategia']}")
+        return "; ".join(partes)
 
     async def correr(self, al_evento):
         """Reproduce la línea de tiempo llamando a al_evento(texto)."""
