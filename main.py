@@ -491,6 +491,7 @@ async def apex():
         "foco": foco_director(t),
         "duelos": t.battle_scores()[:4] if t else [],
         "pit": t.perdida_pit() if t else None,
+        "alertas": t.alertas() if t else [],
         "calendario": estado.calendario,
         "programa": estado.programa,
         "leaderboard": t.tabla() if t else [],
@@ -585,6 +586,31 @@ async def visor():
              color: var(--accent); text-transform: uppercase;
              opacity: 0; transition: opacity .3s; }
   #director.on { opacity: 1; }
+  /* Ticker de Alerta IA: banda de "información privilegiada" medida */
+  #ticker { display: none; align-items: center; gap: 12px;
+            margin: 2px 22px 0; padding: 7px 14px; border-radius: 8px;
+            background: linear-gradient(90deg, rgba(21,25,34,.95),
+                        rgba(21,25,34,.6));
+            border: 1px solid var(--line); overflow: hidden; }
+  #ticker.show { display: flex; }
+  #ticker .badge { flex: none; display: flex; align-items: center; gap: 6px;
+                   font-size: .6rem; font-weight: 800; letter-spacing: .18em;
+                   color: var(--accent); text-transform: uppercase; }
+  #ticker .badge::before { content: ""; width: 7px; height: 7px;
+                   border-radius: 50%; background: var(--accent);
+                   box-shadow: 0 0 8px var(--accent);
+                   animation: aiPulse 1.1s infinite; }
+  @keyframes aiPulse { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
+  #ticker .sep { flex: none; width: 1px; height: 14px;
+                 background: var(--line); }
+  #ticker .txt { font-size: .82rem; font-weight: 600; letter-spacing: .02em;
+                 white-space: nowrap; overflow: hidden;
+                 text-overflow: ellipsis;
+                 font-variant-numeric: tabular-nums;
+                 transition: opacity .35s; }
+  #ticker .txt.hot { color: var(--txt); }
+  #ticker .txt.warn { color: var(--amber); }
+  #ticker .txt.info { color: var(--dim); }
   /* Modos de programa (Historia, etc.): fondo a pantalla completa */
   #fondo { position: fixed; inset: 0; z-index: -1; background: var(--bg);
            background-size: cover; background-position: center;
@@ -717,6 +743,10 @@ async def visor():
   <span id="clima"></span>
   <span id="lap"></span>
 </header>
+<div id="ticker">
+  <span class="badge">◉ AI READ</span><span class="sep"></span>
+  <span class="txt" id="ticker-txt"></span>
+</div>
 <div id="director"></div>
 <div id="progtitle"></div>
 <div id="inter"><div>
@@ -740,6 +770,24 @@ async def visor():
 <script>
 let vozActiva = false, ultimoSegmento = -1, posPrevias = {};
 let reproduciendo = false, pendiente = null, amb = null;
+// Ticker de Alerta IA: rota entre las lecturas medidas cada pocos segundos
+let alertas = [], alertaIdx = 0;
+function pintarAlerta() {
+  const t = document.getElementById('ticker');
+  const txt = document.getElementById('ticker-txt');
+  if (!alertas.length) { t.classList.remove('show'); return; }
+  t.classList.add('show');
+  alertaIdx = alertaIdx % alertas.length;
+  const a = alertas[alertaIdx];
+  txt.style.opacity = 0;
+  setTimeout(() => {
+    txt.textContent = a.txt;
+    txt.className = 'txt ' + (a.nivel || 'info');
+    txt.style.opacity = 1;
+  }, 180);
+}
+function rotarAlerta() { alertaIdx++; pintarAlerta(); }
+setInterval(rotarAlerta, 5000);
 const btn = document.getElementById('voz');
 btn.onclick = () => {
   vozActiva = !vozActiva;
@@ -836,6 +884,16 @@ async function tick() {
     if (el) el.classList.add('foco');
   } else {
     dir.classList.remove('on');
+  }
+  // Ticker de Alerta IA: refresca la lista; si cambió, repinta al vuelo
+  const nuevas = d.en_vivo ? (d.alertas || []) : [];
+  const cambio = nuevas.length !== alertas.length ||
+    nuevas.some((a, i) => !alertas[i] || a.txt !== alertas[i].txt);
+  if (cambio) {
+    const antes = alertas.length;
+    alertas = nuevas;
+    if (!antes || alertaIdx >= alertas.length) alertaIdx = 0;
+    pintarAlerta();
   }
   // leaderboard en vivo, o calendario de próximas sesiones si no hay carrera
   const board = document.getElementById('board');

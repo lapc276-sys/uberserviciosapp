@@ -522,6 +522,72 @@ class Telemetria:
                 partes.append(f"duelo {r['entre']}: {r['estrategia']}")
         return "; ".join(partes)
 
+    def alertas(self):
+        """Lecturas de la IA para el ticker de pantalla. SOLO cosas medibles
+        de esta carrera, cada una con su porqué — nunca un porcentaje ni un
+        dato inventado (regla de oro). Lista ordenada por importancia:
+        [{"txt", "nivel"}] con nivel hot/warn/info; vacía si no hay nada
+        sólido que decir."""
+        out = []
+        nums = {p: n for n, p in self.posiciones.items()}
+
+        # 1) Carrera neutralizada / incidente (mensaje real de dirección)
+        for inc in reversed(self.incidentes):
+            if inc["vuelta"] < self.vuelta - 1:
+                continue
+            m = inc["texto"].upper()
+            if any(k in m for k in ("SAFETY CAR", "VIRTUAL SAFETY", "VSC")):
+                out.append({"txt": "RACE NEUTRALISED — pit-stop window "
+                            "just opened for the whole field", "nivel": "hot"})
+                break
+            if "RED FLAG" in m:
+                out.append({"txt": "RED FLAG — race stopped", "nivel": "hot"})
+                break
+            if any(k in m for k in ("INCIDENT", "ACCIDENT", "CRASH",
+                                    "COLLISION")):
+                out.append({"txt": f"INCIDENT: {inc['texto']}",
+                            "nivel": "hot"})
+                break
+
+        # 2) Ventana de undercut en el duelo más caliente (degradación medida)
+        duelos = self.battle_scores()
+        if duelos and duelos[0]["score"] >= 45:
+            d = duelos[0]
+            delante, detras = d["entre"].split(" vs ")
+            da = self.degradacion(nums.get(d["pos_delante"]))
+            db = self.degradacion(nums.get(d["pos_detras"]))
+            if da and db:
+                dif = da["pendiente"] - db["pendiente"]  # >0: delante cae antes
+                if dif >= 0.05:
+                    out.append({"txt": f"UNDERCUT IN PLAY — {detras}'s tyres "
+                                f"{dif:.2f}s/lap fresher than {delante}, "
+                                f"P{d['pos_delante']} under threat",
+                                "nivel": "hot"})
+
+        # 3) Caída de neumático medible en el top-10 (pit window abriéndose)
+        for f in self.tabla():
+            deg = self.degradacion(nums.get(f["pos"]))
+            if deg and deg["pendiente"] >= 0.12 and deg["edad"] >= 8:
+                out.append({"txt": f"TYRE DROP-OFF — {f['acr']} losing "
+                            f"{deg['pendiente']:.2f}s/lap on "
+                            f"{deg['compuesto'] or '?'} ({deg['edad']} laps), "
+                            f"a stop is coming", "nivel": "warn"})
+                break
+
+        # 4) Últimas vueltas
+        if (self.total_vueltas and self.vuelta
+                and self.vuelta >= self.total_vueltas - 3):
+            quedan = self.total_vueltas - self.vuelta
+            out.append({"txt": f"FINAL LAPS — {quedan} to go", "nivel": "hot"})
+
+        # 5) Coste de parada medido (contexto de fondo, siempre útil)
+        pit = self.perdida_pit()
+        if pit:
+            out.append({"txt": f"PIT LOSS here ~{pit['segundos']:.1f}s "
+                        f"(median of {pit['muestras']} stops)", "nivel": "info"})
+
+        return out
+
     async def correr(self, al_evento):
         """Reproduce la línea de tiempo llamando a al_evento(texto)."""
         if not self._timeline:
