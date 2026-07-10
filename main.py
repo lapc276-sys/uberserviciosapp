@@ -63,6 +63,13 @@ PLAYLIST = [p.strip() for p in
             os.environ.get("PLAYLIST", "historia,tech").split(",")
             if p.strip()]
 ROTACION_MINUTOS = float(os.environ.get("ROTACION_MINUTOS", "8"))
+
+# Parrilla automática: el director sigue el calendario real de carreras y
+# pone cada sesión al aire a su hora; entre carreras, rota los programas.
+# PROGRAMACION_AUTO=on lo activa (toma el control total del canal).
+PROGRAMACION_AUTO = os.environ.get("PROGRAMACION_AUTO", "")
+PRESHOW_MINUTOS = float(os.environ.get("PRESHOW_MINUTOS", "30"))
+INTERVALO_PARRILLA = float(os.environ.get("INTERVALO_PARRILLA", "15"))
 # Modelo del guionista (Secret MODELO_NARRADOR para cambiarlo):
 # claude-opus-4-8 = máxima calidad · claude-haiku-4-5 = ~5x más barato
 MODELO = os.environ.get("MODELO_NARRADOR", "claude-opus-4-8")
@@ -210,7 +217,8 @@ async def lifespan(app: FastAPI):
               asyncio.create_task(bucle_narracion()),
               asyncio.create_task(bucle_ambiente()),
               asyncio.create_task(bucle_calendario()),
-              asyncio.create_task(bucle_director())]
+              asyncio.create_task(bucle_director()),
+              asyncio.create_task(bucle_programacion())]
     yield
     for t in tareas:
         t.cancel()
@@ -247,6 +255,8 @@ class Estado:
         self.ultimo_anuncio: float = 0.0
         self.programa: dict | None = None  # {"tipo","titulo","fondo"} o None
         self.director_auto: bool = False   # el director rota shows solo
+        self.horario: list[dict] = []      # sesiones programables (reales)
+        self.sesion_actual = None          # clave de la sesión al aire
         self.segmento_id: int = 0      # id del último segmento con audio
         self.audios: list = []         # mp3 por línea del último segmento
 
@@ -318,9 +328,18 @@ def foco_director(t):
 @app.get("/control/estado")
 async def control_estado():
     """Estado actual para el panel de botones."""
+    prox = None
+    if estado.horario:
+        futuras = [s for s in estado.horario
+                   if s["inicio"] > dt.datetime.now(dt.timezone.utc)]
+        if futuras:
+            s = min(futuras, key=lambda s: s["inicio"])
+            prox = f"{s['sesion']} — {s['pais']} ({_horarios(s['inicio'].isoformat())[1]})"
     return JSONResponse({
         "programa": estado.programa,
         "director_auto": estado.director_auto,
+        "parrilla_auto": bool(PROGRAMACION_AUTO),
+        "proxima_sesion": prox,
         "shows": [{"tipo": k, "titulo": v["titulo"]}
                   for k, v in PROGRAMAS.items()],
     })
@@ -402,9 +421,12 @@ async function post(u){ await fetch(u,{method:'POST'}); refrescar(); }
 async function refrescar(){
   const d = await (await fetch('/control/estado')).json();
   const prog = d.programa ? d.programa.titulo : 'Carrera / Leaderboard';
-  document.getElementById('estado').innerHTML =
-    'Al aire: <b>' + prog + '</b><br>Director automático: <b>' +
+  let html = 'Al aire: <b>' + prog + '</b><br>Director automático: <b>' +
     (d.director_auto ? 'ON' : 'OFF') + '</b>';
+  if (d.parrilla_auto) html += '<br>Parrilla automática: <b>ON</b>';
+  if (d.proxima_sesion) html += '<br>Próxima carrera: <b>' +
+    d.proxima_sesion + '</b>';
+  document.getElementById('estado').innerHTML = html;
   const cont = document.getElementById('shows');
   if (!cont.dataset.built) {
     for (const s of d.shows) {
@@ -1123,7 +1145,8 @@ def _horarios(fecha_iso):
 
 
 async def bucle_calendario():
-    """Refresca cada 30 min la lista real de próximas sesiones (OpenF1)."""
+    """Refresca cada 30 min el calendario real (OpenF1): el de pantalla
+    (próximas sesiones) y el horario que usa la parrilla automática."""
     while True:
         try:
             sesiones = await telemetria.proximas_sesiones(5)
@@ -1135,6 +1158,10 @@ async def bucle_calendario():
             } for s in sesiones]
         except Exception as e:
             log.warning("Calendario no disponible (%s)", e)
+        try:
+            estado.horario = await telemetria.sesiones_programables()
+        except Exception as e:
+            log.warning("Horario de parrilla no disponible (%s)", e)
         await asyncio.sleep(1800)
 
 
@@ -1331,6 +1358,8 @@ async def bucle_director():
     """Director de programación: cuando está en automático, rota los shows
     de PLAYLIST solo, sin que nadie toque nada. Se puede prender/apagar y
     saltar de show desde el panel de botones (sin Secrets)."""
+    if PROGRAMACION_AUTO:
+        return  # la parrilla automática toma el control
     playlist = [p for p in PLAYLIST if p in PROGRAMAS] or ["historia"]
     i = 0
     while True:
@@ -1343,12 +1372,92 @@ async def bucle_director():
             await asyncio.sleep(2)
 
 
+def sesion_en_ventana(ahora, sesiones, antes_min=30):
+    """Decisión pura: ¿qué sesión debería estar al aire ahora? Devuelve la
+    sesión (o None). La ventana va desde `antes_min` antes del inicio (pre-
+    show) hasta el fin estimado. Todo en UTC → correcto ante cambios de
+    hora (DST) en cualquier país."""
+    ventana = dt.timedelta(minutes=antes_min)
+    for s in sorted(sesiones, key=lambda s: s["inicio"]):
+        if s["inicio"] - ventana <= ahora <= s["fin"]:
+            return s
+    return None
+
+
+async def _correr_sesion(clave):
+    """Carga y reproduce una sesión concreta (usado por la parrilla)."""
+    estado.tele_cargando = True
+    try:
+        tele = telemetria.Telemetria(clave, VELOCIDAD_REPLAY)
+        await tele.cargar()
+        estado.tele = tele
+        estado.programa = None
+        log.info("📺 Al aire (parrilla): %s", tele.descripcion())
+
+        def al_evento(texto):
+            estado.eventos.append(texto)
+            del estado.eventos[:-30]
+            log.info("📊 %s", texto)
+
+        await tele.correr(al_evento)
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        log.error("Sesión de parrilla '%s' no disponible (%s)", clave, e)
+    finally:
+        estado.tele = None
+        estado.tele_cargando = False
+
+
+async def bucle_programacion():
+    """Parrilla automática (Fase 8): sigue el calendario real. Cuando toca
+    una carrera, la pone al aire a su hora (con pre-show); entre carreras,
+    rota los programas. Un solo cerebro para todo el canal."""
+    if not PROGRAMACION_AUTO:
+        return
+    playlist = [p for p in PLAYLIST if p in PROGRAMAS] or ["historia"]
+    log.info("🗓️  Parrilla automática activa (pre-show %g min antes)",
+             PRESHOW_MINUTOS)
+    idx = 0
+    prox_rotacion = 0.0
+    tarea_carrera = None
+    while True:
+        ahora = dt.datetime.now(dt.timezone.utc)
+        s = sesion_en_ventana(ahora, estado.horario, PRESHOW_MINUTOS)
+        if s:
+            # Toca una carrera: ponerla al aire si no está ya
+            if estado.sesion_actual != s["session_key"]:
+                if tarea_carrera:
+                    tarea_carrera.cancel()
+                estado.sesion_actual = s["session_key"]
+                log.info("🗓️  Es hora de %s en %s → al aire",
+                        s["sesion"], s["pais"])
+                tarea_carrera = asyncio.create_task(
+                    _correr_sesion(s["session_key"]))
+        else:
+            # Sin carrera: cerrar cualquier carrera y rotar programas
+            if estado.sesion_actual is not None:
+                if tarea_carrera:
+                    tarea_carrera.cancel()
+                    tarea_carrera = None
+                estado.tele = None
+                estado.sesion_actual = None
+                prox_rotacion = 0.0  # empezar programa de inmediato
+            if time.time() >= prox_rotacion:
+                poner_al_aire(playlist[idx % len(playlist)])
+                log.info("🎬 Ahora al aire: %s", estado.programa["titulo"])
+                idx += 1
+                prox_rotacion = time.time() + ROTACION_MINUTOS * 60
+        await asyncio.sleep(INTERVALO_PARRILLA)
+
+
 async def bucle_telemetria():
     """Programación continua: la sesión configurada primero, y luego un
     maratón infinito de carreras clásicas reales (nunca queda "al aire
     en blanco" si hay datos disponibles)."""
-    if MODO_TELEMETRIA == "off" or DEMO_PROGRAMA or PROGRAMAS_AUTO:
-        log.info("Telemetría en pausa (modo programa/off)")
+    if (MODO_TELEMETRIA == "off" or DEMO_PROGRAMA or PROGRAMAS_AUTO
+            or PROGRAMACION_AUTO):
+        log.info("Telemetría en pausa (modo programa/parrilla/off)")
         return
     cola = [SESSION_KEY]
     while True:

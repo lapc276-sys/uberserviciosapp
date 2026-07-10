@@ -41,6 +41,44 @@ def _seg(valor):
     return f"{s:.1f} segundos"
 
 
+# Duración estimada por tipo de sesión (minutos) para la ventana de aire
+_DURACION = {"Race": 135, "Sprint": 70, "Qualifying": 80,
+             "Sprint Qualifying": 80, "Practice 1": 80, "Practice 2": 80,
+             "Practice 3": 80}
+
+
+async def sesiones_programables():
+    """Todas las sesiones del año con inicio/fin (UTC) y su clave, para
+    que el director sepa cuándo poner cada carrera al aire. Datos reales;
+    lista vacía si falla. Comparar en UTC hace el cambio de hora (DST)
+    automáticamente correcto."""
+    ahora = dt.datetime.now(dt.timezone.utc)
+    out = []
+    async with httpx.AsyncClient() as client:
+        try:
+            r = await client.get(f"{BASE}/sessions",
+                                 params={"year": ahora.year}, timeout=30)
+            r.raise_for_status()
+            sesiones = r.json()
+        except Exception:
+            return []
+    for s in sesiones:
+        if not s.get("date_start"):
+            continue
+        inicio = _fecha(s["date_start"])
+        dur = _DURACION.get(s.get("session_name"), 80)
+        out.append({
+            "session_key": s["session_key"],
+            "sesion": s.get("session_name", "?"),
+            "pais": s.get("country_name", "?"),
+            "circuito": s.get("circuit_short_name", "?"),
+            "inicio": inicio,
+            "fin": inicio + dt.timedelta(minutes=dur),
+        })
+    out.sort(key=lambda s: s["inicio"])
+    return out
+
+
 async def proximas_sesiones(n=5):
     """Próximas sesiones de F1 (libres, clasificación, carrera) desde
     OpenF1. Lista real y verificable; vacía si no hay datos disponibles

@@ -260,10 +260,16 @@ el equipo de tu ciudad"), y suscripciones.
 
 Pedidas por el dueño; anotadas para no perderlas y priorizar bien:
 
-1. **Carreras por horario automático** (todas las series a su hora, con
-   husos horarios y cambios de hora DST). Factible para F1 (OpenF1 tiene
-   fecha/hora reales). Para otras series, solo si conseguimos su fuente
-   de horarios. Es el "tejido de la parrilla" — pieza grande de la Fase 8.
+1. **Carreras por horario automático — HECHO (núcleo)**: la parrilla
+   (`PROGRAMACION_AUTO=on`) sigue el calendario real de OpenF1 y pone
+   cada sesión al aire a su hora (con pre-show `PRESHOW_MINUTOS` antes),
+   y entre carreras rota los programas — un solo cerebro, sin tocar
+   nada. Comparación en UTC → cambios de hora (DST) correctos solos.
+   Verificado con pruebas de ventana y un dry-run carrera↔programas.
+   Pendiente por validar en día de carrera real: que una sesión EN VIVO
+   (no repetición) fluya bien (quizá haga falta un modo de sondeo en
+   vivo, distinto al replay). Para otras series falta su fuente de
+   horarios.
 2. **Interludios foto + música** (foto del circuito de la semana con
    música de fondo entre programas, estilo Telemundo). Factible: fotos
    libres (Wikimedia) + música libre de derechos (no cualquier canción —
