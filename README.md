@@ -27,6 +27,9 @@ Variables de entorno (Secrets en Replit, todas opcionales):
 | `ELEVENLABS_VOZ_NARRADOR` | Adam | Voice ID de la Voice Library para Alex |
 | `ELEVENLABS_VOZ_ANALISTA` | Daniel | Voice ID de la Voice Library para Sam |
 | `IDIOMA` | `en` | Idioma del dúo (`es` disponible) |
+| `MODELO_VIVO` | `claude-opus-4-8` | Modelo del guionista en **carrera en vivo** (máxima calidad) |
+| `MODELO_AHORRO` | `claude-haiku-4-5-20251001` | Modelo el **resto del tiempo** (~10x más barato). El canal cambia solo entre ambos |
+| `MODELO_NARRADOR` | — | Si se define, **fuerza ese modelo siempre** y apaga el ahorro automático |
 | `MODO_TELEMETRIA` | `replay` | `off` para narrar solo por visión |
 | `SESSION_KEY` | `latest` | Clave de sesión OpenF1 de una carrera concreta |
 | `VELOCIDAD_REPLAY` | `1` | Ej. `10` reproduce la carrera 10 veces más rápido |

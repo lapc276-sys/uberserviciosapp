@@ -81,9 +81,24 @@ INTERLUDIO_MINUTOS = float(os.environ.get("INTERLUDIO_MINUTOS", "2"))
 PROGRAMACION_AUTO = os.environ.get("PROGRAMACION_AUTO", "")
 PRESHOW_MINUTOS = float(os.environ.get("PRESHOW_MINUTOS", "30"))
 INTERVALO_PARRILLA = float(os.environ.get("INTERVALO_PARRILLA", "15"))
-# Modelo del guionista (Secret MODELO_NARRADOR para cambiarlo):
-# claude-opus-4-8 = máxima calidad · claude-haiku-4-5 = ~5x más barato
-MODELO = os.environ.get("MODELO_NARRADOR", "claude-opus-4-8")
+# Modo ahorro automático: el canal usa el modelo caro (máxima calidad)
+# SOLO durante una carrera en vivo de la parrilla; el resto del día
+# (maratón de clásicas, historia, tech, calendario) usa un modelo barato.
+# Así el canal puede estar 24/7 sin quemar dinero.
+#   - MODELO_VIVO   : carrera en vivo real (default Opus, máxima calidad)
+#   - MODELO_AHORRO : todo lo demás       (default Haiku, ~10x más barato)
+#   - MODELO_NARRADOR (opcional): si se define, fuerza ESE modelo siempre
+#     (mantiene el control manual de antes; apaga el ahorro automático).
+_forzado = os.environ.get("MODELO_NARRADOR", "")
+MODELO_VIVO = _forzado or os.environ.get("MODELO_VIVO", "claude-opus-4-8")
+MODELO_AHORRO = _forzado or os.environ.get("MODELO_AHORRO",
+                                           "claude-haiku-4-5-20251001")
+
+
+def modelo_actual():
+    """Modelo del guionista según el momento: caro solo en carrera en
+    vivo real (parrilla), barato el resto del tiempo."""
+    return MODELO_VIVO if estado.carrera_en_vivo else MODELO_AHORRO
 
 # Telemetría: "replay" reproduce la última carrera disputada desde OpenF1;
 # "off" desactiva y se narra solo por visión (frames de la Mac).
@@ -268,6 +283,7 @@ class Estado:
         self.director_auto: bool = False   # el director rota shows solo
         self.horario: list[dict] = []      # sesiones programables (reales)
         self.sesion_actual = None          # clave de la sesión al aire
+        self.carrera_en_vivo: bool = False # True solo en carrera real (parrilla)
         self.segmento_id: int = 0      # id del último segmento con audio
         self.audios: list = []         # mp3 por línea del último segmento
 
@@ -955,7 +971,7 @@ async def narrar_frame(client: anthropic.AsyncAnthropic, frame: bytes,
     contexto = (f'La narración anterior fue: "{anterior}". No la repitas; '
                 "narra solo lo nuevo." if anterior else "")
     response = await client.messages.create(
-        model=MODELO,
+        model=modelo_actual(),
         max_tokens=300,
         system=(f"You are a Formula 1 race narrator speaking "
                 f"{IDIOMA_NOMBRE}. You receive one frame of the broadcast "
@@ -1135,7 +1151,7 @@ async def narrar_datos(client: anthropic.AsyncAnthropic, eventos):
                   "you've already covered the interesting angles recently, "
                   "return an empty lineas array and let the race breathe.")
     response = await client.messages.create(
-        model=MODELO,
+        model=modelo_actual(),
         max_tokens=500,
         system=SYSTEM_DUO,
         output_config={"format": {"type": "json_schema",
@@ -1274,7 +1290,7 @@ async def narrar_calendario(client: anthropic.AsyncAnthropic):
         for s in estado.calendario[:3])
     memoria = "\n".join(estado.diario[-6:]) or "(nothing said yet)"
     response = await client.messages.create(
-        model=MODELO, max_tokens=300, system=SYSTEM_CALENDARIO,
+        model=modelo_actual(), max_tokens=300, system=SYSTEM_CALENDARIO,
         output_config={"format": {"type": "json_schema",
                                   "schema": DUO_SCHEMA}},
         messages=[{
@@ -1381,7 +1397,7 @@ async def segmento_historia(client: anthropic.AsyncAnthropic):
     descriptivo + foto de fondo de libre uso del tema."""
     memoria = "\n".join(estado.diario[-8:]) or "(nothing said yet)"
     response = await client.messages.create(
-        model=MODELO, max_tokens=500, system=SYSTEM_HISTORIA_SOLO,
+        model=modelo_actual(), max_tokens=500, system=SYSTEM_HISTORIA_SOLO,
         output_config={"format": {"type": "json_schema",
                                   "schema": HISTORIA_SCHEMA}},
         messages=[{
@@ -1414,7 +1430,7 @@ async def narrar_programa(client: anthropic.AsyncAnthropic, tipo):
         return []
     memoria = "\n".join(estado.diario[-8:]) or "(nothing said yet)"
     response = await client.messages.create(
-        model=MODELO, max_tokens=350, system=prog["sys"],
+        model=modelo_actual(), max_tokens=350, system=prog["sys"],
         output_config={"format": {"type": "json_schema",
                                   "schema": DUO_SCHEMA}},
         messages=[{
@@ -1523,7 +1539,10 @@ async def _correr_sesion(clave):
         await tele.cargar()
         estado.tele = tele
         estado.programa = None
-        log.info("📺 Al aire (parrilla): %s", tele.descripcion())
+        # Carrera de la parrilla = evento en vivo real → calidad máxima
+        estado.carrera_en_vivo = True
+        log.info("📺 Al aire (parrilla, calidad %s): %s",
+                 MODELO_VIVO, tele.descripcion())
 
         def al_evento(texto):
             estado.eventos.append(texto)
@@ -1538,6 +1557,7 @@ async def _correr_sesion(clave):
     finally:
         estado.tele = None
         estado.tele_cargando = False
+        estado.carrera_en_vivo = False
 
 
 async def bucle_programacion():
@@ -1670,9 +1690,15 @@ async def bucle_narracion():
         log.warning("ANTHROPIC_API_KEY no definida — narración desactivada")
         return
     client = anthropic.AsyncAnthropic()
-    log.info("Narración activada (modelo %s, eventos cada %ds, "
-             "relleno cada %ds)", MODELO, INTERVALO_NARRACION,
-             RELLENO_SEGUNDOS)
+    if MODELO_VIVO == MODELO_AHORRO:
+        log.info("Narración activada (modelo fijo %s, eventos cada %ds, "
+                 "relleno cada %ds)", MODELO_VIVO, INTERVALO_NARRACION,
+                 RELLENO_SEGUNDOS)
+    else:
+        log.info("Narración activada — modo ahorro: carrera en vivo %s, "
+                 "resto %s (eventos cada %ds, relleno cada %ds)",
+                 MODELO_VIVO, MODELO_AHORRO, INTERVALO_NARRACION,
+                 RELLENO_SEGUNDOS)
     ultimo_frame_narrado = 0.0
     ultimo_relleno = 0.0
     while True:
