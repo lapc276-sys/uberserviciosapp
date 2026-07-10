@@ -30,6 +30,8 @@ Variables de entorno (Secrets en Replit, todas opcionales):
 | `MODO_TELEMETRIA` | `replay` | `off` para narrar solo por visión |
 | `SESSION_KEY` | `latest` | Clave de sesión OpenF1 de una carrera concreta |
 | `VELOCIDAD_REPLAY` | `1` | Ej. `10` reproduce la carrera 10 veces más rápido |
+| `MUSICA_URL` | — | MP3 directo de música **libre/CC** para los interludios (sin URL, el interludio va en silencio) |
+| `INTERLUDIO_MINUTOS` | `2` | Duración del interludio foto+música entre programas |
 
 ## Backend en Replit
 

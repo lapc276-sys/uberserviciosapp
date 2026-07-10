@@ -26,6 +26,7 @@ import datetime as dt
 import json
 import logging
 import os
+import random
 import time
 from zoneinfo import ZoneInfo
 
@@ -60,9 +61,19 @@ INTERVALO_PROGRAMA = 30  # segundos entre segmentos de un programa
 # intervención manual. PROGRAMAS_AUTO=on lo activa.
 PROGRAMAS_AUTO = os.environ.get("PROGRAMAS_AUTO", "")
 PLAYLIST = [p.strip() for p in
-            os.environ.get("PLAYLIST", "historia,tech").split(",")
+            os.environ.get("PLAYLIST",
+                           "historia,interludio,tech,interludio").split(",")
             if p.strip()]
 ROTACION_MINUTOS = float(os.environ.get("ROTACION_MINUTOS", "8"))
+# Música de fondo para interludios (opcional). Solo música LIBRE / CC —
+# un enlace directo .mp3 de una librería libre (Pixabay, YouTube Audio
+# Library descargada, etc.). Vacío = interludio sin música.
+MUSICA_URL = os.environ.get("MUSICA_URL", "")
+# Circuitos de reserva para el interludio cuando no hay próxima carrera
+CIRCUITOS_RESERVA = ["Silverstone Circuit", "Monza Circuit",
+                     "Circuit de Spa-Francorchamps", "Suzuka Circuit",
+                     "Interlagos", "Circuit de Monaco"]
+INTERLUDIO_MINUTOS = float(os.environ.get("INTERLUDIO_MINUTOS", "2"))
 
 # Parrilla automática: el director sigue el calendario real de carreras y
 # pone cada sesión al aire a su hora; entre carreras, rota los programas.
@@ -340,14 +351,22 @@ async def control_estado():
         "director_auto": estado.director_auto,
         "parrilla_auto": bool(PROGRAMACION_AUTO),
         "proxima_sesion": prox,
-        "shows": [{"tipo": k, "titulo": v["titulo"]}
-                  for k, v in PROGRAMAS.items()],
+        "shows": ([{"tipo": k, "titulo": v["titulo"]}
+                   for k, v in PROGRAMAS.items()]
+                  + [{"tipo": "interludio",
+                      "titulo": "INTERLUDE · PHOTO + MUSIC"}]),
     })
 
 
 @app.post("/control/show/{tipo}")
 async def control_show(tipo: str):
     """Pone un show en pantalla ahora (apaga el automático)."""
+    if tipo == "interludio":
+        estado.director_auto = False
+        await poner_interludio()
+        log.info("🕹️  Panel: al aire INTERLUDIO (%s)",
+                 estado.programa["titulo"])
+        return JSONResponse({"ok": True})
     if tipo not in PROGRAMAS:
         return JSONResponse({"ok": False, "error": "show desconocido"},
                             status_code=404)
@@ -564,6 +583,29 @@ async def visor():
       radial-gradient(110% 75% at 20% 15%, rgba(40,120,200,.25), transparent 60%),
       radial-gradient(90% 70% at 85% 85%, rgba(20,180,160,.18), transparent 55%),
       linear-gradient(160deg, #0B0D12 20%, #0d1420 100%); }
+  #fondo.interludio {
+    background:
+      radial-gradient(120% 90% at 50% 100%, rgba(225,6,0,.16), transparent 55%),
+      linear-gradient(160deg, #0B0D12 25%, #141a26 100%); }
+  /* Interludio: tarjeta de continuidad — foto + música, sin paneles */
+  #inter { position: fixed; inset: 0; z-index: 1; display: none;
+           align-items: flex-end; justify-content: center;
+           padding-bottom: 11vh; text-align: center;
+           background: linear-gradient(180deg, rgba(11,13,18,.10) 40%,
+                                       rgba(11,13,18,.86) 100%); }
+  body.interludio #inter { display: flex; }
+  body.interludio main, body.interludio header,
+  body.interludio #director, body.interludio #progtitle {
+    visibility: hidden; }
+  body.interludio #voz { opacity: .18; }
+  #inter .t { font-size: 2.7rem; font-weight: 800; letter-spacing: .18em;
+              text-transform: uppercase;
+              text-shadow: 0 2px 18px rgba(0,0,0,.7); }
+  #inter .s { margin-top: 12px; color: #C9D1DE; font-size: .92rem;
+              letter-spacing: .3em; text-transform: uppercase;
+              text-shadow: 0 1px 10px rgba(0,0,0,.8); }
+  #inter .m { margin-top: 24px; color: var(--dim); font-size: .8rem;
+              letter-spacing: .24em; opacity: .75; }
   #progtitle { text-align: center; padding: 8px 0 2px;
                font-size: 1rem; font-weight: 700; letter-spacing: .22em;
                color: var(--accent); text-transform: uppercase;
@@ -655,6 +697,12 @@ async def visor():
 </header>
 <div id="director"></div>
 <div id="progtitle"></div>
+<div id="inter"><div>
+  <div class="t" id="inter-t"></div>
+  <div class="s" id="inter-s"></div>
+  <div class="m" id="inter-m"></div>
+</div></div>
+<audio id="musica" loop></audio>
 <main>
   <section class="panel" id="panel-board"><h3 id="board-title">Leaderboard</h3><div id="board"></div></section>
   <section id="centro">
@@ -707,6 +755,22 @@ function aplicarPrograma(p) {
   const fondo = document.getElementById('fondo');
   const titulo = document.getElementById('progtitle');
   const credito = document.getElementById('credito');
+  const inter = !!(p && p.tipo === 'interludio');
+  document.body.classList.toggle('interludio', inter);
+  if (inter) {
+    document.getElementById('inter-t').textContent = p.titulo || '';
+    document.getElementById('inter-s').textContent = p.subtitulo || '';
+    document.getElementById('inter-m').textContent =
+      p.musica ? '♪ MUSIC' : '';
+  }
+  const musica = document.getElementById('musica');
+  if (inter && p.musica && vozActiva) {
+    if (musica.getAttribute('src') !== p.musica) musica.src = p.musica;
+    if (musica.paused) { musica.volume = 0.35;
+                         musica.play().catch(() => {}); }
+  } else if (!musica.paused) {
+    musica.pause();
+  }
   if (p && p.tipo && p.tipo !== 'carrera') {
     document.body.classList.add('programa');
     const esImg = p.fondo && (p.fondo.startsWith('http') ||
@@ -1354,22 +1418,63 @@ def poner_al_aire(tipo):
         estado.ultimo_anuncio = 0.0  # contenido nuevo cuanto antes
 
 
+async def poner_interludio():
+    """Interludio entre programas (estilo tarjeta de continuidad de TV):
+    foto de un circuito a pantalla completa + música libre opcional +
+    aviso de la próxima carrera. Nadie habla durante el interludio."""
+    circuito, subtitulo = None, ""
+    ahora = dt.datetime.now(dt.timezone.utc)
+    futuras = [s for s in estado.horario if s["inicio"] > ahora]
+    if futuras:
+        s = min(futuras, key=lambda s: s["inicio"])
+        circuito = s["circuito"]
+        hora_local = _horarios(s["inicio"].isoformat())
+        subtitulo = (f"UP NEXT · {s['sesion']} — {s['pais']} · "
+                     f"{hora_local[0] if hora_local else ''}").upper()
+    if not circuito or circuito == "?":
+        circuito = random.choice(CIRCUITOS_RESERVA)
+    consulta = (circuito if "circuit" in circuito.lower()
+                else f"{circuito} Circuit")
+    imagen = await imagen_wikimedia(consulta)
+    if not imagen and consulta != circuito:
+        imagen = await imagen_wikimedia(circuito)
+    estado.programa = {
+        "tipo": "interludio",
+        "titulo": circuito.upper(),
+        "subtitulo": subtitulo,
+        "fondo": imagen or "interludio",
+        "credito": "Image: Wikimedia Commons" if imagen else "",
+        "musica": MUSICA_URL,
+    }
+
+
 async def bucle_director():
     """Director de programación: cuando está en automático, rota los shows
     de PLAYLIST solo, sin que nadie toque nada. Se puede prender/apagar y
     saltar de show desde el panel de botones (sin Secrets)."""
     if PROGRAMACION_AUTO:
         return  # la parrilla automática toma el control
-    playlist = [p for p in PLAYLIST if p in PROGRAMAS] or ["historia"]
+    playlist = ([p for p in PLAYLIST if p in PROGRAMAS or p == "interludio"]
+                or ["historia"])
     i = 0
     while True:
         if estado.director_auto:
-            poner_al_aire(playlist[i % len(playlist)])
+            minutos = await _rotar_show(playlist[i % len(playlist)])
             log.info("🎬 Ahora al aire: %s", estado.programa["titulo"])
             i += 1
-            await asyncio.sleep(ROTACION_MINUTOS * 60)
+            await asyncio.sleep(minutos * 60)
         else:
             await asyncio.sleep(2)
+
+
+async def _rotar_show(tipo):
+    """Pone el siguiente ítem de la playlist al aire y devuelve cuántos
+    minutos debe durar (los interludios son más cortos que los shows)."""
+    if tipo == "interludio":
+        await poner_interludio()
+        return INTERLUDIO_MINUTOS
+    poner_al_aire(tipo)
+    return ROTACION_MINUTOS
 
 
 def sesion_en_ventana(ahora, sesiones, antes_min=30):
@@ -1415,7 +1520,8 @@ async def bucle_programacion():
     rota los programas. Un solo cerebro para todo el canal."""
     if not PROGRAMACION_AUTO:
         return
-    playlist = [p for p in PLAYLIST if p in PROGRAMAS] or ["historia"]
+    playlist = ([p for p in PLAYLIST if p in PROGRAMAS or p == "interludio"]
+                or ["historia"])
     log.info("🗓️  Parrilla automática activa (pre-show %g min antes)",
              PRESHOW_MINUTOS)
     idx = 0
@@ -1444,10 +1550,10 @@ async def bucle_programacion():
                 estado.sesion_actual = None
                 prox_rotacion = 0.0  # empezar programa de inmediato
             if time.time() >= prox_rotacion:
-                poner_al_aire(playlist[idx % len(playlist)])
+                minutos = await _rotar_show(playlist[idx % len(playlist)])
                 log.info("🎬 Ahora al aire: %s", estado.programa["titulo"])
                 idx += 1
-                prox_rotacion = time.time() + ROTACION_MINUTOS * 60
+                prox_rotacion = time.time() + minutos * 60
         await asyncio.sleep(INTERVALO_PARRILLA)
 
 
@@ -1560,6 +1666,10 @@ async def bucle_narracion():
                     texto = await narrar_datos(client, None)
                 else:
                     continue
+            elif (estado.programa
+                    and estado.programa.get("tipo") == "interludio"):
+                # Interludio: solo foto y música — nadie habla
+                continue
             elif estado.frame is not None:
                 # Respaldo por visión: frame nuevo cada INTERVALO_NARRACION
                 if (estado.tele_cargando
