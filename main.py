@@ -105,8 +105,13 @@ MODELO_AHORRO = _forzado or os.environ.get("MODELO_AHORRO",
 
 
 def modelo_actual():
-    """Modelo del guionista según el momento: caro solo en carrera en
-    vivo real (parrilla), barato el resto del tiempo."""
+    """Modelo del guionista. El botón de calidad del panel manda: 'max'
+    fuerza calidad máxima, 'ahorro' fuerza el barato; en 'auto' decide el
+    momento (caro solo en carrera en vivo real, barato el resto)."""
+    if estado.modo_calidad == "max":
+        return MODELO_VIVO
+    if estado.modo_calidad == "ahorro":
+        return MODELO_AHORRO
     return MODELO_VIVO if estado.carrera_en_vivo else MODELO_AHORRO
 
 # Telemetría: "replay" reproduce la última carrera disputada desde OpenF1;
@@ -293,6 +298,8 @@ class Estado:
         self.horario: list[dict] = []      # sesiones programables (reales)
         self.sesion_actual = None          # clave de la sesión al aire
         self.carrera_en_vivo: bool = False # True solo en carrera real (parrilla)
+        self.modo_calidad: str = "auto"    # auto | max | ahorro (botón del panel)
+        self.off_air_manual: bool = False  # botón OFF AIR: silencio total, sin gasto
         self.segmento_id: int = 0      # id del último segmento con audio
         self.audios: list = []         # mp3 por línea del último segmento
 
@@ -376,6 +383,10 @@ async def control_estado():
         "director_auto": estado.director_auto,
         "parrilla_auto": GRID_ON,
         "proxima_sesion": prox,
+        "modo_calidad": estado.modo_calidad,
+        "modelo_ahora": modelo_actual(),
+        "off_air": estado.off_air_manual,
+        "en_vivo": estado.tele is not None,
         "shows": ([{"tipo": k, "titulo": v["titulo"]}
                    for k, v in PROGRAMAS.items()]
                   + [{"tipo": "interludio",
@@ -388,6 +399,7 @@ async def control_show(tipo: str):
     """Pone un show en pantalla ahora (apaga el automático)."""
     if tipo == "interludio":
         estado.director_auto = False
+        estado.off_air_manual = False
         await poner_interludio()
         log.info("🕹️  Panel: al aire INTERLUDIO (%s)",
                  estado.programa["titulo"])
@@ -396,6 +408,7 @@ async def control_show(tipo: str):
         return JSONResponse({"ok": False, "error": "show desconocido"},
                             status_code=404)
     estado.director_auto = False
+    estado.off_air_manual = False
     poner_al_aire(tipo)
     log.info("🕹️  Panel: al aire %s", PROGRAMAS[tipo]["titulo"])
     return JSONResponse({"ok": True})
@@ -405,6 +418,7 @@ async def control_show(tipo: str):
 async def control_carrera():
     """Vuelve al modo carrera/leaderboard (apaga el automático)."""
     estado.director_auto = False
+    estado.off_air_manual = False
     poner_al_aire(None)
     log.info("🕹️  Panel: modo carrera")
     return JSONResponse({"ok": True})
@@ -414,9 +428,35 @@ async def control_carrera():
 async def control_auto(valor: str):
     """Prende o apaga el director automático (rotación de shows)."""
     estado.director_auto = (valor == "on")
+    if estado.director_auto:
+        estado.off_air_manual = False
     log.info("🕹️  Panel: director automático %s",
              "ON" if estado.director_auto else "OFF")
     return JSONResponse({"ok": True, "director_auto": estado.director_auto})
+
+
+@app.post("/control/calidad/{modo}")
+async def control_calidad(modo: str):
+    """Control de gasto sin Secrets: 'auto' (caro solo en carrera), 'max'
+    (siempre calidad máxima) o 'ahorro' (siempre el modelo barato)."""
+    if modo not in ("auto", "max", "ahorro"):
+        return JSONResponse({"ok": False, "error": "modo desconocido"},
+                            status_code=404)
+    estado.modo_calidad = modo
+    log.info("🕹️  Panel: calidad %s → modelo %s", modo, modelo_actual())
+    return JSONResponse({"ok": True, "modo_calidad": modo,
+                         "modelo_ahora": modelo_actual()})
+
+
+@app.post("/control/offair")
+async def control_offair():
+    """Pone el canal en espera (OFF AIR) al instante: nadie habla y no se
+    llama a la API — para de gastar sin tocar nada más."""
+    estado.director_auto = False
+    estado.off_air_manual = True
+    poner_standby()
+    log.info("🕹️  Panel: OFF AIR (canal en espera, sin gasto)")
+    return JSONResponse({"ok": True})
 
 
 @app.get("/panel", response_class=HTMLResponse)
@@ -443,6 +483,8 @@ async def panel():
     cursor:pointer; transition:border-color .2s; }
   button:hover { border-color:var(--accent); }
   button.auto { border-color:var(--on); color:var(--on); }
+  button.sel { border-color:var(--accent); color:var(--accent); }
+  button.off { border-color:var(--accent); }
   .row { display:flex; gap:10px; } .row button { flex:1; }
   a { color:var(--dim); font-size:.8rem; }
 </style></head><body>
@@ -455,22 +497,41 @@ async def panel():
   <button onclick="post('/control/auto/off')">⏸ Automático OFF</button>
 </div>
 
+<h2>Gasto / calidad de la voz</h2>
+<div class="row">
+  <button id="cal-auto" onclick="post('/control/calidad/auto')">⚙️ Auto</button>
+  <button id="cal-max" onclick="post('/control/calidad/max')">⭐ Máxima</button>
+  <button id="cal-ahorro" onclick="post('/control/calidad/ahorro')">💰 Ahorro</button>
+</div>
+
 <h2>Poner un programa ahora</h2>
 <div id="shows"></div>
 <button onclick="post('/control/carrera')">🏁 Modo carrera / leaderboard</button>
+
+<h2>Apagar / pausar el gasto</h2>
+<button class="off" onclick="post('/control/offair')">⏹ OFF AIR — pausar todo (sin gasto)</button>
 
 <p><a href="/" target="_blank">Abrir la pantalla del canal ↗</a></p>
 <script>
 async function post(u){ await fetch(u,{method:'POST'}); refrescar(); }
 async function refrescar(){
   const d = await (await fetch('/control/estado')).json();
-  const prog = d.programa ? d.programa.titulo : 'Carrera / Leaderboard';
+  const prog = d.off_air ? 'OFF AIR (en espera)'
+    : (d.programa ? d.programa.titulo : 'Carrera / Leaderboard');
   let html = 'Al aire: <b>' + prog + '</b><br>Director automático: <b>' +
     (d.director_auto ? 'ON' : 'OFF') + '</b>';
+  const cal = {auto:'Auto', max:'Máxima', ahorro:'Ahorro'}[d.modo_calidad]
+    || d.modo_calidad;
+  html += '<br>Calidad de voz: <b>' + cal + '</b>' +
+    (d.modelo_ahora ? ' <span style="color:var(--dim)">(' +
+      d.modelo_ahora + ')</span>' : '');
   if (d.parrilla_auto) html += '<br>Parrilla automática: <b>ON</b>';
-  if (d.proxima_sesion) html += '<br>Próxima carrera: <b>' +
+  if (d.proxima_sesion) html += '<br>Próxima sesión: <b>' +
     d.proxima_sesion + '</b>';
   document.getElementById('estado').innerHTML = html;
+  for (const m of ['auto', 'max', 'ahorro'])
+    document.getElementById('cal-' + m).classList.toggle(
+      'sel', d.modo_calidad === m);
   const cont = document.getElementById('shows');
   if (!cont.dataset.built) {
     for (const s of d.shows) {
@@ -656,6 +717,7 @@ async def visor():
   body.standby #director, body.standby #progtitle {
     visibility: hidden; }
   body.interludio #voz, body.standby #voz { opacity: .18; }
+  body.interludio #ticker, body.standby #ticker { display: none !important; }
   body.standby #inter .t { color: var(--dim); letter-spacing: .32em; }
   body.standby #inter .m { color: var(--txt); font-size: 1.5rem;
                            letter-spacing: .1em; font-weight: 700;
@@ -1844,6 +1906,10 @@ async def bucle_narracion():
         await asyncio.sleep(2)
         ahora = time.time()
         desde_ultima = ahora - estado.narracion_ts
+        # Botón OFF AIR: silencio total, cero llamadas a la API (aunque la
+        # telemetría siga avanzando por dentro, que es gratis)
+        if estado.off_air_manual:
+            continue
         try:
             if estado.tele is not None:
                 if estado.eventos and desde_ultima >= INTERVALO_NARRACION:
