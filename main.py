@@ -744,12 +744,23 @@ async def visor():
            opacity: 0; transition: opacity .6s; }
   #fondo.on { opacity: 1; }
   /* Cuando el fondo es una foto, se ve BORROSO y oscuro de telón, y la
-     foto nítida completa va encima con object-fit: contain (sin recortar) */
+     foto nítida completa va encima con object-fit: contain (sin recortar).
+     Dos capas (#foto/#foto2) permiten fundido cruzado entre fotos, y el
+     efecto Ken Burns (zoom/paneo lento) da vida de documental de TV. */
   #fondo.fotoblur { filter: blur(26px) brightness(.45); transform: scale(1.1); }
-  #foto { position: fixed; inset: 0; z-index: -1; width: 100%; height: 100%;
+  #foto, #foto2 { position: fixed; inset: 0; z-index: -1;
+          width: 100%; height: 100%;
           object-fit: contain; object-position: center;
-          opacity: 0; transition: opacity .6s; pointer-events: none; }
-  #foto.on { opacity: 1; }
+          opacity: 0; transition: opacity 1.4s ease; pointer-events: none; }
+  #foto.on, #foto2.on { opacity: 1; }
+  @keyframes kenburnsA {
+    from { transform: scale(1.02); }
+    to   { transform: scale(1.13) translate(1.6%, -1.2%); } }
+  @keyframes kenburnsB {
+    from { transform: scale(1.13) translate(-1.6%, 1.2%); }
+    to   { transform: scale(1.02); } }
+  .kba.on { animation: kenburnsA 24s ease-in-out forwards; }
+  .kbb.on { animation: kenburnsB 24s ease-in-out forwards; }
   #fondo.historia {
     background:
       radial-gradient(120% 80% at 70% 15%, rgba(225,6,0,.20), transparent 60%),
@@ -777,8 +788,10 @@ async def visor():
   body.interludio #inter, body.standby #inter { display: flex; }
   body.interludio main, body.interludio header,
   body.interludio #director, body.interludio #progtitle,
+  body.interludio #progsub,
   body.standby main, body.standby header,
-  body.standby #director, body.standby #progtitle {
+  body.standby #director, body.standby #progtitle,
+  body.standby #progsub {
     visibility: hidden; }
   body.interludio #voz, body.standby #voz { opacity: .18; }
   body.interludio #ticker, body.standby #ticker { display: none !important; }
@@ -807,6 +820,11 @@ async def visor():
                font-size: 1rem; font-weight: 700; letter-spacing: .22em;
                color: var(--accent); text-transform: uppercase;
                display: none; }
+  /* Tema del episodio (aparte del nombre del programa) */
+  #progsub { text-align: center; padding: 2px 24px 4px;
+             font-size: .8rem; letter-spacing: .14em; color: #C9D1DE;
+             text-transform: uppercase; display: none;
+             text-shadow: 0 1px 8px rgba(0,0,0,.7); }
   body.programa main { grid-template-columns: 1fr; }
   body.programa #panel-board,
   body.programa #right-col { display: none; }
@@ -891,6 +909,7 @@ async def visor():
 <body>
 <div id="fondo"></div>
 <img id="foto" alt="">
+<img id="foto2" alt="">
 <div id="credito"></div>
 <header>
   <span class="dot" id="dot"></span><span class="live" id="livetxt">LIVE</span>
@@ -904,6 +923,7 @@ async def visor():
 </div>
 <div id="director"></div>
 <div id="progtitle"></div>
+<div id="progsub"></div>
 <div id="inter"><div>
   <div class="t" id="inter-t"></div>
   <div class="s" id="inter-s"></div>
@@ -1040,24 +1060,27 @@ function aplicarPrograma(p) {
   } else if (!musica.paused) {
     musica.pause();
   }
-  const foto = document.getElementById('foto');
   if (p && p.tipo && p.tipo !== 'carrera') {
     document.body.classList.add('programa');
     const esImg = p.fondo && (p.fondo.startsWith('http') ||
                               p.fondo.startsWith('data:'));
-    if (esImg) {
-      // foto completa nítida encima + telón borroso detrás (sin recortar)
+    const lista = (p.fotos && p.fotos.length) ? p.fotos
+                  : (esImg ? [p.fondo] : []);
+    if (lista.length) {
       fondo.className = 'on fotoblur';
-      fondo.style.backgroundImage = 'url(' + p.fondo + ')';
-      if (foto.getAttribute('src') !== p.fondo) foto.src = p.fondo;
-      foto.classList.add('on');
+      actualizarFotos(lista);
     } else {
       fondo.className = 'on ' + (p.fondo || '');
       fondo.style.backgroundImage = '';
-      foto.classList.remove('on'); foto.removeAttribute('src');
+      actualizarFotos([]);
     }
     titulo.textContent = p.titulo || '';
     titulo.style.display = 'block';
+    const sub = document.getElementById('progsub');
+    if (p.subtitulo && !inter && !standby) {
+      sub.textContent = p.subtitulo;
+      sub.style.display = 'block';
+    } else sub.style.display = 'none';
     if (p.credito) { credito.textContent = p.credito;
                      credito.style.display = 'block'; }
     else credito.style.display = 'none';
@@ -1065,11 +1088,47 @@ function aplicarPrograma(p) {
     document.body.classList.remove('programa');
     fondo.className = '';
     fondo.style.backgroundImage = '';
-    foto.classList.remove('on'); foto.removeAttribute('src');
+    actualizarFotos([]);
     titulo.style.display = 'none';
+    document.getElementById('progsub').style.display = 'none';
     credito.style.display = 'none';
   }
 }
+// --- Carrusel de fotos del programa: fundido cruzado + Ken Burns ---
+let fotosLista = [], fotosSig = '', fotoIdx = 0, fotoTurno = false;
+function actualizarFotos(lista) {
+  const sig = JSON.stringify(lista);
+  if (sig === fotosSig) return;
+  fotosSig = sig; fotosLista = lista; fotoIdx = 0;
+  const a = document.getElementById('foto');
+  const b = document.getElementById('foto2');
+  if (!lista.length) {
+    a.classList.remove('on'); b.classList.remove('on');
+    a.removeAttribute('src'); b.removeAttribute('src');
+    return;
+  }
+  mostrarFoto();
+}
+function mostrarFoto() {
+  if (!fotosLista.length) return;
+  const a = document.getElementById('foto');
+  const b = document.getElementById('foto2');
+  const entra = fotoTurno ? b : a, sale = fotoTurno ? a : b;
+  fotoTurno = !fotoTurno;
+  const url = fotosLista[fotoIdx % fotosLista.length];
+  fotoIdx++;
+  entra.className = fotoTurno ? 'kba' : 'kbb';  // reinicia el Ken Burns
+  entra.onload = () => {
+    entra.classList.add('on');
+    sale.classList.remove('on');
+    document.getElementById('fondo').style.backgroundImage =
+      'url(' + url + ')';
+  };
+  if (entra.getAttribute('src') === url) entra.onload();
+  else entra.src = url;
+}
+// pasa a la siguiente foto cada 12s (si hay más de una)
+setInterval(() => { if (fotosLista.length > 1) mostrarFoto(); }, 12000);
 async function tick() {
   const d = await (await fetch('/apex')).json();
   aplicarPrograma(d.programa);
@@ -1324,6 +1383,13 @@ the gap.").
 - Add insight, don't just describe: tyre strategy, likely undercuts, what \
 a move forces rivals to do.
 - They sometimes disagree, with arguments. Gentle tension is good.
+- NO NAME-DROPPING: they are colleagues mid-broadcast, so they do NOT \
+address each other by name — real commentators just respond to each \
+other. Saying the other's name is RARE (once in a very long while, for \
+emphasis). Never in consecutive lines, never as a greeting tic.
+- NEVER start a line's text with a speaker label like "{NARRADOR}:" or \
+"{ANALISTA}:" — who speaks goes in the 'quien' field, the text is pure \
+speech.
 - Use the MEMORY of what they already said: callbacks like "remember when \
 we said he was saving his tyres? Here's the payoff" make it feel human. \
 Never repeat previous lines.
@@ -1689,6 +1755,9 @@ HISTORIA_SCHEMA = {
 }
 
 
+_UA_WIKI = {"User-Agent": "F1FanChannel/1.0 (fan project)"}
+
+
 async def imagen_wikimedia(query):
     """Foto de libre uso desde Wikipedia/Wikimedia Commons para un tema
     (piloto, auto o circuito). Devuelve URL o None. Nota: las imágenes
@@ -1702,7 +1771,7 @@ async def imagen_wikimedia(query):
                 "action": "query", "prop": "pageimages",
                 "piprop": "original", "format": "json",
                 "titles": query, "redirects": 1}, timeout=20,
-                headers={"User-Agent": "F1FanChannel/1.0 (fan project)"})
+                headers=_UA_WIKI)
             r.raise_for_status()
             for p in r.json().get("query", {}).get("pages", {}).values():
                 url = p.get("original", {}).get("source")
@@ -1711,6 +1780,44 @@ async def imagen_wikimedia(query):
     except Exception as e:
         log.info("Sin imagen de Wikimedia para '%s' (%s)", query, e)
     return None
+
+
+async def imagenes_wikimedia(query, n=4):
+    """Hasta n fotos de LIBRE USO para un tema: la foto principal de
+    Wikipedia + resultados de Wikimedia Commons (todo el contenido de
+    Commons tiene licencia libre; el crédito se muestra en pantalla).
+    Con varias fotos la pantalla puede ir rotándolas como un documental
+    de TV en vez de quedarse clavada en una sola imagen."""
+    fotos = []
+    principal = await imagen_wikimedia(query)
+    if principal:
+        fotos.append(principal)
+    if not query:
+        return fotos
+    try:
+        async with httpx.AsyncClient() as c:
+            r = await c.get("https://commons.wikimedia.org/w/api.php",
+                            params={
+                                "action": "query", "generator": "search",
+                                "gsrsearch": query, "gsrnamespace": 6,
+                                "gsrlimit": 10, "prop": "imageinfo",
+                                "iiprop": "url|mime", "iiurlwidth": 1600,
+                                "format": "json"},
+                            timeout=20, headers=_UA_WIKI)
+            r.raise_for_status()
+            paginas = r.json().get("query", {}).get("pages", {})
+            for p in sorted(paginas.values(),
+                            key=lambda p: p.get("index", 99)):
+                for ii in p.get("imageinfo", []):
+                    if (ii.get("mime", "").startswith("image/")
+                            and ii.get("thumburl")
+                            and ii["thumburl"] not in fotos):
+                        fotos.append(ii["thumburl"])
+                if len(fotos) >= n:
+                    break
+    except Exception as e:
+        log.info("Sin fotos extra de Commons para '%s' (%s)", query, e)
+    return fotos[:n]
 
 
 def _nuevo_episodio_pedido(tipo, prog):
@@ -1775,19 +1882,28 @@ async def segmento_documental(client: anthropic.AsyncAnthropic, tipo):
     if not lineas_texto:
         return []
     ep["palabras"] += sum(len(t.split()) for t in lineas_texto)
+    fotos = await imagenes_wikimedia(data.get("tema", ""))
     if ep["capitulo"] == 1:
         titulo = data.get("titulo", prog["titulo"])
         ep["titulo"] = titulo
-        imagen = await imagen_wikimedia(data.get("tema", ""))
+        # En pantalla: nombre del programa arriba + tema del episodio debajo
         estado.programa = {
-            "tipo": tipo, "titulo": titulo,
-            "fondo": imagen or prog["fondo"],
-            "credito": "Image: Wikimedia Commons" if imagen else "",
+            "tipo": tipo, "titulo": prog["titulo"],
+            "subtitulo": titulo,
+            "fondo": fotos[0] if fotos else prog["fondo"],
+            "fotos": fotos,
+            "credito": "Image: Wikimedia Commons" if fotos else "",
         }
         recientes = estado.temas_programa.setdefault(tipo, [])
         recientes.append(titulo)
         del recientes[:-24]
         estado.episodio_texto = []
+    elif fotos and estado.programa and estado.programa.get("tipo") == tipo:
+        # cada capítulo renueva las fotos con su propia escena (el título
+        # del episodio no cambia)
+        estado.programa["fotos"] = fotos
+        estado.programa["fondo"] = fotos[0]
+        estado.programa["credito"] = "Image: Wikimedia Commons"
     estado.episodio = ep
     estado.episodio_texto.extend(lineas_texto)
     del estado.episodio_texto[:-40]
@@ -1825,15 +1941,16 @@ async def poner_interludio():
         circuito = random.choice(CIRCUITOS_RESERVA)
     consulta = (circuito if "circuit" in circuito.lower()
                 else f"{circuito} Circuit")
-    imagen = await imagen_wikimedia(consulta)
-    if not imagen and consulta != circuito:
-        imagen = await imagen_wikimedia(circuito)
+    fotos = await imagenes_wikimedia(consulta)
+    if not fotos and consulta != circuito:
+        fotos = await imagenes_wikimedia(circuito)
     estado.programa = {
         "tipo": "interludio",
         "titulo": circuito.upper(),
         "subtitulo": subtitulo,
-        "fondo": imagen or "interludio",
-        "credito": "Image: Wikimedia Commons" if imagen else "",
+        "fondo": fotos[0] if fotos else "interludio",
+        "fotos": fotos,
+        "credito": "Image: Wikimedia Commons" if fotos else "",
         "musica": MUSICA_URL,
     }
 
@@ -2037,11 +2154,25 @@ async def bucle_telemetria():
             cola = [SESSION_KEY]
 
 
+def _limpiar_linea(texto):
+    """Quita etiquetas de nombre que el modelo a veces cuela al inicio del
+    texto ("Alex:", "Sam:"...) — el nombre va en la tarjeta, no en la voz."""
+    texto = texto.strip()
+    for nombre in (NARRADOR, ANALISTA, PRESENTADOR_HISTORIA,
+                   PRESENTADOR_TECH, "Narrator", "narrador", "analista"):
+        prefijo = f"{nombre}:".lower()
+        if texto.lower().startswith(prefijo):
+            return texto[len(prefijo):].strip()
+    return texto
+
+
 async def difundir(lineas):
     """Publica un segmento de diálogo a la Mac y al visor."""
     if isinstance(lineas, str):  # ruta de visión: una sola voz
         lineas = [{"quien": "narrador", "texto": lineas}]
-    lineas = [l for l in lineas if l.get("texto", "").strip()]
+    lineas = [{**l, "texto": _limpiar_linea(l.get("texto", ""))}
+              for l in lineas]
+    lineas = [l for l in lineas if l["texto"]]
     if not lineas:
         return
     estado.lineas = lineas
