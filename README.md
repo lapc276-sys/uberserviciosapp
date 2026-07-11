@@ -30,6 +30,9 @@ Variables de entorno (Secrets en Replit, todas opcionales):
 | `MODELO_VIVO` | `claude-opus-4-8` | Modelo del guionista en **carrera en vivo** (máxima calidad) |
 | `MODELO_AHORRO` | `claude-haiku-4-5-20251001` | Modelo el **resto del tiempo** (~10x más barato). El canal cambia solo entre ambos |
 | `MODELO_NARRADOR` | — | Si se define, **fuerza ese modelo siempre** y apaga el ahorro automático |
+| `SOLO_SESIONES` | — | `on` = transmite **solo** en las sesiones reales (Libres 1/2/3, Clasificación, Sprint, Carrera) con previa y post; entre sesiones queda apagado **sin gastar en API** |
+| `PRESHOW_MINUTOS` | `30` | Minutos de previa antes de cada sesión |
+| `POSTSHOW_MINUTOS` | `20` | Minutos de post después de cada sesión |
 | `MODO_TELEMETRIA` | `replay` | `off` para narrar solo por visión |
 | `SESSION_KEY` | `latest` | Clave de sesión OpenF1 de una carrera concreta |
 | `VELOCIDAD_REPLAY` | `1` | Ej. `10` reproduce la carrera 10 veces más rápido |

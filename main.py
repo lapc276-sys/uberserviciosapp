@@ -80,7 +80,16 @@ INTERLUDIO_MINUTOS = float(os.environ.get("INTERLUDIO_MINUTOS", "2"))
 # PROGRAMACION_AUTO=on lo activa (toma el control total del canal).
 PROGRAMACION_AUTO = os.environ.get("PROGRAMACION_AUTO", "")
 PRESHOW_MINUTOS = float(os.environ.get("PRESHOW_MINUTOS", "30"))
+POSTSHOW_MINUTOS = float(os.environ.get("POSTSHOW_MINUTOS", "20"))
 INTERVALO_PARRILLA = float(os.environ.get("INTERVALO_PARRILLA", "15"))
+# Modo "solo sesiones" (ahorro máximo): el canal SOLO transmite durante las
+# sesiones reales de F1 — Libres 1/2/3, Clasificación, Sprint y Carrera —
+# con su previa (pre-show) y post (post-show). Entre sesiones queda APAGADO
+# de verdad: pantalla de espera y CERO llamadas a la API (no gasta nada).
+# SOLO_SESIONES=on lo activa (enciende la parrilla y la vuelve "solo sesiones").
+SOLO_SESIONES = os.environ.get("SOLO_SESIONES", "")
+# La parrilla se activa con cualquiera de las dos:
+GRID_ON = bool(PROGRAMACION_AUTO or SOLO_SESIONES)
 # Modo ahorro automático: el canal usa el modelo caro (máxima calidad)
 # SOLO durante una carrera en vivo de la parrilla; el resto del día
 # (maratón de clásicas, historia, tech, calendario) usa un modelo barato.
@@ -365,7 +374,7 @@ async def control_estado():
     return JSONResponse({
         "programa": estado.programa,
         "director_auto": estado.director_auto,
-        "parrilla_auto": bool(PROGRAMACION_AUTO),
+        "parrilla_auto": GRID_ON,
         "proxima_sesion": prox,
         "shows": ([{"tipo": k, "titulo": v["titulo"]}
                    for k, v in PROGRAMAS.items()]
@@ -630,17 +639,27 @@ async def visor():
     background:
       radial-gradient(120% 90% at 50% 100%, rgba(225,6,0,.16), transparent 55%),
       linear-gradient(160deg, #0B0D12 25%, #141a26 100%); }
-  /* Interludio: tarjeta de continuidad — foto + música, sin paneles */
+  #fondo.standby {
+    background:
+      radial-gradient(90% 70% at 50% 0%, rgba(40,60,90,.30), transparent 60%),
+      linear-gradient(160deg, #0B0D12 30%, #0d1017 100%); }
+  /* Tarjeta a pantalla completa: interludio (foto+música) o espera (OFF AIR) */
   #inter { position: fixed; inset: 0; z-index: 1; display: none;
            align-items: flex-end; justify-content: center;
            padding-bottom: 11vh; text-align: center;
            background: linear-gradient(180deg, rgba(11,13,18,.10) 40%,
                                        rgba(11,13,18,.86) 100%); }
-  body.interludio #inter { display: flex; }
+  body.interludio #inter, body.standby #inter { display: flex; }
   body.interludio main, body.interludio header,
-  body.interludio #director, body.interludio #progtitle {
+  body.interludio #director, body.interludio #progtitle,
+  body.standby main, body.standby header,
+  body.standby #director, body.standby #progtitle {
     visibility: hidden; }
-  body.interludio #voz { opacity: .18; }
+  body.interludio #voz, body.standby #voz { opacity: .18; }
+  body.standby #inter .t { color: var(--dim); letter-spacing: .32em; }
+  body.standby #inter .m { color: var(--txt); font-size: 1.5rem;
+                           letter-spacing: .1em; font-weight: 700;
+                           font-variant-numeric: tabular-nums; }
   #inter .t { font-size: 2.7rem; font-weight: 800; letter-spacing: .18em;
               text-transform: uppercase;
               text-shadow: 0 2px 18px rgba(0,0,0,.7); }
@@ -771,7 +790,7 @@ async def visor():
 let vozActiva = false, ultimoSegmento = -1, posPrevias = {};
 let reproduciendo = false, pendiente = null, amb = null;
 // Ticker de Alerta IA: rota entre las lecturas medidas cada pocos segundos
-let alertas = [], alertaIdx = 0;
+let alertas = [], alertaIdx = 0, ultimoStandbyIso = null;
 function pintarAlerta() {
   const t = document.getElementById('ticker');
   const txt = document.getElementById('ticker-txt');
@@ -788,6 +807,24 @@ function pintarAlerta() {
 }
 function rotarAlerta() { alertaIdx++; pintarAlerta(); }
 setInterval(rotarAlerta, 5000);
+// Cuenta regresiva a la próxima sesión (pantalla de espera)
+function cuentaRegresiva(iso) {
+  if (!iso) return '';
+  const ms = new Date(iso) - new Date();
+  if (ms <= 0) return 'STARTING SOON';
+  const min = Math.floor(ms / 60000);
+  const d = Math.floor(min / 1440), h = Math.floor((min % 1440) / 60),
+        m = min % 60;
+  if (d > 0) return 'IN ' + d + 'd ' + h + 'h';
+  if (h > 0) return 'IN ' + h + 'h ' + m + 'm';
+  return 'IN ' + m + 'm';
+}
+// Refresca la cuenta cada segundo si el canal está en espera
+setInterval(() => {
+  if (document.body.classList.contains('standby') && ultimoStandbyIso)
+    document.getElementById('inter-m').textContent =
+      cuentaRegresiva(ultimoStandbyIso);
+}, 1000);
 const btn = document.getElementById('voz');
 btn.onclick = () => {
   vozActiva = !vozActiva;
@@ -826,12 +863,20 @@ function aplicarPrograma(p) {
   const titulo = document.getElementById('progtitle');
   const credito = document.getElementById('credito');
   const inter = !!(p && p.tipo === 'interludio');
+  const standby = !!(p && p.tipo === 'standby');
   document.body.classList.toggle('interludio', inter);
+  document.body.classList.toggle('standby', standby);
   if (inter) {
     document.getElementById('inter-t').textContent = p.titulo || '';
     document.getElementById('inter-s').textContent = p.subtitulo || '';
     document.getElementById('inter-m').textContent =
       p.musica ? '♪ MUSIC' : '';
+  }
+  if (standby) {
+    ultimoStandbyIso = p.inicia || null;
+    document.getElementById('inter-t').textContent = p.titulo || 'OFF AIR';
+    document.getElementById('inter-s').textContent = p.subtitulo || '';
+    document.getElementById('inter-m').textContent = cuentaRegresiva(p.inicia);
   }
   const musica = document.getElementById('musica');
   if (inter && p.musica && vozActiva) {
@@ -1552,7 +1597,7 @@ async def bucle_director():
     """Director de programación: cuando está en automático, rota los shows
     de PLAYLIST solo, sin que nadie toque nada. Se puede prender/apagar y
     saltar de show desde el panel de botones (sin Secrets)."""
-    if PROGRAMACION_AUTO:
+    if GRID_ON:
         return  # la parrilla automática toma el control
     playlist = ([p for p in PLAYLIST if p in PROGRAMAS or p == "interludio"]
                 or ["historia"])
@@ -1577,14 +1622,15 @@ async def _rotar_show(tipo):
     return ROTACION_MINUTOS
 
 
-def sesion_en_ventana(ahora, sesiones, antes_min=30):
+def sesion_en_ventana(ahora, sesiones, antes_min=30, despues_min=0):
     """Decisión pura: ¿qué sesión debería estar al aire ahora? Devuelve la
     sesión (o None). La ventana va desde `antes_min` antes del inicio (pre-
-    show) hasta el fin estimado. Todo en UTC → correcto ante cambios de
-    hora (DST) en cualquier país."""
-    ventana = dt.timedelta(minutes=antes_min)
+    show) hasta `despues_min` después del fin estimado (post-show). Todo en
+    UTC → correcto ante cambios de hora (DST) en cualquier país."""
+    antes = dt.timedelta(minutes=antes_min)
+    despues = dt.timedelta(minutes=despues_min)
     for s in sorted(sesiones, key=lambda s: s["inicio"]):
-        if s["inicio"] - ventana <= ahora <= s["fin"]:
+        if s["inicio"] - antes <= ahora <= s["fin"] + despues:
             return s
     return None
 
@@ -1618,34 +1664,62 @@ async def _correr_sesion(clave):
         estado.carrera_en_vivo = False
 
 
+def poner_standby():
+    """Pantalla de espera entre sesiones (modo SOLO_SESIONES): el canal está
+    apagado, muestra la próxima sesión y su cuenta regresiva. NADIE habla y
+    no se llama a la API — cuesta $0. La cuenta la calcula el navegador a
+    partir de 'inicia' (ISO), así se actualiza sola."""
+    ahora = dt.datetime.now(dt.timezone.utc)
+    prox = min((x for x in estado.horario if x["inicio"] > ahora),
+               key=lambda x: x["inicio"], default=None)
+    tarjeta = {"tipo": "standby", "titulo": "OFF AIR", "fondo": "standby"}
+    if prox:
+        tarjeta["subtitulo"] = f"NEXT · {prox['sesion']} — {prox['pais']}"
+        tarjeta["inicia"] = prox["inicio"].isoformat()
+    else:
+        tarjeta["subtitulo"] = "SCHEDULE UNAVAILABLE"
+    estado.programa = tarjeta
+
+
 async def bucle_programacion():
-    """Parrilla automática (Fase 8): sigue el calendario real. Cuando toca
-    una carrera, la pone al aire a su hora (con pre-show); entre carreras,
-    rota los programas. Un solo cerebro para todo el canal."""
-    if not PROGRAMACION_AUTO:
+    """Parrilla automática (Fase 8): sigue el calendario real de F1.
+    - Modo normal: pone cada sesión al aire a su hora y entre sesiones rota
+      los programas (historia, tech, interludios) 24/7.
+    - Modo SOLO_SESIONES (ahorro máximo): transmite SOLO durante las sesiones
+      (Libres 1/2/3, Clasificación, Sprint, Carrera) con previa y post; entre
+      sesiones queda en pantalla de espera, sin gastar nada en API."""
+    if not GRID_ON:
         return
     playlist = ([p for p in PLAYLIST if p in PROGRAMAS or p == "interludio"]
                 or ["historia"])
-    log.info("🗓️  Parrilla automática activa (pre-show %g min antes)",
-             PRESHOW_MINUTOS)
+    if SOLO_SESIONES:
+        log.info("🗓️  Parrilla SOLO SESIONES: al aire solo en las sesiones "
+                 "reales (previa %g min, post %g min); apagado entre ellas",
+                 PRESHOW_MINUTOS, POSTSHOW_MINUTOS)
+    else:
+        log.info("🗓️  Parrilla automática activa 24/7 (pre-show %g min antes)",
+                 PRESHOW_MINUTOS)
     idx = 0
     prox_rotacion = 0.0
+    en_standby = False
     tarea_carrera = None
     while True:
         ahora = dt.datetime.now(dt.timezone.utc)
-        s = sesion_en_ventana(ahora, estado.horario, PRESHOW_MINUTOS)
+        s = sesion_en_ventana(ahora, estado.horario, PRESHOW_MINUTOS,
+                              POSTSHOW_MINUTOS)
         if s:
-            # Toca una carrera: ponerla al aire si no está ya
+            # Toca una sesión: ponerla al aire si no está ya
             if estado.sesion_actual != s["session_key"]:
                 if tarea_carrera:
                     tarea_carrera.cancel()
                 estado.sesion_actual = s["session_key"]
+                en_standby = False
                 log.info("🗓️  Es hora de %s en %s → al aire",
                         s["sesion"], s["pais"])
                 tarea_carrera = asyncio.create_task(
                     _correr_sesion(s["session_key"]))
         else:
-            # Sin carrera: cerrar cualquier carrera y rotar programas
+            # Fuera de sesión: cerrar cualquier sesión en curso
             if estado.sesion_actual is not None:
                 if tarea_carrera:
                     tarea_carrera.cancel()
@@ -1653,7 +1727,14 @@ async def bucle_programacion():
                 estado.tele = None
                 estado.sesion_actual = None
                 prox_rotacion = 0.0  # empezar programa de inmediato
-            if time.time() >= prox_rotacion:
+                en_standby = False
+            if SOLO_SESIONES:
+                # Ahorro máximo: pantalla de espera, sin narración ni API
+                if not en_standby:
+                    poner_standby()
+                    log.info("💤 Fuera de sesión — canal en espera (sin gasto)")
+                    en_standby = True
+            elif time.time() >= prox_rotacion:
                 minutos = await _rotar_show(playlist[idx % len(playlist)])
                 log.info("🎬 Ahora al aire: %s", estado.programa["titulo"])
                 idx += 1
@@ -1666,7 +1747,7 @@ async def bucle_telemetria():
     maratón infinito de carreras clásicas reales (nunca queda "al aire
     en blanco" si hay datos disponibles)."""
     if (MODO_TELEMETRIA == "off" or DEMO_PROGRAMA or PROGRAMAS_AUTO
-            or PROGRAMACION_AUTO):
+            or GRID_ON):
         log.info("Telemetría en pausa (modo programa/parrilla/off)")
         return
     cola = [SESSION_KEY]
@@ -1777,8 +1858,10 @@ async def bucle_narracion():
                 else:
                     continue
             elif (estado.programa
-                    and estado.programa.get("tipo") == "interludio"):
-                # Interludio: solo foto y música — nadie habla
+                    and estado.programa.get("tipo") in ("interludio",
+                                                        "standby")):
+                # Interludio (foto+música) o espera (canal apagado): nadie
+                # habla y no se llama a la API — así no se gasta nada
                 continue
             elif estado.frame is not None:
                 # Respaldo por visión: frame nuevo cada INTERVALO_NARRACION
