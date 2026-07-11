@@ -360,3 +360,28 @@ Reglas para esa fase:
    uso de la marca "F1" en el nombre del canal.
 4. La captura de F1TV es uso privado de una suscripción propia como insumo
    interno de los comentaristas.
+
+## Cola de pendientes (backlog acordado con el dueño)
+
+Orden de prioridad, según lo hablado:
+
+1. **Deploy 24/7 (Reserved VM en Replit)** — en pausa hasta poder pagar el
+   plan (~$20/mes). Todo el código y `.replit` ya están listos; es solo
+   darle a Deploy cuando se active Replit Core. Mientras tanto se corre en
+   modo desarrollo desde el Shell (no es 24/7 real: el Repl se duerme).
+2. **Streaming desde el servidor (cortar OBS)** — que el propio servidor
+   empuje video+audio al RTMP de YouTube (navegador headless + ffmpeg), sin
+   depender de OBS ni de la computadora del dueño. Es el último eslabón para
+   ser 100% autónomo. Necesita clave de stream de YouTube. Va después del
+   deploy.
+3. **Leer y responder el chat de YouTube en vivo** — que Alex y Sam
+   reaccionen a mensajes del chat (validación del espectador, el gancho
+   "yo importo"). Requiere la YouTube Live Streaming API (OAuth del dueño
+   del canal) y que la transmisión esté en vivo. Se puede construir el
+   módulo con datos de prueba y activarlo cuando haya credenciales.
+4. **Más métricas medidas** (regla de oro, sin inventar): ya hay degradación
+   y pérdida de pit; faltan p. ej. ventana de undercut numérica y evolución
+   de pista, solo si se pueden medir de OpenF1.
+5. **Predicciones / comunidad / clústeres de circuitos** — solo cuando haya
+   audiencia; predicciones con puntos falsos, nunca dinero (política de
+   YouTube).
