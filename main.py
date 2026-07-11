@@ -47,10 +47,18 @@ RELLENO_SEGUNDOS = float(os.environ.get("RELLENO_SEGUNDOS", "90"))
 # Fuera de vivo: cada cuánto anuncia el dúo la próxima sesión (segundos)
 ANUNCIO_SEGUNDOS = float(os.environ.get("ANUNCIO_SEGUNDOS", "600"))
 
-# Zonas horarias para el calendario (par de etiqueta, zona IANA)
-ZONAS_CALENDARIO = [("UTC", "UTC"), ("ET", "America/New_York"),
-                    ("Madrid", "Europe/Madrid"),
-                    ("CDMX", "America/Mexico_City")]
+# Husos horarios para el calendario: las ciudades más importantes de cada
+# continente (no todas, las que sirven de referencia global)
+ZONAS_CALENDARIO = [
+    ("Los Ángeles", "America/Los_Angeles"),   # América oeste
+    ("Nueva York", "America/New_York"),        # América este
+    ("São Paulo", "America/Sao_Paulo"),        # Sudamérica
+    ("Londres", "Europe/London"),              # Europa oeste
+    ("Madrid", "Europe/Madrid"),               # Europa central
+    ("Johannesburgo", "Africa/Johannesburg"),  # África
+    ("Dubái", "Asia/Dubai"),                   # Medio Oriente
+    ("Tokio", "Asia/Tokyo"),                   # Asia este
+]
 
 # Programa en demostración: "historia" muestra un modo fijo (sin
 # telemetría) para probar el motor de pantalla. Vacío = canal normal.
@@ -377,7 +385,9 @@ async def control_estado():
                    if s["inicio"] > dt.datetime.now(dt.timezone.utc)]
         if futuras:
             s = min(futuras, key=lambda s: s["inicio"])
-            prox = f"{s['sesion']} — {s['pais']} ({_horarios(s['inicio'].isoformat())[1]})"
+            hs = _horarios(s["inicio"].isoformat())
+            prox = {"sesion": s["sesion"], "pais": s["pais"],
+                    "inicia": s["inicio"].isoformat(), "horarios": hs}
     return JSONResponse({
         "programa": estado.programa,
         "director_auto": estado.director_auto,
@@ -506,16 +516,28 @@ async def panel():
 
 <h2>Poner un programa ahora</h2>
 <div id="shows"></div>
-<button onclick="post('/control/carrera')">🏁 Modo carrera / leaderboard</button>
+<button id="btn-carrera" data-tipo="carrera" onclick="post('/control/carrera')">🏁 Modo carrera / leaderboard</button>
 
 <h2>Apagar / pausar el gasto</h2>
-<button class="off" onclick="post('/control/offair')">⏹ OFF AIR — pausar todo (sin gasto)</button>
+<button class="off" id="btn-offair" data-tipo="offair" onclick="post('/control/offair')">⏹ OFF AIR — pausar todo (sin gasto)</button>
 
 <p><a href="/" target="_blank">Abrir la pantalla del canal ↗</a></p>
 <script>
+function cuenta(iso){
+  if(!iso) return '';
+  const ms = new Date(iso) - new Date();
+  if(ms <= 0) return 'ya';
+  const min = Math.floor(ms/60000), d = Math.floor(min/1440),
+        h = Math.floor((min%1440)/60), m = min%60;
+  if(d>0) return 'en ' + d + 'd ' + h + 'h';
+  if(h>0) return 'en ' + h + 'h ' + m + 'm';
+  return 'en ' + m + 'm';
+}
+let ultimoEstado = null;
 async function post(u){ await fetch(u,{method:'POST'}); refrescar(); }
-async function refrescar(){
-  const d = await (await fetch('/control/estado')).json();
+function pintar(d){
+  const activo = d.off_air ? 'offair'
+    : (d.programa ? (d.programa.tipo || 'carrera') : 'carrera');
   const prog = d.off_air ? 'OFF AIR (en espera)'
     : (d.programa ? d.programa.titulo : 'Carrera / Leaderboard');
   let html = 'Al aire: <b>' + prog + '</b><br>Director automático: <b>' +
@@ -526,24 +548,38 @@ async function refrescar(){
     (d.modelo_ahora ? ' <span style="color:var(--dim)">(' +
       d.modelo_ahora + ')</span>' : '');
   if (d.parrilla_auto) html += '<br>Parrilla automática: <b>ON</b>';
-  if (d.proxima_sesion) html += '<br>Próxima sesión: <b>' +
-    d.proxima_sesion + '</b>';
+  if (d.proxima_sesion) {
+    const s = d.proxima_sesion;
+    html += '<br>Próxima sesión: <b>' + s.sesion + ' — ' + s.pais +
+      '</b> <span style="color:var(--accent)">' + cuenta(s.inicia) +
+      '</span>';
+  }
   document.getElementById('estado').innerHTML = html;
   for (const m of ['auto', 'max', 'ahorro'])
     document.getElementById('cal-' + m).classList.toggle(
       'sel', d.modo_calidad === m);
+  // resalta el botón del programa que está al aire ahora
+  document.querySelectorAll('#shows button, #btn-carrera, #btn-offair')
+    .forEach(b => b.classList.toggle('sel', b.dataset.tipo === activo));
+}
+async function refrescar(){
+  const d = await (await fetch('/control/estado')).json();
+  ultimoEstado = d;
   const cont = document.getElementById('shows');
   if (!cont.dataset.built) {
     for (const s of d.shows) {
       const b = document.createElement('button');
-      b.textContent = '▶ ' + s.titulo;
+      b.textContent = '▶ ' + s.titulo; b.dataset.tipo = s.tipo;
       b.onclick = () => post('/control/show/' + s.tipo);
       cont.appendChild(b);
     }
     cont.dataset.built = '1';
   }
+  pintar(d);
 }
+// refresca el estado cada 3s y la cuenta regresiva cada segundo
 refrescar(); setInterval(refrescar, 3000);
+setInterval(() => { if (ultimoEstado) pintar(ultimoEstado); }, 1000);
 </script></body></html>"""
 
 
@@ -682,10 +718,17 @@ async def visor():
   #ticker .txt.warn { color: var(--amber); }
   #ticker .txt.info { color: var(--dim); }
   /* Modos de programa (Historia, etc.): fondo a pantalla completa */
-  #fondo { position: fixed; inset: 0; z-index: -1; background: var(--bg);
+  #fondo { position: fixed; inset: 0; z-index: -2; background: var(--bg);
            background-size: cover; background-position: center;
            opacity: 0; transition: opacity .6s; }
   #fondo.on { opacity: 1; }
+  /* Cuando el fondo es una foto, se ve BORROSO y oscuro de telón, y la
+     foto nítida completa va encima con object-fit: contain (sin recortar) */
+  #fondo.fotoblur { filter: blur(26px) brightness(.45); transform: scale(1.1); }
+  #foto { position: fixed; inset: 0; z-index: -1; width: 100%; height: 100%;
+          object-fit: contain; object-position: center;
+          opacity: 0; transition: opacity .6s; pointer-events: none; }
+  #foto.on { opacity: 1; }
   #fondo.historia {
     background:
       radial-gradient(120% 80% at 70% 15%, rgba(225,6,0,.20), transparent 60%),
@@ -730,6 +773,15 @@ async def visor():
               text-shadow: 0 1px 10px rgba(0,0,0,.8); }
   #inter .m { margin-top: 24px; color: var(--dim); font-size: .8rem;
               letter-spacing: .24em; opacity: .75; }
+  /* Relojes del mundo (pantalla de espera): ciudades de referencia */
+  #worldclock { display: none; margin-top: 30px; flex-wrap: wrap;
+                justify-content: center; gap: 10px 26px; max-width: 760px; }
+  body.standby #worldclock { display: flex; }
+  #worldclock .wc { min-width: 92px; }
+  #worldclock .city { font-size: .58rem; letter-spacing: .16em;
+                      color: var(--dim); text-transform: uppercase; }
+  #worldclock .time { margin-top: 3px; font-size: .82rem; font-weight: 600;
+                      color: #C9D1DE; font-variant-numeric: tabular-nums; }
   #progtitle { text-align: center; padding: 8px 0 2px;
                font-size: 1rem; font-weight: 700; letter-spacing: .22em;
                color: var(--accent); text-transform: uppercase;
@@ -817,6 +869,7 @@ async def visor():
 </head>
 <body>
 <div id="fondo"></div>
+<img id="foto" alt="">
 <div id="credito"></div>
 <header>
   <span class="dot" id="dot"></span><span class="live" id="livetxt">LIVE</span>
@@ -834,6 +887,7 @@ async def visor():
   <div class="t" id="inter-t"></div>
   <div class="s" id="inter-s"></div>
   <div class="m" id="inter-m"></div>
+  <div id="worldclock"></div>
 </div></div>
 <audio id="musica" loop></audio>
 <main>
@@ -880,6 +934,20 @@ function cuentaRegresiva(iso) {
   if (d > 0) return 'IN ' + d + 'd ' + h + 'h';
   if (h > 0) return 'IN ' + h + 'h ' + m + 'm';
   return 'IN ' + m + 'm';
+}
+// Relojes de las ciudades de referencia (pantalla de espera)
+function pintarRelojes(cont, horarios) {
+  if (!cont) return;
+  const sig = JSON.stringify(horarios || []);
+  if (cont.dataset.sig === sig) return;  // no re-pintar si no cambió
+  cont.dataset.sig = sig;
+  cont.innerHTML = '';
+  for (const h of (horarios || [])) {
+    const c = document.createElement('div'); c.className = 'wc';
+    c.innerHTML = '<div class="city">' + h.ciudad + '</div>' +
+                  '<div class="time">' + h.hora + '</div>';
+    cont.appendChild(c);
+  }
 }
 // Refresca la cuenta cada segundo si el canal está en espera
 setInterval(() => {
@@ -928,17 +996,20 @@ function aplicarPrograma(p) {
   const standby = !!(p && p.tipo === 'standby');
   document.body.classList.toggle('interludio', inter);
   document.body.classList.toggle('standby', standby);
+  const wc = document.getElementById('worldclock');
   if (inter) {
     document.getElementById('inter-t').textContent = p.titulo || '';
     document.getElementById('inter-s').textContent = p.subtitulo || '';
     document.getElementById('inter-m').textContent =
       p.musica ? '♪ MUSIC' : '';
+    wc.innerHTML = '';
   }
   if (standby) {
     ultimoStandbyIso = p.inicia || null;
     document.getElementById('inter-t').textContent = p.titulo || 'OFF AIR';
     document.getElementById('inter-s').textContent = p.subtitulo || '';
     document.getElementById('inter-m').textContent = cuentaRegresiva(p.inicia);
+    pintarRelojes(wc, p.horarios);
   }
   const musica = document.getElementById('musica');
   if (inter && p.musica && vozActiva) {
@@ -948,12 +1019,22 @@ function aplicarPrograma(p) {
   } else if (!musica.paused) {
     musica.pause();
   }
+  const foto = document.getElementById('foto');
   if (p && p.tipo && p.tipo !== 'carrera') {
     document.body.classList.add('programa');
     const esImg = p.fondo && (p.fondo.startsWith('http') ||
                               p.fondo.startsWith('data:'));
-    fondo.className = 'on ' + (esImg ? 'historia' : (p.fondo || ''));
-    fondo.style.backgroundImage = esImg ? 'url(' + p.fondo + ')' : '';
+    if (esImg) {
+      // foto completa nítida encima + telón borroso detrás (sin recortar)
+      fondo.className = 'on fotoblur';
+      fondo.style.backgroundImage = 'url(' + p.fondo + ')';
+      if (foto.getAttribute('src') !== p.fondo) foto.src = p.fondo;
+      foto.classList.add('on');
+    } else {
+      fondo.className = 'on ' + (p.fondo || '');
+      fondo.style.backgroundImage = '';
+      foto.classList.remove('on'); foto.removeAttribute('src');
+    }
     titulo.textContent = p.titulo || '';
     titulo.style.display = 'block';
     if (p.credito) { credito.textContent = p.credito;
@@ -962,6 +1043,8 @@ function aplicarPrograma(p) {
   } else {
     document.body.classList.remove('programa');
     fondo.className = '';
+    fondo.style.backgroundImage = '';
+    foto.classList.remove('on'); foto.removeAttribute('src');
     titulo.style.display = 'none';
     credito.style.display = 'none';
   }
@@ -1033,16 +1116,22 @@ async function tick() {
     }
   } else if ((d.calendario || []).length) {
     boardTitle.textContent = 'Upcoming Sessions';
-    for (const s of d.calendario) {
+    d.calendario.forEach((s, i) => {
       const row = document.createElement('div'); row.className = 'row';
+      const cd = i === 0 && s.inicia
+        ? '<span class="gap" style="color:var(--accent)">' +
+          cuentaRegresiva(s.inicia) + '</span>'
+        : '<span class="gap">' + s.pais + '</span>';
       row.innerHTML = '<span class="acr">' + s.sesion.toUpperCase() +
-        '</span><span class="gap">' + s.pais + '</span>';
+        '</span>' + cd;
       board.appendChild(row);
       const sub = document.createElement('div');
       sub.className = 'razon'; sub.style.padding = '0 2px 8px 2px';
-      sub.textContent = s.horarios.join('   ·   ');
+      sub.textContent = (i === 0 ? s.pais + ' · ' : '') +
+        (s.horarios || []).slice(0, 4)
+          .map(h => h.ciudad + ' ' + h.hora.split('· ')[1]).join('  ·  ');
       board.appendChild(sub);
-    }
+    });
   } else {
     boardTitle.textContent = 'Leaderboard';
     board.innerHTML = '<div class="vacio">No live session</div>';
@@ -1408,10 +1497,18 @@ async def bucle_ambiente():
                     pass
 
 
+def _fecha_iso(fecha_iso):
+    """Normaliza una fecha de OpenF1 a ISO con zona (para el navegador)."""
+    return dt.datetime.fromisoformat(
+        fecha_iso.replace("Z", "+00:00")).isoformat()
+
+
 def _horarios(fecha_iso):
-    """Convierte una fecha ISO (UTC) a texto legible en varias zonas."""
+    """Convierte una fecha ISO (UTC) a la hora local en las ciudades de
+    referencia de cada continente: [{"ciudad", "hora"}]."""
     base = dt.datetime.fromisoformat(fecha_iso.replace("Z", "+00:00"))
-    return [f"{etq} {base.astimezone(ZoneInfo(zona)):%a %d %b %H:%M}"
+    return [{"ciudad": etq,
+             "hora": f"{base.astimezone(ZoneInfo(zona)):%a %d %b · %H:%M}"}
             for etq, zona in ZONAS_CALENDARIO]
 
 
@@ -1425,6 +1522,7 @@ async def bucle_calendario():
                 "pais": s.get("country_name", "?"),
                 "sesion": s.get("session_name", "?"),
                 "circuito": s.get("circuit_short_name", "?"),
+                "inicia": _fecha_iso(s["date_start"]),
                 "horarios": _horarios(s["date_start"]),
             } for s in sesiones]
         except Exception as e:
@@ -1451,7 +1549,7 @@ async def narrar_calendario(client: anthropic.AsyncAnthropic):
         return []
     lineas_cal = "\n".join(
         f"{s['pais']} — {s['sesion']} ({s['circuito']}): "
-        f"{' / '.join(s['horarios'])}"
+        f"{' / '.join(h['ciudad'] + ' ' + h['hora'] for h in s['horarios'])}"
         for s in estado.calendario[:3])
     memoria = "\n".join(estado.diario[-6:]) or "(nothing said yet)"
     response = await client.messages.create(
@@ -1473,32 +1571,52 @@ async def narrar_calendario(client: anthropic.AsyncAnthropic):
         return []
 
 
-# Catálogo de programas (shows sin telemetría). Cada uno: título en
-# pantalla, fondo (gradiente con nombre), y las instrucciones del guion.
-def _sys_show(rol):
-    return (f"You are the scriptwriter for {NARRADOR} and {ANALISTA}, a "
-            f"Formula 1 commentary duo hosting a segment (no live race), "
-            f"in {IDIOMA_NOMBRE}. {rol} Write ONE short segment (2 to 4 "
-            "short lines), conversational and warm, alternating both "
-            "voices. Only real, widely-documented facts — if unsure of a "
-            "specific number, speak generally rather than inventing it. "
-            "Vary the topic from what was recently said.")
+# Catálogo de programas (shows sin telemetría). Estilo documental de TV
+# (Discovery / History Channel): UN SOLO narrador que cuenta, con ritmo
+# variado y foto de fondo — no un ping-pong de dos voces.
+def _sys_doc(tema_area, imagen_hint):
+    return (
+        f"You are a single, warm British documentary narrator for a Formula 1 "
+        f"TV channel, in {IDIOMA_NOMBRE} — the voice of a Discovery Channel or "
+        f"History Channel documentary. {tema_area} Write ONE segment as SINGLE "
+        "VOICE flowing narration — NOT a dialogue, NOT questions and answers, "
+        "never two speakers, never an interview or an interrogation. It must "
+        "feel like a story being told to the viewer.\n"
+        "Produce three fields:\n"
+        "- titulo: a broadcast title in UPPERCASE, key facets separated by "
+        "' · ' (era, team, driver, circuit for history; the concept or system "
+        "for tech).\n"
+        f"- tema: {imagen_hint} — just the name, something that has an English "
+        "Wikipedia page so we can show a free-use photo.\n"
+        "- lineas: 3 to 5 narration lines. VARY THE LENGTH DELIBERATELY — some "
+        "lines long and rich, painting a picture; others short and punchy for "
+        "emphasis. Flowing and cinematic, like real TV documentary narration, "
+        "one thought leading into the next. Written for the ear (numbers as "
+        "words, no symbols or abbreviations). Only real, widely-documented "
+        "facts; if unsure of a figure, speak generally rather than inventing "
+        "it. Vary the subject from what was recently covered.")
 
 
 PROGRAMAS = {
     "historia": {
         "titulo": "F1 HISTORY", "fondo": "historia",
-        "sys": _sys_show("Tell a genuine, well-known piece of Formula 1 "
-                        "history — a legendary race, driver, rivalry, car "
-                        "or circuit moment; storyteller tone."),
-        "pedido": "Tell the next short piece of F1 history.",
+        "sys": _sys_doc(
+            "Tell a genuine, well-known piece of Formula 1 history — a "
+            "legendary race, driver, rivalry, car or circuit moment.",
+            "the single best subject to show a photo of — a real driver's "
+            "full name, a famous car, or a circuit"),
+        "pedido": "Tell the next piece of F1 history.",
     },
     "tech": {
         "titulo": "TECH & PHYSICS", "fondo": "tech",
-        "sys": _sys_show("Explain one Formula 1 technical or physics "
-                        "concept in simple, vivid terms — aerodynamics, "
-                        "tyres, ERS, DRS, ground effect, braking, fuel."),
-        "pedido": "Explain the next tech concept simply.",
+        "sys": _sys_doc(
+            "Explain ONE Formula 1 technical or physics concept in simple, "
+            "vivid terms — aerodynamics, tyres, ERS, DRS, ground effect, "
+            "braking or fuel — the way a great documentary makes complex "
+            "engineering feel thrilling.",
+            "the best real subject to show a photo of for the concept — a "
+            "Formula One car, a specific component, or a circuit"),
+        "pedido": "Explain the next tech concept, documentary style.",
     },
 }
 
@@ -1516,21 +1634,6 @@ HISTORIA_SCHEMA = {
     "required": ["titulo", "tema", "lineas"],
     "additionalProperties": False,
 }
-
-SYSTEM_HISTORIA_SOLO = (
-    f"You are a single British storyteller narrating a Formula 1 history "
-    f"documentary in {IDIOMA_NOMBRE}. Write ONE short segment as 2 to 4 "
-    "narration lines — SINGLE VOICE, no dialogue, no two speakers. Cover "
-    "a real, well-documented F1 story. Produce three fields:\n"
-    "- titulo: a broadcast title in UPPERCASE with the era, team, driver "
-    "and circuit where relevant, separated by ' · ' (e.g. "
-    "'AYRTON SENNA · McLAREN-HONDA · 1988 · SUZUKA').\n"
-    "- tema: the single best subject to show a photo of — a real driver's "
-    "full name, a car, or a circuit that has an English Wikipedia page "
-    "(e.g. 'Ayrton Senna' or 'Suzuka Circuit'). Just the name.\n"
-    "- lineas: the narration, written for the ear (numbers as words). "
-    "Only real, widely-documented facts; if unsure of a figure, speak "
-    "generally rather than inventing it.")
 
 
 async def imagen_wikimedia(query):
@@ -1557,18 +1660,22 @@ async def imagen_wikimedia(query):
     return None
 
 
-async def segmento_historia(client: anthropic.AsyncAnthropic):
-    """Genera un segmento de Historia: un solo narrador + título
-    descriptivo + foto de fondo de libre uso del tema."""
+async def segmento_documental(client: anthropic.AsyncAnthropic, tipo):
+    """Genera un segmento de programa documental (Historia, Tech...): UN
+    solo narrador con ritmo variado + título descriptivo + foto de fondo
+    de libre uso del tema. Mismo formato para todos los shows de charla."""
+    prog = PROGRAMAS.get(tipo)
+    if not prog:
+        return []
     memoria = "\n".join(estado.diario[-8:]) or "(nothing said yet)"
     response = await client.messages.create(
-        model=modelo_actual(), max_tokens=500, system=SYSTEM_HISTORIA_SOLO,
+        model=modelo_actual(), max_tokens=650, system=prog["sys"],
         output_config={"format": {"type": "json_schema",
                                   "schema": HISTORIA_SCHEMA}},
         messages=[{
             "role": "user",
-            "content": ("Tell the next piece of F1 history. Avoid "
-                        f"repeating these recent ones:\n{memoria}"),
+            "content": (f"{prog['pedido']} Avoid repeating these recent "
+                        f"ones:\n{memoria}"),
         }],
     )
     if response.stop_reason == "refusal":
@@ -1580,37 +1687,13 @@ async def segmento_historia(client: anthropic.AsyncAnthropic):
         return []
     imagen = await imagen_wikimedia(data.get("tema", ""))
     estado.programa = {
-        "tipo": "historia",
-        "titulo": data.get("titulo", "F1 HISTORY"),
-        "fondo": imagen or "historia",
+        "tipo": tipo,
+        "titulo": data.get("titulo", prog["titulo"]),
+        "fondo": imagen or prog["fondo"],
         "credito": "Image: Wikimedia Commons" if imagen else "",
     }
     return [{"quien": "historiador", "texto": l["texto"]}
             for l in data.get("lineas", []) if l.get("texto")]
-
-
-async def narrar_programa(client: anthropic.AsyncAnthropic, tipo):
-    prog = PROGRAMAS.get(tipo)
-    if not prog:
-        return []
-    memoria = "\n".join(estado.diario[-8:]) or "(nothing said yet)"
-    response = await client.messages.create(
-        model=modelo_actual(), max_tokens=350, system=prog["sys"],
-        output_config={"format": {"type": "json_schema",
-                                  "schema": DUO_SCHEMA}},
-        messages=[{
-            "role": "user",
-            "content": (f"{prog['pedido']} Avoid repeating these "
-                        f"recent ones:\n{memoria}"),
-        }],
-    )
-    if response.stop_reason == "refusal":
-        return []
-    texto = next((b.text for b in response.content if b.type == "text"), "")
-    try:
-        return json.loads(texto).get("lineas", [])
-    except json.JSONDecodeError:
-        return []
 
 
 def poner_al_aire(tipo):
@@ -1635,9 +1718,7 @@ async def poner_interludio():
     if futuras:
         s = min(futuras, key=lambda s: s["inicio"])
         circuito = s["circuito"]
-        hora_local = _horarios(s["inicio"].isoformat())
-        subtitulo = (f"UP NEXT · {s['sesion']} — {s['pais']} · "
-                     f"{hora_local[0] if hora_local else ''}").upper()
+        subtitulo = f"UP NEXT · {s['sesion']} — {s['pais']}".upper()
     if not circuito or circuito == "?":
         circuito = random.choice(CIRCUITOS_RESERVA)
     consulta = (circuito if "circuit" in circuito.lower()
@@ -1738,6 +1819,7 @@ def poner_standby():
     if prox:
         tarjeta["subtitulo"] = f"NEXT · {prox['sesion']} — {prox['pais']}"
         tarjeta["inicia"] = prox["inicio"].isoformat()
+        tarjeta["horarios"] = _horarios(prox["inicio"].isoformat())
     else:
         tarjeta["subtitulo"] = "SCHEDULE UNAVAILABLE"
     estado.programa = tarjeta
@@ -1944,11 +2026,8 @@ async def bucle_narracion():
                 # genera contenido del show que el director puso al aire
                 if ahora - estado.ultimo_anuncio >= INTERVALO_PROGRAMA:
                     estado.ultimo_anuncio = ahora
-                    if estado.programa["tipo"] == "historia":
-                        texto = await segmento_historia(client)
-                    else:
-                        texto = await narrar_programa(
-                            client, estado.programa["tipo"])
+                    texto = await segmento_documental(
+                        client, estado.programa["tipo"])
                 else:
                     continue
             elif (not estado.tele_cargando and estado.calendario
