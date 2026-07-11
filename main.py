@@ -131,10 +131,14 @@ VELOCIDAD_REPLAY = float(os.environ.get("VELOCIDAD_REPLAY", "1"))
 # Idioma del dúo de comentaristas: "en" (canal) o "es" (pruebas locales)
 IDIOMA = os.environ.get("IDIOMA", "en")
 
-# El dúo: narrador (play-by-play) y analista (color commentator).
+# El dúo de la CARRERA: narrador (play-by-play) y analista (color).
 # "Sam" funciona con voz masculina o femenina, según lo que haya instalado.
-NARRADOR = "Alex"
-ANALISTA = "Sam"
+NARRADOR = os.environ.get("NOMBRE_NARRADOR", "Alex")
+ANALISTA = os.environ.get("NOMBRE_ANALISTA", "Sam")
+# Presentadores de los otros programas (cada show, su propia identidad).
+# Cambiables con Secrets sin tocar código.
+PRESENTADOR_HISTORIA = os.environ.get("NOMBRE_HISTORIA", "Edmund")
+PRESENTADOR_TECH = os.environ.get("NOMBRE_TECH", "Julian")
 
 # Voces naturales (opcional): con OPENAI_API_KEY definida, cada línea se
 # sintetiza con el TTS de OpenAI y la Mac la reproduce tal cual. Sin la
@@ -169,6 +173,12 @@ TTS_VOCES = {
         "instructions": ("Warm British storyteller narrating a Formula 1 "
                          "documentary. Measured, evocative, unhurried."),
     },
+    "tecnico": {
+        "voice": "echo",
+        "instructions": ("Sharp, curious British documentary narrator "
+                         "explaining engineering. Clear, vivid, a spark of "
+                         "wonder — like a science documentary host."),
+    },
 }
 
 
@@ -191,6 +201,10 @@ ELEVENLABS_VOCES = {
     # Voice Library — busca "British storyteller"/"documentary narrator").
     "historiador": os.environ.get("ELEVENLABS_VOZ_HISTORIA",
                                   "JBFqnCBsd6RMkjVDRZzb"),  # George
+    # Presentador de Tech: otra voz británica distinta (Jude por defecto,
+    # cambiable con el Secret ELEVENLABS_VOZ_TECH).
+    "tecnico": os.environ.get("ELEVENLABS_VOZ_TECH",
+                              "Yg7C1g7suzNt5TisIqkZ"),  # Jude (británico)
 }
 # Expresividad por personaje: el narrador más variable/emocional, el
 # analista más estable y pausado (pero no plano).
@@ -198,6 +212,7 @@ ELEVENLABS_AJUSTES = {
     "narrador": {"stability": 0.35, "similarity_boost": 0.75, "style": 0.65},
     "analista": {"stability": 0.55, "similarity_boost": 0.75, "style": 0.45},
     "historiador": {"stability": 0.55, "similarity_boost": 0.8, "style": 0.35},
+    "tecnico": {"stability": 0.5, "similarity_boost": 0.8, "style": 0.4},
 }
 
 
@@ -793,7 +808,7 @@ async def visor():
                           min-height: 62vh; justify-content: center; }
   body.programa .card { background: rgba(21,25,34,.72);
                         backdrop-filter: blur(4px); }
-  .card.historiador .quien { color: var(--dim); }
+  .card.historiador .quien, .card.tecnico .quien { color: var(--dim); }
   #credito { position: fixed; right: 12px; bottom: 10px; z-index: 2;
              font-size: .62rem; color: var(--dim); opacity: .7;
              letter-spacing: .04em; display: none; }
@@ -1356,7 +1371,9 @@ DUO_SCHEMA = {
 
 def _nombre_de(quien):
     if quien == "historiador":
-        return "Narrator"
+        return PRESENTADOR_HISTORIA
+    if quien == "tecnico":
+        return PRESENTADOR_TECH
     return NARRADOR if quien == "narrador" else ANALISTA
 
 
@@ -1597,9 +1614,11 @@ def _sys_doc(tema_area, imagen_hint):
         "it. Vary the subject from what was recently covered.")
 
 
+# Cada programa tiene su propio presentador (nombre + voz), no siempre
+# Alex y Sam. "voz" es la clave de voz para TTS y la etiqueta en pantalla.
 PROGRAMAS = {
     "historia": {
-        "titulo": "F1 HISTORY", "fondo": "historia",
+        "titulo": "F1 HISTORY", "fondo": "historia", "voz": "historiador",
         "sys": _sys_doc(
             "Tell a genuine, well-known piece of Formula 1 history — a "
             "legendary race, driver, rivalry, car or circuit moment.",
@@ -1608,7 +1627,7 @@ PROGRAMAS = {
         "pedido": "Tell the next piece of F1 history.",
     },
     "tech": {
-        "titulo": "TECH & PHYSICS", "fondo": "tech",
+        "titulo": "TECH & PHYSICS", "fondo": "tech", "voz": "tecnico",
         "sys": _sys_doc(
             "Explain ONE Formula 1 technical or physics concept in simple, "
             "vivid terms — aerodynamics, tyres, ERS, DRS, ground effect, "
@@ -1692,7 +1711,8 @@ async def segmento_documental(client: anthropic.AsyncAnthropic, tipo):
         "fondo": imagen or prog["fondo"],
         "credito": "Image: Wikimedia Commons" if imagen else "",
     }
-    return [{"quien": "historiador", "texto": l["texto"]}
+    voz = prog.get("voz", "historiador")
+    return [{"quien": voz, "texto": l["texto"]}
             for l in data.get("lineas", []) if l.get("texto")]
 
 
