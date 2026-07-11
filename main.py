@@ -325,6 +325,12 @@ class Estado:
         self.off_air_manual: bool = False  # botón OFF AIR: silencio total, sin gasto
         self.segmento_id: int = 0      # id del último segmento con audio
         self.audios: list = []         # mp3 por línea del último segmento
+        # Episodio documental en curso (historia/tech): capítulos que
+        # continúan la MISMA historia hasta sumar ~10 minutos narrados.
+        self.episodio: dict | None = None
+        self.episodio_texto: list[str] = []   # lo narrado en el episodio actual
+        self.temas_programa: dict[str, list[str]] = {}  # títulos recientes
+        self.era_idx: int = 0  # rotación de épocas de F1 History
 
 
 estado = Estado()
@@ -1590,28 +1596,56 @@ async def narrar_calendario(client: anthropic.AsyncAnthropic):
 
 # Catálogo de programas (shows sin telemetría). Estilo documental de TV
 # (Discovery / History Channel): UN SOLO narrador que cuenta, con ritmo
-# variado y foto de fondo — no un ping-pong de dos voces.
+# variado y foto de fondo — no un ping-pong de dos voces. Cada episodio
+# dura varios minutos, contado en CAPÍTULOS que continúan la misma
+# historia (no datos sueltos inconexos cada treinta segundos).
 def _sys_doc(tema_area, imagen_hint):
     return (
         f"You are a single, warm British documentary narrator for a Formula 1 "
         f"TV channel, in {IDIOMA_NOMBRE} — the voice of a Discovery Channel or "
-        f"History Channel documentary. {tema_area} Write ONE segment as SINGLE "
-        "VOICE flowing narration — NOT a dialogue, NOT questions and answers, "
-        "never two speakers, never an interview or an interrogation. It must "
-        "feel like a story being told to the viewer.\n"
+        f"History Channel documentary. {tema_area} Each episode is told across "
+        "several CHAPTERS that continue the SAME story from beginning to end, "
+        "like a real multi-part documentary — never a new unrelated fact every "
+        "chapter. Write as SINGLE VOICE flowing narration — NOT a dialogue, "
+        "NOT questions and answers, never two speakers, never an interview or "
+        "an interrogation, never speaker labels in the text.\n"
         "Produce three fields:\n"
-        "- titulo: a broadcast title in UPPERCASE, key facets separated by "
-        "' · ' (era, team, driver, circuit for history; the concept or system "
-        "for tech).\n"
+        "- titulo: a broadcast title in UPPERCASE for the WHOLE episode, key "
+        "facets separated by ' · ' (era, team, driver, circuit for history; "
+        "the concept or system for tech).\n"
         f"- tema: {imagen_hint} — just the name, something that has an English "
         "Wikipedia page so we can show a free-use photo.\n"
-        "- lineas: 3 to 5 narration lines. VARY THE LENGTH DELIBERATELY — some "
-        "lines long and rich, painting a picture; others short and punchy for "
-        "emphasis. Flowing and cinematic, like real TV documentary narration, "
-        "one thought leading into the next. Written for the ear (numbers as "
-        "words, no symbols or abbreviations). Only real, widely-documented "
-        "facts; if unsure of a figure, speak generally rather than inventing "
-        "it. Vary the subject from what was recently covered.")
+        "- lineas: 3 to 7 narration lines for THIS chapter. VARY THE LENGTH "
+        "DELIBERATELY — some lines long and rich, painting a picture; others "
+        "short and punchy for emphasis. Flowing and cinematic, one thought "
+        "leading into the next. Written for the ear (numbers as words, no "
+        "symbols or abbreviations). Only real, widely-documented facts; if "
+        "unsure of a figure, speak generally rather than inventing it.")
+
+
+# Duración objetivo de un episodio documental completo (Historia/Tech):
+# se cuenta en palabras narradas (a ritmo de habla normal) para saber
+# cuándo el episodio ya duró lo suficiente y empezar el siguiente.
+DURACION_EPISODIO_MIN = float(os.environ.get("DURACION_EPISODIO_MIN", "10"))
+PALABRAS_POR_MINUTO = 145  # ritmo de narración hablada en inglés
+
+# F1 History rota por estas épocas, una por episodio, para que cada vez
+# que el programa sale al aire cubra una etapa distinta de la historia
+# real de la Fórmula 1 (nunca al azar total, siempre una progresión).
+ERAS_HISTORIA = [
+    "the pioneering era of the nineteen fifties and early nineteen sixties "
+    "— front-engined cars and the sport's first world champions",
+    "the aerodynamic and rear-engine revolution of the late nineteen "
+    "sixties and nineteen seventies",
+    "the turbo era and the Senna versus Prost rivalry of the nineteen "
+    "eighties",
+    "the Schumacher and Adrian Newey aerodynamics era, from the nineteen "
+    "nineties to the mid two-thousands",
+    "the V8 and KERS transition, and Red Bull's dominance, from two "
+    "thousand ten to two thousand thirteen",
+    "the modern hybrid turbo era, Mercedes' dominance and the rise of Max "
+    "Verstappen, from two thousand fourteen to today",
+]
 
 
 # Cada programa tiene su propio presentador (nombre + voz), no siempre
@@ -1679,23 +1713,56 @@ async def imagen_wikimedia(query):
     return None
 
 
+def _nuevo_episodio_pedido(tipo, prog):
+    """Arma el pedido del capítulo uno de un episodio nuevo (con época
+    fija para Historia, para cubrir épocas distintas en orden)."""
+    pista_era = ""
+    if tipo == "historia":
+        era = ERAS_HISTORIA[estado.era_idx % len(ERAS_HISTORIA)]
+        estado.era_idx += 1
+        pista_era = f" Focus this whole episode on this era: {era}."
+    recientes = "\n".join(estado.temas_programa.get(tipo, [])[-8:]) \
+        or "(none yet)"
+    minutos = int(DURACION_EPISODIO_MIN)
+    return (f"{prog['pedido']}{pista_era} This is CHAPTER ONE of a brand "
+            f"new episode, roughly {minutos} minutes of narration in total "
+            "across several chapters to come — take your time and set the "
+            "scene properly, don't rush to the punchline. Do not reuse "
+            f"these recent episode subjects:\n{recientes}")
+
+
+def _capitulo_pedido(ep):
+    """Arma el pedido para continuar el mismo episodio en curso."""
+    contexto = "\n".join(estado.episodio_texto[-14:]) or "(nothing yet)"
+    return (f"Continue CHAPTER {ep['capitulo']} of the SAME documentary "
+            f"episode, titled '{ep['titulo']}'. Continue directly from "
+            "where the story left off — do NOT restart, reintroduce the "
+            "topic, or repeat the opening; keep flowing forward in the "
+            f"same story. Already narrated in this episode:\n{contexto}")
+
+
 async def segmento_documental(client: anthropic.AsyncAnthropic, tipo):
-    """Genera un segmento de programa documental (Historia, Tech...): UN
-    solo narrador con ritmo variado + título descriptivo + foto de fondo
-    de libre uso del tema. Mismo formato para todos los shows de charla."""
+    """Genera el siguiente CAPÍTULO de un episodio documental (Historia,
+    Tech...): UN solo narrador con ritmo variado. Un episodio son varios
+    capítulos que continúan la misma historia hasta sumar ~10 minutos
+    narrados (DURACION_EPISODIO_MIN); luego empieza un episodio nuevo."""
     prog = PROGRAMAS.get(tipo)
     if not prog:
         return []
-    memoria = "\n".join(estado.diario[-8:]) or "(nothing said yet)"
+    objetivo_palabras = DURACION_EPISODIO_MIN * PALABRAS_POR_MINUTO
+    ep = estado.episodio
+    es_nuevo = not ep or ep["tipo"] != tipo or ep["palabras"] >= objetivo_palabras
+    if es_nuevo:
+        ep = {"tipo": tipo, "capitulo": 1, "palabras": 0, "titulo": None}
+        pedido = _nuevo_episodio_pedido(tipo, prog)
+    else:
+        ep["capitulo"] += 1
+        pedido = _capitulo_pedido(ep)
     response = await client.messages.create(
         model=modelo_actual(), max_tokens=650, system=prog["sys"],
         output_config={"format": {"type": "json_schema",
                                   "schema": HISTORIA_SCHEMA}},
-        messages=[{
-            "role": "user",
-            "content": (f"{prog['pedido']} Avoid repeating these recent "
-                        f"ones:\n{memoria}"),
-        }],
+        messages=[{"role": "user", "content": pedido}],
     )
     if response.stop_reason == "refusal":
         return []
@@ -1704,20 +1771,35 @@ async def segmento_documental(client: anthropic.AsyncAnthropic, tipo):
         data = json.loads(texto)
     except json.JSONDecodeError:
         return []
-    imagen = await imagen_wikimedia(data.get("tema", ""))
-    estado.programa = {
-        "tipo": tipo,
-        "titulo": data.get("titulo", prog["titulo"]),
-        "fondo": imagen or prog["fondo"],
-        "credito": "Image: Wikimedia Commons" if imagen else "",
-    }
+    lineas_texto = [l["texto"] for l in data.get("lineas", []) if l.get("texto")]
+    if not lineas_texto:
+        return []
+    ep["palabras"] += sum(len(t.split()) for t in lineas_texto)
+    if ep["capitulo"] == 1:
+        titulo = data.get("titulo", prog["titulo"])
+        ep["titulo"] = titulo
+        imagen = await imagen_wikimedia(data.get("tema", ""))
+        estado.programa = {
+            "tipo": tipo, "titulo": titulo,
+            "fondo": imagen or prog["fondo"],
+            "credito": "Image: Wikimedia Commons" if imagen else "",
+        }
+        recientes = estado.temas_programa.setdefault(tipo, [])
+        recientes.append(titulo)
+        del recientes[:-24]
+        estado.episodio_texto = []
+    estado.episodio = ep
+    estado.episodio_texto.extend(lineas_texto)
+    del estado.episodio_texto[:-40]
     voz = prog.get("voz", "historiador")
-    return [{"quien": voz, "texto": l["texto"]}
-            for l in data.get("lineas", []) if l.get("texto")]
+    return [{"quien": voz, "texto": t} for t in lineas_texto]
 
 
 def poner_al_aire(tipo):
-    """Pone un show en pantalla (o None = volver a carrera/leaderboard)."""
+    """Pone un show en pantalla (o None = volver a carrera/leaderboard).
+    Siempre empieza un episodio nuevo (capítulo uno), nunca continúa uno
+    viejo a medias de la última vez que salió este programa."""
+    estado.episodio = None
     if tipo is None:
         estado.programa = None
         return
@@ -1777,11 +1859,15 @@ async def bucle_director():
 
 async def _rotar_show(tipo):
     """Pone el siguiente ítem de la playlist al aire y devuelve cuántos
-    minutos debe durar (los interludios son más cortos que los shows)."""
+    minutos debe durar. Los documentales (Historia/Tech) ocupan un
+    episodio completo (DURACION_EPISODIO_MIN); los interludios son
+    breves (INTERLUDIO_MINUTOS)."""
     if tipo == "interludio":
         await poner_interludio()
         return INTERLUDIO_MINUTOS
     poner_al_aire(tipo)
+    if tipo in PROGRAMAS:
+        return DURACION_EPISODIO_MIN
     return ROTACION_MINUTOS
 
 
