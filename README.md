@@ -31,6 +31,9 @@ Variables de entorno (Secrets en Replit, todas opcionales):
 | `NOMBRE_HISTORIA` / `NOMBRE_TECH` | Edmund / Julian | Presentador de cada programa (nombre en pantalla) |
 | `ELEVENLABS_VOZ_HISTORIA` / `ELEVENLABS_VOZ_TECH` | George / Jude | Voz de cada presentador |
 | `DURACION_EPISODIO_MIN` | `10` | Duración objetivo de cada episodio de Historia/Tech (varios capítulos que continúan la misma historia) |
+| `YOUTUBE_API_KEY` | — | Clave de la YouTube Data API v3 (gratis en Google Cloud): activa el lector de chat del directo; el video se conecta desde `/panel` |
+| `CHAT_INTERVALO` | `45` | Cada cuántos segundos se lee el chat (cuota gratis: ~20 h/día a 45s) |
+| `CHAT_RESPUESTA_CADA` | `45` | Mínimo entre respuestas habladas del chat (controla el gasto) |
 | `MODELO_VIVO` | `claude-opus-4-8` | Modelo del guionista en **carrera en vivo** (máxima calidad) |
 | `MODELO_AHORRO` | `claude-haiku-4-5-20251001` | Modelo el **resto del tiempo** (~10x más barato). El canal cambia solo entre ambos |
 | `MODELO_NARRADOR` | — | Si se define, **fuerza ese modelo siempre** y apaga el ahorro automático |

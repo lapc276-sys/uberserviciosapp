@@ -374,11 +374,12 @@ Orden de prioridad, según lo hablado:
    depender de OBS ni de la computadora del dueño. Es el último eslabón para
    ser 100% autónomo. Necesita clave de stream de YouTube. Va después del
    deploy.
-3. **Leer y responder el chat de YouTube en vivo** — que Alex y Sam
-   reaccionen a mensajes del chat (validación del espectador, el gancho
-   "yo importo"). Requiere la YouTube Live Streaming API (OAuth del dueño
-   del canal) y que la transmisión esté en vivo. Se puede construir el
-   módulo con datos de prueba y activarlo cuando haya credenciales.
+3. ~~**Leer y responder el chat de YouTube en vivo**~~ — HECHO: el canal
+   lee el chat del directo (YouTube Data API v3 con clave simple, sin
+   OAuth) y el presentador al aire responde preguntas con su nombre.
+   Falta solo el Secret `YOUTUBE_API_KEY` del dueño y conectar el video
+   desde `/panel`. Los mensajes se tratan como datos no confiables
+   (nunca como instrucciones) y se filtran enlaces/spam.
 4. **Más métricas medidas** (regla de oro, sin inventar): ya hay degradación
    y pérdida de pit; faltan p. ej. ventana de undercut numérica y evolución
    de pista, solo si se pueden medir de OpenF1.
