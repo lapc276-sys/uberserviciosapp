@@ -1473,10 +1473,13 @@ the gap.").
 - Add insight, don't just describe: tyre strategy, likely undercuts, what \
 a move forces rivals to do.
 - They sometimes disagree, with arguments. Gentle tension is good.
-- NO NAME-DROPPING: they are colleagues mid-broadcast, so they do NOT \
-address each other by name — real commentators just respond to each \
-other. Saying the other's name is RARE (once in a very long while, for \
-emphasis). Never in consecutive lines, never as a greeting tic.
+- HARD BAN ON NAMES: the words "{NARRADOR}" and "{ANALISTA}" must NEVER \
+appear in any line's text. Not "great point, {ANALISTA}", not \
+"{ANALISTA} jumping in", not "over to you, {NARRADOR}" — nothing. They \
+are two colleagues mid-broadcast: they just talk, answer, interrupt. \
+The audience tells them apart by voice, not by hearing names. Address \
+each other only as "you" ("you called it", "you're right"). The ONLY \
+names ever spoken are drivers, teams and viewers from the chat.
 - NEVER start a line's text with a speaker label like "{NARRADOR}:" or \
 "{ANALISTA}:" — who speaks goes in the 'quien' field, the text is pure \
 speech.
@@ -2434,15 +2437,34 @@ async def responder_chat(client: anthropic.AsyncAnthropic, pregunta):
 
 
 def _limpiar_linea(texto):
-    """Quita etiquetas de nombre que el modelo a veces cuela al inicio del
-    texto ("Alex:", "Sam:"...) — el nombre va en la tarjeta, no en la voz."""
-    texto = texto.strip()
-    for nombre in (NARRADOR, ANALISTA, PRESENTADOR_HISTORIA,
-                   PRESENTADOR_TECH, "Narrator", "narrador", "analista"):
-        prefijo = f"{nombre}:".lower()
-        if texto.lower().startswith(prefijo):
-            return texto[len(prefijo):].strip()
-    return texto
+    """Red de seguridad contra que los comentaristas se nombren entre sí.
+    Quita (a) la etiqueta de quién habla al inicio ("Sam:"), y (b) el
+    nombre del OTRO comentarista usado como vocativo — al inicio
+    ("Sam, look..."), al final ("...right, Sam.") o entrelazado ("Sam
+    jumping in,"). Los nombres de pilotos/equipos/espectadores no se
+    tocan; solo Alex/Sam/Edmund/Julian entre ellos."""
+    texto = (texto or "").strip()
+    nombres = {NARRADOR, ANALISTA, PRESENTADOR_HISTORIA, PRESENTADOR_TECH,
+               "Narrator"}
+    # (a) etiqueta "Nombre:" al principio
+    for nombre in nombres:
+        pref = f"{nombre}:"
+        if texto[:len(pref)].lower() == pref.lower():
+            texto = texto[len(pref):].strip()
+            break
+    # (b) el nombre como vocativo del compañero
+    for nombre in nombres:
+        n = re.escape(nombre)
+        # "..., Sam." / "..., Sam?" / "... Sam!" al final
+        texto = re.sub(rf"[\s,—-]+{n}\s*([.!?…]+)\s*$", r"\1", texto,
+                       flags=re.IGNORECASE)
+        # "Sam, ..." / "Sam — ..." al inicio → se cae y se recapitaliza
+        m = re.match(rf"{n}\s*[,—-]+\s*(.*)$", texto, flags=re.IGNORECASE)
+        if m and m.group(1):
+            texto = m.group(1)[0].upper() + m.group(1)[1:]
+        # "..., Sam, ..." intercalado
+        texto = re.sub(rf",\s*{n}\s*,", ",", texto, flags=re.IGNORECASE)
+    return texto.strip()
 
 
 async def difundir(lineas):
