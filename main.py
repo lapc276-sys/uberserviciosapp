@@ -924,11 +924,7 @@ async def visor():
   body.programa main { grid-template-columns: 1fr; }
   body.programa #panel-board,
   body.programa #right-col { display: none; }
-  body.programa #centro { max-width: 820px; margin: 0 auto;
-                          min-height: 62vh; justify-content: center; }
-  body.programa .card { background: rgba(21,25,34,.72);
-                        backdrop-filter: blur(4px); }
-  .card.historiador .quien, .card.tecnico .quien { color: var(--dim); }
+  body.programa #centro { max-width: 820px; margin: 0 auto; }
   #credito { position: fixed; right: 12px; bottom: 10px; z-index: 2;
              font-size: .62rem; color: var(--dim); opacity: .7;
              letter-spacing: .04em; display: none; }
@@ -964,16 +960,21 @@ async def visor():
   #centro { display: flex; flex-direction: column; gap: 14px; }
   #framebox { display: none; }
   #framebox img { width: 100%; border-radius: 12px; display: block; }
-  #dialogo { display: flex; flex-direction: column; gap: 12px; }
-  .card { background: var(--panel); border: 1px solid var(--line);
-          border-radius: 12px; padding: 14px 18px; }
-  .card .quien { font-size: .68rem; letter-spacing: .18em;
-                 text-transform: uppercase; margin-bottom: 6px; }
-  .card.narrador .quien { color: var(--accent); }
-  .card.analista .quien { color: var(--dim); }
-  .card .texto { font-size: 1.05rem; line-height: 1.5; }
-  #offair { color: var(--dim); text-align: center; padding: 40px 0;
-            letter-spacing: .1em; font-size: .85rem; }
+  /* Subtítulo estilo TV: SOLO la línea que se está narrando, abajo al
+     centro; cambia cuando el audio pasa a la siguiente línea */
+  #dialogo { position: fixed; left: 50%; transform: translateX(-50%);
+             bottom: 58px; width: min(940px, 88vw); z-index: 4;
+             opacity: 0; pointer-events: none;
+             transition: opacity .35s ease; }
+  #dialogo.on { opacity: 1; }
+  .card { background: rgba(13,16,23,.86); border: 1px solid var(--line);
+          border-radius: 14px; padding: 15px 24px; text-align: center;
+          box-shadow: 0 10px 34px rgba(0,0,0,.5); }
+  .card .quien { font-size: .64rem; letter-spacing: .24em;
+                 text-transform: uppercase; margin-bottom: 6px;
+                 color: var(--dim); }
+  #dialogo.narrador .quien { color: var(--accent); }
+  .card .texto { font-size: 1.18rem; line-height: 1.45; }
   /* Incidentes */
   #incidentes .inc { display: flex; gap: 8px; padding: 7px 0;
                      border-bottom: 1px solid var(--line);
@@ -1031,13 +1032,16 @@ async def visor():
   <section class="panel" id="panel-board"><h3 id="board-title">Leaderboard</h3><div id="board"></div></section>
   <section id="centro">
     <div id="framebox"><img id="frame" alt=""></div>
-    <div id="dialogo"><div id="offair">WAITING FOR SESSION…</div></div>
   </section>
   <div id="right-col">
     <section class="panel" id="panel-incidentes"><h3>Race Control</h3><div id="incidentes"></div></section>
     <section class="panel"><h3>Race Intelligence</h3><div id="intel"></div><div id="pitloss"></div></section>
   </div>
 </main>
+<div id="dialogo"><div class="card">
+  <div class="quien" id="cap-quien"></div>
+  <div class="texto" id="cap-texto"></div>
+</div></div>
 <button id="voz">VOICE OFF — click to enable browser voice</button>
 <script>
 let vozActiva = false, ultimoSegmento = -1, posPrevias = {};
@@ -1112,6 +1116,32 @@ function fallbackTTS(l, idioma) {
   u.lang = idioma === 'es' ? 'es-ES' : 'en-GB';
   speechSynthesis.speak(u);
 }
+// --- Subtítulo: solo la línea narrada ahora mismo ---
+let capLineas = [], capIdx = -1, capTs = 0;
+function pintarCaption() {
+  const d = document.getElementById('dialogo');
+  const l = capLineas[capIdx];
+  if (!l) { d.classList.remove('on'); return; }
+  document.getElementById('cap-quien').textContent = l.nombre || '';
+  document.getElementById('cap-texto').textContent = l.texto || '';
+  d.className = 'on ' + (l.quien || '');
+  capTs = Date.now();
+}
+function mostrarLinea(lineas, i) {
+  capLineas = lineas; capIdx = i; pintarCaption();
+}
+// Sin voz activa, el subtítulo avanza solo (ritmo de lectura); y si el
+// segmento quedó viejo sin líneas nuevas, se desvanece.
+setInterval(() => {
+  if (!capLineas.length) return;
+  if (Date.now() - capTs > 60000) {
+    capLineas = []; capIdx = -1; pintarCaption(); return;
+  }
+  if (!vozActiva && !reproduciendo && capIdx < capLineas.length - 1
+      && Date.now() - capTs > 6500) {
+    capIdx++; pintarCaption();
+  }
+}, 1000);
 async function reproducirSegmento(seg, lineas, idioma) {
   pendiente = { seg, lineas, idioma };  // si ya habla, gana el más nuevo
   if (reproduciendo) return;
@@ -1119,6 +1149,7 @@ async function reproducirSegmento(seg, lineas, idioma) {
   while (pendiente) {
     const t = pendiente; pendiente = null;
     for (let i = 0; i < t.lineas.length; i++) {
+      mostrarLinea(t.lineas, i);  // el subtítulo sigue a la voz
       const ok = await reproducirLinea(t.seg, i);
       if (!ok) fallbackTTS(t.lineas[i], t.idioma);
     }
@@ -1369,23 +1400,16 @@ async function tick() {
     fb.style.display = '';
     document.getElementById('frame').src = '/frame.jpg?t=' + Date.now();
   } else { fb.style.display = 'none'; }
-  // diálogo como tarjetas
+  // subtítulo: llega un segmento nuevo → arranca por su primera línea
   if (d.lineas.length && d.segmento !== ultimoSegmento) {
     const esPrimeraCarga = ultimoSegmento === -1;
     ultimoSegmento = d.segmento;
-    const dl = document.getElementById('dialogo');
-    dl.innerHTML = '';
-    for (const l of d.lineas) {
-      const c = document.createElement('div');
-      c.className = 'card ' + l.quien;
-      const q = document.createElement('div');
-      q.className = 'quien'; q.textContent = l.nombre;
-      const t = document.createElement('div');
-      t.className = 'texto'; t.textContent = l.texto;
-      c.appendChild(q); c.appendChild(t); dl.appendChild(c);
-    }
     if (vozActiva && !esPrimeraCarga) {
+      // con voz: el subtítulo lo maneja el reproductor, línea a línea
       reproducirSegmento(d.segmento, d.lineas, d.idioma);
+    } else {
+      // sin voz: mostrar la primera línea; el temporizador avanza el resto
+      mostrarLinea(d.lineas, 0);
     }
   }
 }
@@ -1835,6 +1859,91 @@ PROGRAMAS = {
             "the best real subject to show a photo of for the concept — a "
             "Formula One car, a specific component, or a circuit"),
         "pedido": "Explain the next tech concept, documentary style.",
+    },
+    "dinero": {
+        "titulo": "MONEY & MOTORS", "fondo": "tech", "voz": "tecnico",
+        "sys": _sys_doc(
+            "Reveal the business side of motorsport — what things really "
+            "cost (tyres, engines, crashes), how teams make money, "
+            "sponsorship, and the lifestyle and sacrifices of elite "
+            "drivers. Only well-documented figures; speak in ranges or "
+            "generally when exact numbers aren't public.",
+            "the best real subject to show a photo of — a team, a car, a "
+            "paddock, or a driver"),
+        "pedido": "Tell the next story of the money behind racing.",
+    },
+    "futuro": {
+        "titulo": "RACING TOMORROW", "fondo": "tech", "voz": "tecnico",
+        "sys": _sys_doc(
+            "Explore where racing is heading — sustainable and synthetic "
+            "fuels, hybrid and electric tech, new materials, simulation "
+            "and data engineering, and how track innovation reaches the "
+            "road cars people drive.",
+            "the best real subject to show a photo of — a car, a "
+            "technology, or a manufacturer"),
+        "pedido": "Explore the next piece of racing's future.",
+    },
+    "resistencia": {
+        "titulo": "ENDURANCE", "fondo": "historia", "voz": "historiador",
+        "sys": _sys_doc(
+            "Tell the stories of endurance racing — Le Mans, Daytona, "
+            "sports cars and GTs: races won by surviving, driver trios, "
+            "night stints, machines pushed for twenty-four hours.",
+            "the best real subject to show a photo of — a circuit like "
+            "the Circuit de la Sarthe, a car, or a driver"),
+        "pedido": "Tell the next endurance racing story.",
+    },
+    "nascar": {
+        "titulo": "NASCAR & OVALS", "fondo": "historia", "voz": "historiador",
+        "sys": _sys_doc(
+            "Tell the stories of NASCAR and American oval racing — "
+            "drafting, pack racing, historic rivalries, legendary "
+            "speedways like Daytona and Talladega, and the culture "
+            "around stock car racing.",
+            "the best real subject to show a photo of — a speedway, a "
+            "car, or a driver"),
+        "pedido": "Tell the next NASCAR story.",
+    },
+    "motogp": {
+        "titulo": "TWO WHEELS FAST", "fondo": "tech", "voz": "historiador",
+        "sys": _sys_doc(
+            "Tell the stories of Grand Prix motorcycle racing — MotoGP "
+            "legends, knee-down physics, lean angles, and the bravery of "
+            "riders inches from the asphalt at three hundred and fifty "
+            "kilometres per hour.",
+            "the best real subject to show a photo of — a rider, a bike, "
+            "or a circuit"),
+        "pedido": "Tell the next MotoGP story.",
+    },
+    "motocross": {
+        "titulo": "DIRT & AIRTIME", "fondo": "historia", "voz": "tecnico",
+        "sys": _sys_doc(
+            "Tell the stories of motocross and supercross — massive "
+            "jumps, brutal physical conditioning, whoops and ruts, and "
+            "the athletes who treat gravity as a suggestion.",
+            "the best real subject to show a photo of — a rider, a bike, "
+            "or a famous track"),
+        "pedido": "Tell the next motocross story.",
+    },
+    "rally": {
+        "titulo": "RALLY WORLD", "fondo": "historia", "voz": "historiador",
+        "sys": _sys_doc(
+            "Tell the stories of rally and rallycross — gravel, snow and "
+            "tarmac stages, co-driver pace notes, Group B legends, and "
+            "racing on real roads with no run-off.",
+            "the best real subject to show a photo of — a rally car, a "
+            "driver, or a famous stage"),
+        "pedido": "Tell the next rally story.",
+    },
+    "tuning": {
+        "titulo": "GARAGE KINGS", "fondo": "tech", "voz": "tecnico",
+        "sys": _sys_doc(
+            "Tell the stories of car culture built at home — tuning, "
+            "drag racing, iconic modified cars, and the independent "
+            "mechanics who turn street cars into monsters.",
+            "the best real subject to show a photo of — an iconic "
+            "modified car model or a drag strip"),
+        "pedido": "Tell the next tuning culture story.",
     },
 }
 
