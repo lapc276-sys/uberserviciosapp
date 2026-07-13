@@ -34,6 +34,7 @@ Variables de entorno (Secrets en Replit, todas opcionales):
 | `YOUTUBE_API_KEY` | — | Clave de la YouTube Data API v3 (gratis en Google Cloud): activa el lector de chat del directo; el video se conecta desde `/panel` |
 | `CHAT_INTERVALO` | `45` | Cada cuántos segundos se lee el chat (cuota gratis: ~20 h/día a 45s) |
 | `CHAT_RESPUESTA_CADA` | `45` | Mínimo entre respuestas habladas del chat (controla el gasto) |
+| `CALENDARIO_VOZ` | — | `on` narra en voz la próxima sesión cuando no hay carrera; por defecto queda en silencio (solo el tablero en pantalla) |
 | `MODELO_VIVO` | `claude-opus-4-8` | Modelo del guionista en **carrera en vivo** (máxima calidad) |
 | `MODELO_AHORRO` | `claude-haiku-4-5-20251001` | Modelo el **resto del tiempo** (~10x más barato). El canal cambia solo entre ambos |
 | `MODELO_NARRADOR` | — | Si se define, **fuerza ese modelo siempre** y apaga el ahorro automático |

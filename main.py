@@ -47,6 +47,9 @@ INTERVALO_NARRACION = 10   # segundos entre narraciones con eventos
 RELLENO_SEGUNDOS = float(os.environ.get("RELLENO_SEGUNDOS", "90"))
 # Fuera de vivo: cada cuánto anuncia el dúo la próxima sesión (segundos)
 ANUNCIO_SEGUNDOS = float(os.environ.get("ANUNCIO_SEGUNDOS", "600"))
+# Por defecto el canal NO narra el calendario en voz cuando no hay carrera
+# (queda en silencio, mostrando el tablero). CALENDARIO_VOZ=on lo activa.
+CALENDARIO_VOZ = os.environ.get("CALENDARIO_VOZ", "")
 
 # Husos horarios para el calendario: las ciudades más importantes de cada
 # continente (no todas, las que sirven de referencia global)
@@ -837,17 +840,20 @@ async def visor():
      foto nítida completa va encima con object-fit: contain (sin recortar).
      Dos capas (#foto/#foto2) permiten fundido cruzado entre fotos, y el
      efecto Ken Burns (zoom/paneo lento) da vida de documental de TV. */
-  #fondo.fotoblur { filter: blur(26px) brightness(.45); transform: scale(1.1); }
+  /* Telón: desenfoque ligero y estático (sin animarlo) — barato para OBS */
+  #fondo.fotoblur { filter: blur(14px) brightness(.45); transform: scale(1.06); }
   #foto, #foto2 { position: fixed; inset: 0; z-index: -1;
           width: 100%; height: 100%;
           object-fit: contain; object-position: center;
-          opacity: 0; transition: opacity 1.4s ease; pointer-events: none; }
+          opacity: 0; transition: opacity 1.4s ease; pointer-events: none;
+          will-change: transform, opacity; }
   #foto.on, #foto2.on { opacity: 1; }
+  /* Ken Burns suave solo sobre la foto nítida (no sobre el telón) */
   @keyframes kenburnsA {
     from { transform: scale(1.02); }
-    to   { transform: scale(1.13) translate(1.6%, -1.2%); } }
+    to   { transform: scale(1.10) translate(1.2%, -0.9%); } }
   @keyframes kenburnsB {
-    from { transform: scale(1.13) translate(-1.6%, 1.2%); }
+    from { transform: scale(1.10) translate(-1.2%, 0.9%); }
     to   { transform: scale(1.02); } }
   .kba.on { animation: kenburnsA 24s ease-in-out forwards; }
   .kbb.on { animation: kenburnsB 24s ease-in-out forwards; }
@@ -2531,14 +2537,13 @@ async def bucle_narracion():
         if estado.off_air_manual:
             continue
         # ¿Hay pregunta del chat esperando? Se responde cuando no hay
-        # eventos frescos de carrera (la acción en pista manda) y sin
-        # pisar interludios/espera. Máx. una cada CHAT_RESPUESTA_CADA.
+        # eventos frescos de carrera (la acción en pista manda). Funciona
+        # en cualquier estado del canal (incluso en espera/interludio: un
+        # espectador preguntó, se le contesta). Máx. una cada
+        # CHAT_RESPUESTA_CADA para controlar el gasto.
         hay_eventos = estado.tele is not None and bool(estado.eventos)
         chat_listo = (estado.chat_pendientes and not hay_eventos
-                      and ahora - estado.chat_ultima >= CHAT_RESPUESTA_CADA
-                      and not (estado.programa
-                               and estado.programa.get("tipo")
-                               in ("interludio", "standby")))
+                      and ahora - estado.chat_ultima >= CHAT_RESPUESTA_CADA)
         try:
             if chat_listo:
                 pregunta = estado.chat_pendientes.pop(0)
@@ -2584,9 +2589,12 @@ async def bucle_narracion():
                         client, estado.programa["tipo"])
                 else:
                     continue
-            elif (not estado.tele_cargando and estado.calendario
+            elif (CALENDARIO_VOZ and not estado.tele_cargando
+                    and estado.calendario
                     and ahora - estado.ultimo_anuncio >= ANUNCIO_SEGUNDOS):
-                # Verdadero fuera de vivo: sin carrera y sin frame de la Mac
+                # Fuera de vivo: por defecto SILENCIO (el tablero de
+                # próximas sesiones ya se ve en pantalla). Solo narra el
+                # calendario si CALENDARIO_VOZ=on lo pide expresamente.
                 estado.ultimo_anuncio = ahora
                 texto = await narrar_calendario(client)
             else:
