@@ -47,6 +47,7 @@ Variables de entorno (Secrets en Replit, todas opcionales):
 | `MUSICA_URL` | — | MP3 directo de música **libre/CC** para los interludios (sin URL, el interludio va en silencio) |
 | `INTERLUDIO_MINUTOS` | `2` | Duración del interludio foto+música entre programas |
 | `PROGRAMACION_AUTO` | `on` | Parrilla automática 24/7: rota documentales cuando no hay carrera |
+| `DOCU_HORAS` | `4` | (Modo SOLO_SESIONES) Horas antes/después de cada sesión con documentales; fuera de esa ventana queda OFF AIR ($0). `0` = OFF AIR puro entre sesiones |
 | `PLAYLIST` | `historia,interludio,tech,interludio` | Qué programas rotar |
 | `ROTACION_MINUTOS` | `8` | Cuántos minutos dura cada programa |
 
