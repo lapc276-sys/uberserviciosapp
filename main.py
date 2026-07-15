@@ -443,6 +443,7 @@ class Estado:
         # o empiece una sesión real. None = sin selección manual.
         self.show_manual: str | None = None
         self.proximo_programa: str = ""   # título del próximo show de la parrilla
+        self.api_sin_creditos: bool = False  # Claude sin créditos/cuota
         # Clasificaciones (campeonatos): pilotos y equipos F1 + otros deportes
         self.standings_pilotos: list = []   # [{pos, nombre, equipo, puntos}]
         self.standings_equipos: list = []   # [{pos, nombre, puntos}]
@@ -540,6 +541,7 @@ async def control_estado():
         "modelo_ahora": modelo_actual(),
         "off_air": estado.off_air_manual,
         "en_vivo": estado.tele is not None,
+        "api_sin_creditos": estado.api_sin_creditos,
         "chat": {"configurado": bool(YOUTUBE_API_KEY),
                  "video": estado.chat_video,
                  "estado": estado.chat_estado,
@@ -831,7 +833,14 @@ function pintar(d){
     : (d.programa ? (d.programa.tipo || 'carrera') : 'carrera');
   const prog = d.off_air ? 'OFF AIR (en espera)'
     : (d.programa ? d.programa.titulo : 'Carrera / Leaderboard');
-  let html = 'Al aire: <b>' + prog + '</b><br>Director automático: <b>' +
+  let html = '';
+  if (d.api_sin_creditos)
+    html += '<div style="background:#3a1416;border:1px solid var(--accent);' +
+      'border-radius:8px;padding:8px 10px;margin-bottom:10px;font-size:.82rem">' +
+      '⚠️ <b>Claude sin créditos</b> — no hay narración nueva. El ticker de ' +
+      'noticias y las clasificaciones siguen; los documentales ya cacheados ' +
+      'siguen con voz. Recarga créditos para narrar en vivo.</div>';
+  html += 'Al aire: <b>' + prog + '</b><br>Director automático: <b>' +
     (d.director_auto ? 'ON' : 'OFF') + '</b>';
   const cal = {auto:'Auto', max:'Máxima', ahorro:'Ahorro'}[d.modo_calidad]
     || d.modo_calidad;
@@ -2718,7 +2727,8 @@ async def bucle_shorts():
     while True:
         ahora = dt.datetime.now(dt.timezone.utc)
         hora = ahora.hour
-        if hora in SHORTS_HORARIOS and ahora.minute < 5:
+        if (hora in SHORTS_HORARIOS and ahora.minute < 5
+                and not estado.api_sin_creditos):
             short_id = ahora.strftime("%Y%m%d_%H%M")
             tipo = "drama" if ahora.hour in [12, 23] else "noticia"
             guion = await generar_short(client, tipo)
@@ -3054,7 +3064,8 @@ async def bucle_standings():
             if pilotos or equipos:
                 log.info("🏆 Clasificación F1: %d pilotos, %d equipos",
                          len(pilotos), len(equipos))
-            if client:
+            # Otras series usan Claude (Haiku): saltar si no hay créditos
+            if client and not estado.api_sin_creditos:
                 otros = await _otros_standings(client)
                 if otros:
                     estado.standings_otros = otros
@@ -3584,6 +3595,7 @@ async def bucle_narracion():
                  RELLENO_SEGUNDOS)
     ultimo_frame_narrado = 0.0
     ultimo_relleno = 0.0
+    pausa_api_hasta = 0.0   # si Claude falla por créditos, pausar hasta aquí
     while True:
         await asyncio.sleep(2)
         ahora = time.time()
@@ -3591,6 +3603,10 @@ async def bucle_narracion():
         # Botón OFF AIR: silencio total, cero llamadas a la API (aunque la
         # telemetría siga avanzando por dentro, que es gratis)
         if estado.off_air_manual:
+            continue
+        # Claude sin créditos: no martillar la API. Se reintenta cada tanto;
+        # mientras, los documentales YA cacheados siguen con voz (no usan API).
+        if ahora < pausa_api_hasta:
             continue
         # ¿Hay pregunta del chat esperando? Se responde cuando no hay
         # eventos frescos de carrera (la acción en pista manda). Funciona
@@ -3656,10 +3672,29 @@ async def bucle_narracion():
             else:
                 continue
         except anthropic.APIError as e:
-            log.error("Error de la API de Anthropic: %s", e)
+            if _es_error_creditos(e):
+                estado.api_sin_creditos = True
+                pausa_api_hasta = ahora + 600  # reintentar en 10 min
+                log.error("⚠️  Claude sin créditos/cuota — narración en pausa "
+                          "10 min. Los documentales cacheados siguen con voz. "
+                          "Recarga créditos para volver a narrar en vivo. (%s)",
+                          e)
+            else:
+                log.error("Error de la API de Anthropic: %s", e)
             continue
+        # Si llegamos aquí con texto, la API respondió bien → hay créditos
         if texto:
+            estado.api_sin_creditos = False
             await difundir(texto)
+
+
+def _es_error_creditos(e):
+    """True si el error de la API es por falta de créditos o cuota."""
+    msg = str(getattr(e, "message", "") or e).lower()
+    status = getattr(e, "status_code", None)
+    return (status in (402, 429)
+            or "credit" in msg or "quota" in msg
+            or "billing" in msg or "insufficient" in msg)
 
 
 if __name__ == "__main__":
