@@ -377,6 +377,7 @@ async def lifespan(app: FastAPI):
               asyncio.create_task(bucle_programacion()),
               asyncio.create_task(bucle_pregen_carreras()),
               asyncio.create_task(bucle_noticias_crawl()),
+              asyncio.create_task(bucle_standings()),
               asyncio.create_task(bucle_shorts()),
               asyncio.create_task(bucle_chat())]
     yield
@@ -441,6 +442,11 @@ class Estado:
         # manda sobre el standby/rotación automática hasta que lo apague
         # o empiece una sesión real. None = sin selección manual.
         self.show_manual: str | None = None
+        self.proximo_programa: str = ""   # título del próximo show de la parrilla
+        # Clasificaciones (campeonatos): pilotos y equipos F1 + otros deportes
+        self.standings_pilotos: list = []   # [{pos, nombre, equipo, puntos}]
+        self.standings_equipos: list = []   # [{pos, nombre, puntos}]
+        self.standings_otros: dict = {}     # {"MotoGP": [...], ...}
         # Pre-generación de episodios
         self.pregen_en_curso: bool = False  # está generando episodios
         self.pregen_completado: float = 0.0  # timestamp de última pre-gen
@@ -910,7 +916,27 @@ async def apex():
         "idioma": IDIOMA,
         "hay_frame": estado.frame is not None,
         "ambiente": estado.ambiente_activo,
+        "proxima_sesion": _proxima_sesion_info(),
+        "proximo_programa": estado.proximo_programa,
+        "standings": {"pilotos": estado.standings_pilotos[:10],
+                      "equipos": estado.standings_equipos[:10],
+                      "otros": estado.standings_otros},
     })
+
+
+def _proxima_sesion_info():
+    """Próxima sesión real (para la cuenta regresiva en pantalla)."""
+    ahora = dt.datetime.now(dt.timezone.utc)
+    fut = [s for s in estado.horario if s["inicio"] > ahora]
+    if fut:
+        s = min(fut, key=lambda s: s["inicio"])
+        return {"sesion": s["sesion"], "pais": s["pais"],
+                "inicia": s["inicio"].isoformat()}
+    if estado.calendario:
+        s = estado.calendario[0]
+        return {"sesion": s["sesion"], "pais": s["pais"],
+                "inicia": s.get("inicia")}
+    return None
 
 
 @app.get("/ambiente.mp3")
@@ -998,18 +1024,18 @@ async def visor():
      continuo. Se ve SIEMPRE (carrera, standby, documental) — z-index alto
      para quedar sobre la pantalla de espera. */
   #ticker { position: fixed; left: 0; right: 0; bottom: 0; z-index: 50;
-            display: none; align-items: center; height: 40px;
+            display: none; align-items: center; height: 58px;
             background: linear-gradient(90deg, rgba(11,13,18,.97),
                         rgba(18,22,30,.95));
-            border-top: 1px solid var(--line);
-            box-shadow: 0 -6px 24px rgba(0,0,0,.45); overflow: hidden; }
+            border-top: 2px solid var(--accent);
+            box-shadow: 0 -6px 24px rgba(0,0,0,.5); overflow: hidden; }
   #ticker.show { display: flex; }
-  #ticker .badge { flex: none; display: flex; align-items: center; gap: 7px;
-                   height: 100%; padding: 0 16px; background: var(--accent);
-                   color: #fff; font-size: .62rem; font-weight: 800;
+  #ticker .badge { flex: none; display: flex; align-items: center; gap: 8px;
+                   height: 100%; padding: 0 22px; background: var(--accent);
+                   color: #fff; font-size: .8rem; font-weight: 800;
                    letter-spacing: .16em; text-transform: uppercase;
                    white-space: nowrap; z-index: 2; }
-  #ticker .badge::before { content: ""; width: 7px; height: 7px;
+  #ticker .badge::before { content: ""; width: 9px; height: 9px;
                    border-radius: 50%; background: #fff;
                    animation: aiPulse 1.1s infinite; }
   @keyframes aiPulse { 0%,100% { opacity: 1; } 50% { opacity: .3; } }
@@ -1018,18 +1044,60 @@ async def visor():
   #ticker .run { position: absolute; top: 0; left: 0; height: 100%;
                  display: flex; align-items: center; white-space: nowrap;
                  animation: crawl linear infinite; will-change: transform; }
-  #ticker .item { display: inline-flex; align-items: center; gap: 10px;
-                  padding: 0 26px; font-size: .84rem; font-weight: 600;
-                  border-right: 1px solid rgba(255,255,255,.06); }
+  #ticker .item { display: inline-flex; align-items: center; gap: 12px;
+                  padding: 0 34px; font-size: 1.12rem; font-weight: 600;
+                  border-right: 1px solid rgba(255,255,255,.08); }
   #ticker .item .src { color: var(--accent); font-weight: 800;
-                       font-size: .66rem; letter-spacing: .08em;
+                       font-size: .82rem; letter-spacing: .08em;
                        text-transform: uppercase; }
-  #ticker .item .tm { color: var(--dim); font-size: .72rem;
+  #ticker .item .tm { color: var(--dim); font-size: .86rem;
                       font-variant-numeric: tabular-nums; }
   #ticker .item.race { color: var(--amber); }
   @keyframes crawl { from { transform: translateX(0); }
                      to { transform: translateX(-50%); } }
   #ticker:hover .run { animation-play-state: paused; }
+  /* Overlay "COMING UP" (esquina superior derecha, en documentales) */
+  #nextup { position: fixed; top: 68px; right: 22px; z-index: 40;
+            min-width: 230px; display: none; padding: 13px 16px;
+            background: rgba(13,16,23,.82); border: 1px solid var(--line);
+            border-left: 3px solid var(--accent); border-radius: 10px;
+            backdrop-filter: blur(6px);
+            box-shadow: 0 10px 30px rgba(0,0,0,.45); }
+  body.programa #nextup { display: block; }
+  body.standby #nextup, body.interludio #nextup { display: none; }
+  #nextup .nu-lbl { font-size: .58rem; letter-spacing: .22em;
+                    color: var(--dim); text-transform: uppercase; }
+  #nextup .nu-ses { margin-top: 5px; font-size: 1rem; font-weight: 700;
+                    letter-spacing: .04em; text-transform: uppercase; }
+  #nextup .nu-cd { margin-top: 3px; font-size: 1.35rem; font-weight: 800;
+                   color: var(--accent); font-variant-numeric: tabular-nums;
+                   letter-spacing: .03em; }
+  #nextup .nu-then { margin-top: 8px; padding-top: 7px;
+                     border-top: 1px solid var(--line); font-size: .68rem;
+                     letter-spacing: .1em; color: var(--dim);
+                     text-transform: uppercase; }
+  #nextup .nu-then b { color: #C9D1DE; font-weight: 700; }
+  /* Panel de clasificación de campeonato (esquina inferior izquierda) */
+  #standings { position: fixed; left: 22px; bottom: 78px; z-index: 40;
+               width: 268px; display: none; padding: 12px 14px;
+               background: rgba(13,16,23,.82); border: 1px solid var(--line);
+               border-radius: 10px; backdrop-filter: blur(6px);
+               box-shadow: 0 10px 30px rgba(0,0,0,.45); }
+  body.programa #standings, body.standby #standings { display: block; }
+  #standings .st-h { font-size: .6rem; letter-spacing: .18em;
+                     color: var(--accent); text-transform: uppercase;
+                     font-weight: 800; margin-bottom: 8px; }
+  #standings .st-row { display: flex; align-items: center; gap: 9px;
+                       padding: 4px 0; border-bottom: 1px solid var(--line);
+                       font-variant-numeric: tabular-nums; }
+  #standings .st-row:last-child { border-bottom: none; }
+  #standings .st-p { color: var(--dim); width: 1.3em; font-size: .8rem; }
+  #standings .st-n { font-weight: 700; font-size: .86rem; letter-spacing: .02em;
+                     flex: 1; white-space: nowrap; overflow: hidden;
+                     text-overflow: ellipsis; }
+  #standings .st-t { color: var(--dim); font-size: .66rem; }
+  #standings .st-pt { margin-left: auto; font-weight: 800; font-size: .84rem;
+                      color: var(--amber); }
   /* Modos de programa (Historia, etc.): fondo a pantalla completa */
   #fondo { position: fixed; inset: 0; z-index: -2; background: var(--bg);
            background-size: cover; background-position: center;
@@ -1204,10 +1272,10 @@ async def visor():
          border: 1px solid var(--line); border-radius: 8px;
          cursor: pointer; background: var(--panel); color: var(--dim); }
   #voz.on { border-color: var(--up); color: var(--up); }
-  /* El ticker fijo abajo (40px) no debe tapar el contenido ni el botón */
-  body { padding-bottom: 48px; }
-  /* El subtítulo de TV sube un poco para no chocar con el ticker */
-  #dialogo { bottom: 66px; }
+  /* El ticker fijo abajo (58px) no debe tapar el contenido ni el botón */
+  body { padding-bottom: 66px; }
+  /* El subtítulo de TV sube para no chocar con el ticker */
+  #dialogo { bottom: 84px; }
 </style>
 </head>
 <body>
@@ -1224,6 +1292,19 @@ async def visor():
 <div id="ticker">
   <span class="badge">● LIVE NEWS</span>
   <div class="track"><div class="run" id="ticker-run"></div></div>
+</div>
+<!-- Overlay "próximamente" (durante documentales): siguiente sesión con
+     cuenta regresiva + siguiente programa de la parrilla -->
+<div id="nextup">
+  <div class="nu-lbl">COMING UP</div>
+  <div class="nu-ses" id="nu-ses"></div>
+  <div class="nu-cd" id="nu-cd"></div>
+  <div class="nu-then" id="nu-then"></div>
+</div>
+<!-- Panel de clasificación de campeonato (rota pilotos / equipos) -->
+<div id="standings">
+  <div class="st-h" id="st-h">DRIVERS' CHAMPIONSHIP</div>
+  <div class="st-body" id="st-body"></div>
 </div>
 <div id="director"></div>
 <div id="progtitle"></div>
@@ -1256,6 +1337,64 @@ let reproduciendo = false, pendiente = null, amb = null;
 // Ticker de noticias: crawl continuo estilo Bloomberg. Construye una
 // tira con todas las noticias/eventos, duplicada para bucle sin costura.
 let alertas = [], alertasSig = '', ultimoStandbyIso = null;
+// "Coming up" + clasificaciones
+let proxSesionIso = null, standingsData = null, standingsVista = 0;
+function pintarNextUp(d) {
+  const ps = d.proxima_sesion;
+  proxSesionIso = ps ? ps.inicia : null;
+  const ses = document.getElementById('nu-ses');
+  const then = document.getElementById('nu-then');
+  if (ps) {
+    ses.textContent = ps.sesion + (ps.pais ? ' · ' + ps.pais : '');
+    document.getElementById('nu-cd').textContent = cuentaRegresiva(ps.inicia);
+  } else {
+    ses.textContent = 'SCHEDULE TBA';
+    document.getElementById('nu-cd').textContent = '';
+  }
+  then.innerHTML = d.proximo_programa
+    ? 'THEN · <b>' + escaparHTML(d.proximo_programa) + '</b>' : '';
+}
+// Clasificaciones: rota entre pilotos, equipos y otros deportes cada 9s
+function pintarStandings() {
+  const box = document.getElementById('standings');
+  const st = standingsData;
+  if (!st) { box.style.display = 'none'; return; }
+  const vistas = [];
+  if ((st.pilotos || []).length)
+    vistas.push({h: "DRIVERS' CHAMPIONSHIP", rows: st.pilotos, tipo: 'p'});
+  if ((st.equipos || []).length)
+    vistas.push({h: "CONSTRUCTORS' CHAMPIONSHIP", rows: st.equipos, tipo: 'e'});
+  for (const [serie, filas] of Object.entries(st.otros || {}))
+    if ((filas || []).length)
+      vistas.push({h: serie.toUpperCase(), rows: filas, tipo: 'o'});
+  if (!vistas.length) return;
+  standingsVista = standingsVista % vistas.length;
+  const v = vistas[standingsVista];
+  document.getElementById('st-h').textContent = v.h;
+  const body = document.getElementById('st-body');
+  body.innerHTML = '';
+  for (const r of v.rows.slice(0, 8)) {
+    const row = document.createElement('div'); row.className = 'st-row';
+    const equipo = (v.tipo === 'p' && r.equipo)
+      ? '<span class="st-t">' + escaparHTML(r.equipo) + '</span>' : '';
+    row.innerHTML = '<span class="st-p">' + (r.pos || '') + '</span>' +
+      '<span class="st-n">' + escaparHTML(r.nombre || '') + '</span>' +
+      equipo + '<span class="st-pt">' + (r.puntos != null ?
+        Math.round(r.puntos) : '') + '</span>';
+    body.appendChild(row);
+  }
+  window._stVistas = vistas.length;
+}
+function rotarStandings() {
+  if (window._stVistas > 1) { standingsVista++; pintarStandings(); }
+}
+setInterval(rotarStandings, 9000);
+// Refresca la cuenta regresiva del "coming up" cada segundo
+setInterval(() => {
+  if (proxSesionIso && document.body.classList.contains('programa'))
+    document.getElementById('nu-cd').textContent =
+      cuentaRegresiva(proxSesionIso);
+}, 1000);
 function escaparHTML(s) {
   const d = document.createElement('div'); d.textContent = s || '';
   return d.innerHTML;
@@ -1280,7 +1419,7 @@ function pintarTicker() {
   const tira = alertas.map(itemHTML).join('');
   run.innerHTML = tira + tira;      // duplicado → bucle continuo
   // Velocidad proporcional al contenido (~7s por noticia, mínimo 20s)
-  const dur = Math.max(20, alertas.length * 7);
+  const dur = Math.max(38, alertas.length * 12);
   run.style.animationDuration = dur + 's';
   t.classList.add('show');
 }
@@ -1541,6 +1680,13 @@ async function tick() {
     });
   }
   pintarTicker();
+  // "Coming up" (próxima sesión + siguiente programa) y clasificaciones
+  pintarNextUp(d);
+  const stSig = JSON.stringify(d.standings || {});
+  if (stSig !== JSON.stringify(standingsData || {})) {
+    standingsData = d.standings || null;
+    pintarStandings();
+  }
   // leaderboard en vivo, o calendario de próximas sesiones si no hay carrera
   const board = document.getElementById('board');
   const boardTitle = document.getElementById('board-title');
@@ -2741,6 +2887,73 @@ async def bucle_noticias_crawl():
         await asyncio.sleep(NOTICIAS_INTERVALO)
 
 
+# Clasificaciones de campeonato. Jolpica (sucesora de Ergast) es gratis y
+# sin clave para F1. Se refresca cada STANDINGS_INTERVALO segundos.
+STANDINGS_INTERVALO = float(os.environ.get("STANDINGS_INTERVALO", "21600"))
+_JOLPICA = "https://api.jolpi.ca/ergast/f1/current"
+
+
+async def _f1_standings():
+    """Clasificación de pilotos y equipos F1 de la temporada actual
+    (datos reales de Jolpica/Ergast). Devuelve (pilotos, equipos)."""
+    pilotos, equipos = [], []
+    async with httpx.AsyncClient(follow_redirects=True) as c:
+        try:
+            r = await c.get(f"{_JOLPICA}/driverStandings/", timeout=15)
+            if r.status_code == 200:
+                lst = (r.json()["MRData"]["StandingsTable"]
+                       ["StandingsLists"])
+                if lst:
+                    for d in lst[0].get("DriverStandings", []):
+                        drv = d.get("Driver", {})
+                        cons = d.get("Constructors", [{}])
+                        pilotos.append({
+                            "pos": int(d.get("position", 0)),
+                            "nombre": (drv.get("familyName", "")).upper(),
+                            "cod": drv.get("code", ""),
+                            "equipo": cons[-1].get("name", "") if cons else "",
+                            "puntos": float(d.get("points", 0)),
+                        })
+        except Exception as e:
+            log.info("Standings pilotos no disponibles (%s)", e)
+        try:
+            r = await c.get(f"{_JOLPICA}/constructorStandings/", timeout=15)
+            if r.status_code == 200:
+                lst = (r.json()["MRData"]["StandingsTable"]
+                       ["StandingsLists"])
+                if lst:
+                    for d in lst[0].get("ConstructorStandings", []):
+                        equipos.append({
+                            "pos": int(d.get("position", 0)),
+                            "nombre": d.get("Constructor", {}).get("name", ""),
+                            "puntos": float(d.get("points", 0)),
+                        })
+        except Exception as e:
+            log.info("Standings equipos no disponibles (%s)", e)
+    return pilotos, equipos
+
+
+async def bucle_standings():
+    """Refresca las clasificaciones de campeonato (F1 pilotos y equipos).
+    Datos reales, gratis (Jolpica). Corre al arrancar y cada 6 h."""
+    log.info("🏆 Clasificaciones de campeonato activadas (F1, cada %gs)",
+             STANDINGS_INTERVALO)
+    await asyncio.sleep(5)
+    while True:
+        try:
+            pilotos, equipos = await _f1_standings()
+            if pilotos:
+                estado.standings_pilotos = pilotos
+            if equipos:
+                estado.standings_equipos = equipos
+            if pilotos or equipos:
+                log.info("🏆 Clasificación F1: %d pilotos, %d equipos",
+                         len(pilotos), len(equipos))
+        except Exception as e:
+            log.warning("Clasificaciones: %s", e)
+        await asyncio.sleep(STANDINGS_INTERVALO)
+
+
 async def bucle_director():
     """Director de programación: cuando está en automático, rota los shows
     de PLAYLIST solo, sin que nadie toque nada. Se puede prender/apagar y
@@ -2925,8 +3138,18 @@ async def bucle_programacion():
                 minutos = await _rotar_show(playlist[idx % len(playlist)])
                 log.info("🎬 Ahora al aire: %s", estado.programa["titulo"])
                 idx += 1
+                # Guardar el título del PRÓXIMO show (para el "up next")
+                estado.proximo_programa = _titulo_show(playlist[idx % len(playlist)])
                 prox_rotacion = time.time() + minutos * 60
         await asyncio.sleep(INTERVALO_PARRILLA)
+
+
+def _titulo_show(tipo):
+    """Título legible de un ítem de la playlist."""
+    if tipo == "interludio":
+        return "INTERLUDE"
+    prog = PROGRAMAS.get(tipo)
+    return prog["titulo"] if prog else tipo.upper()
 
 
 async def bucle_telemetria():
