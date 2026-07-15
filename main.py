@@ -431,6 +431,10 @@ class Estado:
         self.chat_pagina: str = ""       # nextPageToken de la API
         self.chat_primera: bool = True   # 1ª lectura: no responder lo viejo
         self.chat_ultima: float = 0.0    # ts de la última respuesta hablada
+        # Selección manual desde el panel: si el usuario elige un show,
+        # manda sobre el standby/rotación automática hasta que lo apague
+        # o empiece una sesión real. None = sin selección manual.
+        self.show_manual: str | None = None
         # Pre-generación de episodios
         self.pregen_en_curso: bool = False  # está generando episodios
         self.pregen_completado: float = 0.0  # timestamp de última pre-gen
@@ -541,6 +545,7 @@ async def control_show(tipo: str):
     if tipo == "interludio":
         estado.director_auto = False
         estado.off_air_manual = False
+        estado.show_manual = "interludio"
         await poner_interludio()
         log.info("🕹️  Panel: al aire INTERLUDIO (%s)",
                  estado.programa["titulo"])
@@ -550,6 +555,7 @@ async def control_show(tipo: str):
                             status_code=404)
     estado.director_auto = False
     estado.off_air_manual = False
+    estado.show_manual = tipo   # tu elección manda sobre el standby
     poner_al_aire(tipo)
     log.info("🕹️  Panel: al aire %s", PROGRAMAS[tipo]["titulo"])
     return JSONResponse({"ok": True})
@@ -560,6 +566,7 @@ async def control_carrera():
     """Vuelve al modo carrera/leaderboard (apaga el automático)."""
     estado.director_auto = False
     estado.off_air_manual = False
+    estado.show_manual = None
     poner_al_aire(None)
     log.info("🕹️  Panel: modo carrera")
     return JSONResponse({"ok": True})
@@ -571,6 +578,7 @@ async def control_auto(valor: str):
     estado.director_auto = (valor == "on")
     if estado.director_auto:
         estado.off_air_manual = False
+        estado.show_manual = None   # vuelve al automático
     log.info("🕹️  Panel: director automático %s",
              "ON" if estado.director_auto else "OFF")
     return JSONResponse({"ok": True, "director_auto": estado.director_auto})
@@ -595,6 +603,7 @@ async def control_offair():
     llama a la API — para de gastar sin tocar nada más."""
     estado.director_auto = False
     estado.off_air_manual = True
+    estado.show_manual = None
     poner_standby()
     log.info("🕹️  Panel: OFF AIR (canal en espera, sin gasto)")
     return JSONResponse({"ok": True})
@@ -1074,6 +1083,9 @@ async def visor():
   body.standby #progsub {
     display: none !important; }
   body.interludio #voz, body.standby #voz { display: none !important; }
+  /* El subtítulo de TV NO debe verse en OFF AIR / interludio (si no,
+     se queda pegado el texto del programa anterior sobre la espera) */
+  body.interludio #dialogo, body.standby #dialogo { display: none !important; }
   /* El ticker de noticias SÍ se ve en standby/interludio (contenido
      para el espectador aunque no haya carrera) */
   body.standby #inter .t { color: var(--dim); letter-spacing: .32em; }
@@ -2817,6 +2829,8 @@ def poner_standby():
     else:
         tarjeta["subtitulo"] = "SEASON BREAK · SEE YOU SOON"
     estado.programa = tarjeta
+    # Limpiar el subtítulo del programa anterior para que no quede pegado
+    estado.lineas = []
 
 
 async def bucle_programacion():
@@ -2851,6 +2865,7 @@ async def bucle_programacion():
                 if tarea_carrera:
                     tarea_carrera.cancel()
                 estado.sesion_actual = s["session_key"]
+                estado.show_manual = None   # la carrera real toma el control
                 en_standby = False
                 log.info("🗓️  Es hora de %s en %s → al aire",
                         s["sesion"], s["pais"])
@@ -2866,7 +2881,12 @@ async def bucle_programacion():
                 estado.sesion_actual = None
                 prox_rotacion = 0.0  # empezar programa de inmediato
                 en_standby = False
-            if SOLO_SESIONES:
+            if estado.show_manual:
+                # El usuario eligió un show en el panel: su elección manda,
+                # no forzar standby ni rotar. La narración se encarga del
+                # contenido (documental con foto y título).
+                en_standby = False
+            elif SOLO_SESIONES:
                 # Ahorro máximo: pantalla de espera, sin narración ni API.
                 # Se refresca cada vuelta (es gratis) para recoger el
                 # calendario en cuanto termine de cargar.
