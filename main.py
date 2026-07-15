@@ -2782,7 +2782,8 @@ async def bucle_pregen_carreras():
 # (separados por ;). "when:2d" limita a las últimas 48 horas.
 NOTICIAS_TEMAS = [t.strip() for t in os.environ.get(
     "NOTICIAS_TEMAS",
-    "formula 1;motorsport racing;F1 driver").split(";") if t.strip()]
+    "formula 1;F1 driver;MotoGP result;NASCAR result;"
+    "IndyCar racing;WEC Le Mans").split(";") if t.strip()]
 _GNEWS = ("https://news.google.com/rss/search?q={q}+when:3d"
           "&hl=en-US&gl=US&ceid=US:en")
 # Feeds directos de respaldo (por si Google News no está disponible)
