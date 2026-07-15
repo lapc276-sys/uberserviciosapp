@@ -90,7 +90,8 @@ INTERLUDIO_MINUTOS = float(os.environ.get("INTERLUDIO_MINUTOS", "2"))
 # Parrilla automática: el director sigue el calendario real de carreras y
 # pone cada sesión al aire a su hora; entre carreras, rota los programas.
 # PROGRAMACION_AUTO=on lo activa (toma el control total del canal).
-PROGRAMACION_AUTO = os.environ.get("PROGRAMACION_AUTO", "")
+# Por defecto ACTIVADA (on). Desactivar con PROGRAMACION_AUTO=""
+PROGRAMACION_AUTO = os.environ.get("PROGRAMACION_AUTO", "on")
 PRESHOW_MINUTOS = float(os.environ.get("PRESHOW_MINUTOS", "30"))
 POSTSHOW_MINUTOS = float(os.environ.get("POSTSHOW_MINUTOS", "20"))
 INTERVALO_PARRILLA = float(os.environ.get("INTERVALO_PARRILLA", "15"))
@@ -265,17 +266,87 @@ async def _tts_openai(quien, texto):
 
 async def sintetizar(quien, texto):
     """Convierte una línea en MP3: ElevenLabs > OpenAI > None (voz Mac)."""
+    # Primero, intentar caché de audios
+    audio_cacheado = _cargar_audio_cache(quien, texto)
+    if audio_cacheado:
+        return audio_cacheado
+
+    # Si no está en caché, generar y guardar
+    audio = None
     if ELEVENLABS_API_KEY:
         try:
-            return await _tts_elevenlabs(quien, texto)
+            audio = await _tts_elevenlabs(quien, texto)
         except Exception as e:
             log.error("ElevenLabs falló (%s) — probando OpenAI", e)
-    if OPENAI_API_KEY:
+    if not audio and OPENAI_API_KEY:
         try:
-            return await _tts_openai(quien, texto)
+            audio = await _tts_openai(quien, texto)
         except Exception as e:
             log.error("OpenAI TTS falló (%s) — la Mac usará su voz", e)
+
+    if audio:
+        _guardar_audio_cache(quien, texto, audio)
+    return audio
+
+
+import hashlib
+def _hash_audio(quien, texto):
+    """Hash único para una combinación voz+texto."""
+    s = f"{quien}|{texto.strip()}"
+    return hashlib.md5(s.encode()).hexdigest()[:12]
+
+
+def _cargar_audio_cache(quien, texto):
+    """Carga audio sintetizado desde caché si existe."""
+    h = _hash_audio(quien, texto)
+    ruta = f"cache/audio_{h}.mp3"
+    if os.path.exists(ruta):
+        try:
+            with open(ruta, "rb") as f:
+                return f.read()
+        except Exception:
+            pass
     return None
+
+
+def _guardar_audio_cache(quien, texto, audio):
+    """Guarda audio sintetizado en caché."""
+    h = _hash_audio(quien, texto)
+    ruta = f"cache/audio_{h}.mp3"
+    try:
+        with open(ruta, "wb") as f:
+            f.write(audio)
+    except Exception as e:
+        log.warning("No se pudo guardar caché de audio (%s)", e)
+
+
+def _id_episodio(tipo, titulo, num_lineas):
+    """ID único para un episodio: programa + título + num líneas."""
+    s = f"{tipo}|{titulo}|{num_lineas}"
+    return hashlib.md5(s.encode()).hexdigest()[:12]
+
+
+def _cargar_episodio_cache(tipo, titulo, num_lineas):
+    """Carga episodio guardado si existe."""
+    ep_id = _id_episodio(tipo, titulo, num_lineas)
+    ruta = f"episodes/ep_{ep_id}.json"
+    if os.path.exists(ruta):
+        try:
+            with open(ruta, "r") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return None
+
+
+def _guardar_episodio_cache(ep_id, datos):
+    """Guarda episodio en caché."""
+    ruta = f"episodes/ep_{ep_id}.json"
+    try:
+        with open(ruta, "w") as f:
+            json.dump(datos, f)
+    except Exception as e:
+        log.warning("No se pudo guardar caché de episodio (%s)", e)
 
 
 @contextlib.asynccontextmanager
@@ -298,6 +369,7 @@ async def lifespan(app: FastAPI):
               asyncio.create_task(bucle_calendario()),
               asyncio.create_task(bucle_director()),
               asyncio.create_task(bucle_programacion()),
+              asyncio.create_task(bucle_shorts()),
               asyncio.create_task(bucle_chat())]
     yield
     for t in tareas:
@@ -552,6 +624,79 @@ async def control_chat_off():
     return JSONResponse({"ok": True})
 
 
+@app.get("/shorts")
+async def listar_shorts():
+    """Lista todos los shorts generados."""
+    shorts = []
+    try:
+        archivos = sorted(os.listdir("shorts"), reverse=True)
+        for archivo in archivos:
+            if archivo.startswith("short_") and archivo.endswith(".json"):
+                try:
+                    with open(f"shorts/{archivo}", "r") as f:
+                        short = json.load(f)
+                        shorts.append(short)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    return JSONResponse({"total": len(shorts), "shorts": shorts[:20]})
+
+
+@app.get("/shorts/{short_id}.json")
+async def descargar_short(short_id: str):
+    """Descarga un short en formato JSON."""
+    ruta = f"shorts/short_{short_id}.json"
+    if os.path.exists(ruta):
+        try:
+            with open(ruta, "r") as f:
+                return JSONResponse(json.load(f))
+        except Exception:
+            pass
+    return JSONResponse({"error": "not found"}, status_code=404)
+
+
+@app.post("/shorts/{short_id}/audio")
+async def generar_audio_short(short_id: str):
+    """Sintetiza el audio de un short y lo guarda."""
+    ruta = f"shorts/short_{short_id}.json"
+    if not os.path.exists(ruta):
+        return JSONResponse({"error": "short not found"}, status_code=404)
+    try:
+        with open(ruta, "r") as f:
+            short = json.load(f)
+        guion = short.get("guion", "")
+        if not guion:
+            return JSONResponse({"error": "no script"}, status_code=400)
+        audio = await sintetizar("narrador", guion)
+        if audio:
+            audio_ruta = f"shorts/short_{short_id}.mp3"
+            with open(audio_ruta, "wb") as f:
+                f.write(audio)
+            short["audio"] = audio_ruta
+            short["audio_url"] = f"/shorts/{short_id}.mp3"
+            with open(ruta, "w") as f:
+                json.dump(short, f, indent=2)
+            return JSONResponse({"ok": True, "audio_url": short["audio_url"]})
+        return JSONResponse({"error": "TTS failed"}, status_code=500)
+    except Exception as e:
+        log.error("Error generando audio de short (%s)", e)
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.get("/shorts/{short_id}.mp3")
+async def descargar_audio_short(short_id: str):
+    """Descarga el audio MP3 de un short."""
+    ruta = f"shorts/short_{short_id}.mp3"
+    if os.path.exists(ruta):
+        try:
+            with open(ruta, "rb") as f:
+                return Response(content=f.read(), media_type="audio/mpeg")
+        except Exception:
+            pass
+    return Response(status_code=404)
+
+
 @app.get("/panel", response_class=HTMLResponse)
 async def panel():
     return """<!doctype html>
@@ -608,7 +753,9 @@ async def panel():
 
 <h2>Chat de YouTube (responder al aire)</h2>
 <div id="chatbox">
-  <input id="chat-url" type="text" placeholder="Pega la URL del directo de YouTube">
+  <input id="chat-url" type="text" placeholder="Pega la URL del directo de YouTube"
+         onpaste="setTimeout(conectarChatAuto, 100)"
+         onchange="conectarChatAuto()">
   <div class="row">
     <button onclick="conectarChat()">💬 Conectar chat</button>
     <button onclick="post('/control/chat/off')">✕ Desconectar</button>
@@ -642,6 +789,13 @@ async function conectarChat(){
   if (!d.ok) document.getElementById('chat-estado').textContent =
     '⚠ ' + (d.error || 'no se pudo conectar');
   refrescar();
+}
+async function conectarChatAuto(){
+  const url = document.getElementById('chat-url').value.trim();
+  if (!url || url.length < 10) return;
+  if (url.includes('youtube') || url.includes('youtu.be')) {
+    await conectarChat();
+  }
 }
 function pintar(d){
   const activo = d.off_air ? 'offair'
@@ -2056,67 +2210,154 @@ def _capitulo_pedido(ep):
             f"same story. Already narrated in this episode:\n{contexto}")
 
 
+async def _generar_episodio_completo(client: anthropic.AsyncAnthropic,
+                                     tipo, prog):
+    """Genera un episodio COMPLETO (todos los capítulos hasta objetivo).
+    Devuelve {"tipo", "titulo", "capitulos": [{"tema", "lineas": [...]}]}"""
+    objetivo_palabras = DURACION_EPISODIO_MIN * PALABRAS_POR_MINUTO
+    episodio = {"tipo": tipo, "titulo": None, "capitulos": [], "palabras": 0}
+    capitulo_num = 1
+    while True:
+        if capitulo_num == 1:
+            pedido = _nuevo_episodio_pedido(tipo, prog)
+        else:
+            contexto = "\n".join(
+                [l for cap in episodio["capitulos"] for l in cap.get("lineas", [])][-14:])
+            pedido = (f"Continue CHAPTER {capitulo_num} of the SAME documentary "
+                      f"episode, titled '{episodio['titulo']}'. Continue directly "
+                      f"from where the story left off — do NOT restart or reintroduce; "
+                      f"keep flowing forward in the same story. Already narrated:\n{contexto}")
+
+        response = await client.messages.create(
+            model=modelo_actual(), max_tokens=650, system=prog["sys"],
+            output_config={"format": {"type": "json_schema",
+                                      "schema": HISTORIA_SCHEMA}},
+            messages=[{"role": "user", "content": pedido}],
+        )
+        if response.stop_reason == "refusal":
+            break
+        texto = next((b.text for b in response.content if b.type == "text"), "")
+        try:
+            data = json.loads(texto)
+        except json.JSONDecodeError:
+            break
+        lineas_texto = [l["texto"] for l in data.get("lineas", [])
+                        if l.get("texto")]
+        if not lineas_texto:
+            break
+        num_palabras = sum(len(t.split()) for t in lineas_texto)
+        episodio["palabras"] += num_palabras
+        if capitulo_num == 1:
+            episodio["titulo"] = data.get("titulo", prog["titulo"])
+        tema = data.get("tema", "")
+        episodio["capitulos"].append(
+            {"tema": tema, "lineas": lineas_texto, "num_palabras": num_palabras})
+        if episodio["palabras"] >= objetivo_palabras:
+            break
+        capitulo_num += 1
+    return episodio if episodio["capitulos"] else None
+
+
 async def segmento_documental(client: anthropic.AsyncAnthropic, tipo):
     """Genera el siguiente CAPÍTULO de un episodio documental (Historia,
-    Tech...): UN solo narrador con ritmo variado. Un episodio son varios
-    capítulos que continúan la misma historia hasta sumar ~10 minutos
-    narrados (DURACION_EPISODIO_MIN); luego empieza un episodio nuevo."""
+    Tech...): UN solo narrador con ritmo variado. Usa caché para ahorrar
+    tokens: primer episodio se genera, luego se reutiliza sin regenerar."""
     prog = PROGRAMAS.get(tipo)
     if not prog:
         return []
     objetivo_palabras = DURACION_EPISODIO_MIN * PALABRAS_POR_MINUTO
     ep = estado.episodio
     es_nuevo = not ep or ep["tipo"] != tipo or ep["palabras"] >= objetivo_palabras
+
     if es_nuevo:
-        ep = {"tipo": tipo, "capitulo": 1, "palabras": 0, "titulo": None}
-        pedido = _nuevo_episodio_pedido(tipo, prog)
+        # Intentar cargar episodio desde caché
+        ep_cache = _cargar_episodio_cache(tipo)
+        if ep_cache:
+            ep = {"tipo": tipo, "capitulo": 0, "palabras": ep_cache.get("palabras", 0),
+                  "titulo": ep_cache.get("titulo"),
+                  "_episodio_cache": ep_cache}
+            log.info("📚 Episodio de %s cacheado: %s (%d capitulos)",
+                     tipo, ep.get("titulo"), len(ep_cache.get("capitulos", [])))
+        else:
+            # Generar episodio COMPLETO y guardarlo en caché
+            ep_completo = await _generar_episodio_completo(client, tipo, prog)
+            if not ep_completo or not ep_completo.get("capitulos"):
+                return []
+            ep_id = _id_episodio_completo(tipo, ep_completo["titulo"])
+            _guardar_episodio_cache(ep_id, ep_completo)
+            log.info("📚 Episodio nuevo de %s generado y cacheado: %s "
+                     "(%d capitulos)", tipo, ep_completo["titulo"],
+                     len(ep_completo.get("capitulos", [])))
+            ep = {"tipo": tipo, "capitulo": 0, "palabras": ep_completo.get("palabras", 0),
+                  "titulo": ep_completo.get("titulo"),
+                  "_episodio_cache": ep_completo}
     else:
         ep["capitulo"] += 1
-        pedido = _capitulo_pedido(ep)
-    response = await client.messages.create(
-        model=modelo_actual(), max_tokens=650, system=prog["sys"],
-        output_config={"format": {"type": "json_schema",
-                                  "schema": HISTORIA_SCHEMA}},
-        messages=[{"role": "user", "content": pedido}],
-    )
-    if response.stop_reason == "refusal":
+
+    # Devolver el siguiente capítulo del episodio cacheado
+    ep_cache = ep.get("_episodio_cache")
+    if not ep_cache:
         return []
-    texto = next((b.text for b in response.content if b.type == "text"), "")
-    try:
-        data = json.loads(texto)
-    except json.JSONDecodeError:
-        return []
-    lineas_texto = [l["texto"] for l in data.get("lineas", []) if l.get("texto")]
+    capitulos = ep_cache.get("capitulos", [])
+    if ep["capitulo"] >= len(capitulos):
+        return []  # episodio terminado, siguiente llamada hará uno nuevo
+
+    cap = capitulos[ep["capitulo"]]
+    lineas_texto = cap.get("lineas", [])
     if not lineas_texto:
         return []
-    ep["palabras"] += sum(len(t.split()) for t in lineas_texto)
-    fotos = await imagenes_wikimedia(data.get("tema", ""))
-    if ep["capitulo"] == 1:
-        titulo = data.get("titulo", prog["titulo"])
-        ep["titulo"] = titulo
-        # En pantalla: nombre del programa arriba + tema del episodio debajo
+
+    # Actualizar pantalla en capítulo 1
+    if ep["capitulo"] == 0:
+        fotos = await imagenes_wikimedia(cap.get("tema", ""))
         estado.programa = {
             "tipo": tipo, "titulo": prog["titulo"],
-            "subtitulo": titulo,
+            "subtitulo": ep.get("titulo"),
             "fondo": fotos[0] if fotos else prog["fondo"],
             "fotos": fotos,
             "credito": "Image: Wikimedia Commons" if fotos else "",
         }
         recientes = estado.temas_programa.setdefault(tipo, [])
-        recientes.append(titulo)
+        if ep.get("titulo") not in recientes:
+            recientes.append(ep.get("titulo"))
         del recientes[:-24]
         estado.episodio_texto = []
-    elif fotos and estado.programa and estado.programa.get("tipo") == tipo:
-        # cada capítulo renueva las fotos con su propia escena (el título
-        # del episodio no cambia)
-        estado.programa["fotos"] = fotos
-        estado.programa["fondo"] = fotos[0]
-        estado.programa["credito"] = "Image: Wikimedia Commons"
+    elif cap.get("tema") and estado.programa and estado.programa.get("tipo") == tipo:
+        fotos = await imagenes_wikimedia(cap.get("tema"))
+        if fotos:
+            estado.programa["fotos"] = fotos
+            estado.programa["fondo"] = fotos[0]
+            estado.programa["credito"] = "Image: Wikimedia Commons"
+
     estado.episodio = ep
     estado.episodio_texto.extend(lineas_texto)
     del estado.episodio_texto[:-40]
     voz = prog.get("voz", "historiador")
     return [{"quien": voz, "texto": t} for t in lineas_texto]
+
+
+def _id_episodio_completo(tipo, titulo):
+    """ID único para un episodio completo."""
+    s = f"{tipo}|{titulo}"
+    return hashlib.md5(s.encode()).hexdigest()[:12]
+
+
+def _cargar_episodio_cache(tipo):
+    """Carga un episodio cacheado del tipo especificado."""
+    try:
+        archivos = os.listdir("episodes")
+        for archivo in archivos:
+            if archivo.startswith("ep_") and archivo.endswith(".json"):
+                try:
+                    with open(f"episodes/{archivo}", "r") as f:
+                        ep = json.load(f)
+                        if ep.get("tipo") == tipo:
+                            return ep
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    return None
 
 
 def poner_al_aire(tipo):
@@ -2161,6 +2402,83 @@ async def poner_interludio():
         "credito": "Image: Wikimedia Commons" if fotos else "",
         "musica": MUSICA_URL,
     }
+
+
+SHORTS_HORARIOS = [6, 12, 18, 23]  # Horas UTC para generar shorts (4/día)
+DURACION_SHORT_MIN = 1  # Duración objetivo de un short (minutos)
+
+
+async def generar_short(client: anthropic.AsyncAnthropic, tipo="noticia"):
+    """Genera el guión de un short (30-60 seg) para redes sociales."""
+    if tipo == "noticia":
+        prompt = (
+            "Write a VERY short, viral-worthy F1 news snippet for TikTok/YouTube Shorts "
+            "(max 40 words, ~20-30 seconds when read). ONE hook, ONE fact, ONE emotion. "
+            "Format as a single punchy paragraph. Make it sound like a sports news anchor "
+            "on TV who's excited. Examples: 'Verstappen just DESTROYED the qualifying record "
+            "by two tenths — is anyone stopping him THIS season?' or 'The new Ferrari is SO "
+            "FAST, Mercedes didn't see it coming. Championship chaos incoming.'"
+        )
+        system = ("You are a viral F1 news writer creating 20-30 second content clips. "
+                  "Write ONLY the script, nothing else. Make it punchy, exciting, factual.")
+    else:  # "drama"
+        prompt = (
+            "Create a SHORT emotional F1 moment for viral video (max 50 words, ~25-35 seconds). "
+            "Pick a REAL dramatic moment from recent F1 races: a controversial overtake, a "
+            "heartbreaking crash, a driver's comeback, team radio tension. Write it as "
+            "narration that would make someone stop scrolling. Format as one tight paragraph."
+        )
+        system = ("You are a sports documentary narrator. Write ONLY the 20-35 second script "
+                  "for a viral F1 drama clip. Make it emotional and factual.")
+
+    try:
+        response = await client.messages.create(
+            model=MODELO_AHORRO, max_tokens=100, system=system,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        texto = next((b.text for b in response.content if b.type == "text"), "")
+        return texto.strip() if texto else None
+    except Exception as e:
+        log.error("No se pudo generar short (%s)", e)
+        return None
+
+
+def _guardar_short(short_id, datos):
+    """Guarda un short generado."""
+    ruta = f"shorts/short_{short_id}.json"
+    try:
+        with open(ruta, "w") as f:
+            json.dump(datos, f, indent=2)
+        log.info("📹 Short guardado: %s", short_id)
+    except Exception as e:
+        log.warning("No se pudo guardar short (%s)", e)
+
+
+async def bucle_shorts():
+    """Genera 4 shorts por día (noticias + momentos dramáticos) a horas fijas."""
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        return
+    client = anthropic.AsyncAnthropic()
+    log.info("📹 Generador de shorts activado (4/día a horas %s UTC)",
+             SHORTS_HORARIOS)
+    while True:
+        ahora = dt.datetime.now(dt.timezone.utc)
+        hora = ahora.hour
+        if hora in SHORTS_HORARIOS and ahora.minute < 5:
+            short_id = ahora.strftime("%Y%m%d_%H%M")
+            tipo = "drama" if ahora.hour in [12, 23] else "noticia"
+            guion = await generar_short(client, tipo)
+            if guion:
+                _guardar_short(short_id, {
+                    "id": short_id,
+                    "timestamp": ahora.isoformat(),
+                    "tipo": tipo,
+                    "guion": guion,
+                    "duracion_segundos": max(20, min(50, len(guion.split()) * 3)),
+                })
+            await asyncio.sleep(300)  # Evitar duplicados en la próxima ejecución
+        else:
+            await asyncio.sleep(60)
 
 
 async def bucle_director():
