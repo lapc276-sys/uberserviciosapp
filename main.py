@@ -1186,6 +1186,10 @@ async def visor():
          border: 1px solid var(--line); border-radius: 8px;
          cursor: pointer; background: var(--panel); color: var(--dim); }
   #voz.on { border-color: var(--up); color: var(--up); }
+  /* El ticker fijo abajo (40px) no debe tapar el contenido ni el botón */
+  body { padding-bottom: 48px; }
+  /* El subtítulo de TV sube un poco para no chocar con el ticker */
+  #dialogo { bottom: 66px; }
 </style>
 </head>
 <body>
@@ -1455,13 +1459,13 @@ function mostrarFoto() {
 // pasa a la siguiente foto cada 12s (si hay más de una)
 setInterval(() => { if (fotosLista.length > 1) mostrarFoto(); }, 12000);
 async function tick() {
-  const [apex, noticias] = await Promise.all([
+  const [apex, noticiasResp] = await Promise.all([
     (await fetch('/apex')).json(),
     (await fetch('/noticias')).json().catch(() => ({noticias: []}))
   ]);
   const d = {
     ...apex,
-    noticias_crawl: noticias.noticias || []
+    noticias_crawl: noticiasResp.noticias || []
   };
   aplicarPrograma(d.programa);
   document.getElementById('gp').textContent =
@@ -1487,7 +1491,9 @@ async function tick() {
   } else {
     dir.classList.remove('on');
   }
-  // Ticker de noticias: combina eventos de carrera (urgente) + noticias
+  // Ticker de noticias: combina eventos de carrera (urgente) + noticias.
+  // Se ve SIEMPRE (carrera, documental o standby); si no hay noticias
+  // todavía, cae al calendario y a una línea del canal para no quedar vacío.
   const eventosCarrera = d.en_vivo ? (d.alertas || []) : [];
   const noticias = d.noticias_crawl || [];
   alertas = [
@@ -1499,6 +1505,23 @@ async function tick() {
       fuente: n.fuente || 'NEWS', hora: n.hora || ''
     }))
   ];
+  if (!alertas.length) {
+    // Respaldo 1: próximas sesiones del calendario real
+    for (const s of (d.calendario || []).slice(0, 4)) {
+      alertas.push({
+        txt: s.sesion + ' — ' + s.pais, nivel: 'info',
+        fuente: 'UP NEXT',
+        hora: (s.horarios && s.horarios[0]) ? s.horarios[0].hora.split('· ').pop() : ''
+      });
+    }
+  }
+  if (!alertas.length) {
+    // Respaldo 2: nunca dejar la barra vacía
+    alertas.push({
+      txt: 'The 24/7 motorsport channel — racing, history, tech and live sessions',
+      nivel: 'info', fuente: 'ON AIR', hora: ''
+    });
+  }
   pintarTicker();
   // leaderboard en vivo, o calendario de próximas sesiones si no hay carrera
   const board = document.getElementById('board');
