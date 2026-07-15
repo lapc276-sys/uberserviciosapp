@@ -101,6 +101,12 @@ INTERVALO_PARRILLA = float(os.environ.get("INTERVALO_PARRILLA", "15"))
 # de verdad: pantalla de espera y CERO llamadas a la API (no gasta nada).
 # SOLO_SESIONES=on lo activa (enciende la parrilla y la vuelve "solo sesiones").
 SOLO_SESIONES = os.environ.get("SOLO_SESIONES", "")
+# Ventana de documentales alrededor de cada sesión (modo SOLO_SESIONES):
+# tantas horas ANTES y DESPUÉS de cada sesión el canal pone documentales
+# (History, Tech...) en vez de OFF AIR. Fuera de esa ventana queda OFF AIR
+# ($0). Así hay contenido cerca de las carreras y ahorro el resto del
+# tiempo. DOCU_HORAS=0 vuelve al OFF AIR puro entre sesiones.
+DOCU_HORAS = float(os.environ.get("DOCU_HORAS", "4"))
 # La parrilla se activa con cualquiera de las dos:
 GRID_ON = bool(PROGRAMACION_AUTO or SOLO_SESIONES)
 # Modo ahorro automático: el canal usa el modelo caro (máxima calidad)
@@ -2600,17 +2606,21 @@ async def _generar_todos_episodios():
 
 
 async def bucle_pregen_carreras():
-    """Pre-genera episodios 3h antes de cada sesión en vivo."""
+    """Pre-genera los episodios un poco antes de que arranque la ventana de
+    documentales, para que el caché esté listo (y no se gaste generando en
+    vivo). La ventana empieza DOCU_HORAS antes de cada sesión; generamos
+    ~30 min antes de eso."""
     log.info("📅 Monitor de pre-generación activado")
+    antes_min = (DOCU_HORAS * 60 + 30) if DOCU_HORAS > 0 else 180
     pregen_hecho = False
 
     while True:
         ahora = dt.datetime.now(dt.timezone.utc)
-        s = sesion_en_ventana(ahora, estado.horario, antes_min=180, despues_min=0)
+        s = sesion_en_ventana(ahora, estado.horario,
+                              antes_min=antes_min, despues_min=0)
 
         if s and not pregen_hecho:
-            # Faltan menos de 3h para sesión
-            log.info("⏰ Sesión en %s en %s — iniciando pre-generación",
+            log.info("⏰ Sesión próxima (%s en %s) — pre-generando episodios",
                      s["sesion"], s["pais"])
             await _generar_todos_episodios()
             pregen_hecho = True
@@ -2844,7 +2854,12 @@ async def bucle_programacion():
         return
     playlist = ([p for p in PLAYLIST if p in PROGRAMAS or p == "interludio"]
                 or ["historia"])
-    if SOLO_SESIONES:
+    if SOLO_SESIONES and DOCU_HORAS > 0:
+        log.info("🗓️  Parrilla SOLO SESIONES + documentales: carrera en vivo "
+                 "en las sesiones (previa %g, post %g min); documentales %g h "
+                 "antes/después de cada sesión; OFF AIR el resto (sin gasto)",
+                 PRESHOW_MINUTOS, POSTSHOW_MINUTOS, DOCU_HORAS)
+    elif SOLO_SESIONES:
         log.info("🗓️  Parrilla SOLO SESIONES: al aire solo en las sesiones "
                  "reales (previa %g min, post %g min); apagado entre ellas",
                  PRESHOW_MINUTOS, POSTSHOW_MINUTOS)
@@ -2881,20 +2896,32 @@ async def bucle_programacion():
                 estado.sesion_actual = None
                 prox_rotacion = 0.0  # empezar programa de inmediato
                 en_standby = False
+            # ¿Estamos en la ventana de documentales alrededor de una sesión?
+            # (solo aplica en modo SOLO_SESIONES con DOCU_HORAS > 0)
+            cerca_sesion = (SOLO_SESIONES and DOCU_HORAS > 0
+                            and sesion_en_ventana(
+                                ahora, estado.horario,
+                                antes_min=DOCU_HORAS * 60,
+                                despues_min=DOCU_HORAS * 60) is not None)
             if estado.show_manual:
                 # El usuario eligió un show en el panel: su elección manda,
                 # no forzar standby ni rotar. La narración se encarga del
                 # contenido (documental con foto y título).
                 en_standby = False
-            elif SOLO_SESIONES:
-                # Ahorro máximo: pantalla de espera, sin narración ni API.
-                # Se refresca cada vuelta (es gratis) para recoger el
+            elif SOLO_SESIONES and not cerca_sesion:
+                # Lejos de cualquier sesión: pantalla de espera, sin narración
+                # ni API. Se refresca cada vuelta (gratis) para recoger el
                 # calendario en cuanto termine de cargar.
                 poner_standby()
                 if not en_standby:
                     log.info("💤 Fuera de sesión — canal en espera (sin gasto)")
                     en_standby = True
             elif time.time() >= prox_rotacion:
+                # Cerca de una sesión (o modo 24/7): documentales rotando
+                if en_standby:
+                    log.info("🎬 Cerca de una sesión — arranca la "
+                             "programación de documentales")
+                en_standby = False
                 minutos = await _rotar_show(playlist[idx % len(playlist)])
                 log.info("🎬 Ahora al aire: %s", estado.programa["titulo"])
                 idx += 1
