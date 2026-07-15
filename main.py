@@ -369,6 +369,8 @@ async def lifespan(app: FastAPI):
               asyncio.create_task(bucle_calendario()),
               asyncio.create_task(bucle_director()),
               asyncio.create_task(bucle_programacion()),
+              asyncio.create_task(bucle_pregen_carreras()),
+              asyncio.create_task(bucle_noticias_crawl()),
               asyncio.create_task(bucle_shorts()),
               asyncio.create_task(bucle_chat())]
     yield
@@ -429,6 +431,12 @@ class Estado:
         self.chat_pagina: str = ""       # nextPageToken de la API
         self.chat_primera: bool = True   # 1ª lectura: no responder lo viejo
         self.chat_ultima: float = 0.0    # ts de la última respuesta hablada
+        # Pre-generación de episodios
+        self.pregen_en_curso: bool = False  # está generando episodios
+        self.pregen_completado: float = 0.0  # timestamp de última pre-gen
+        # Noticias/Crawl
+        self.noticias_crawl: list = []   # lista de noticias para ticker
+        self.noticias_idx: int = 0       # índice actual en crawl
 
 
 estado = Estado()
@@ -849,6 +857,17 @@ async function refrescar(){
 refrescar(); setInterval(refrescar, 3000);
 setInterval(() => { if (ultimoEstado) pintar(ultimoEstado); }, 1000);
 </script></body></html>"""
+
+
+@app.get("/noticias")
+async def noticias():
+    """Noticias del crawl para mostrar en pantalla."""
+    crawl = estado.noticias_crawl[-10:] if estado.noticias_crawl else []
+    return JSONResponse({
+        "noticias": crawl,
+        "total": len(estado.noticias_crawl),
+        "idx": estado.noticias_idx,
+    })
 
 
 @app.get("/apex")
@@ -1411,7 +1430,14 @@ function mostrarFoto() {
 // pasa a la siguiente foto cada 12s (si hay más de una)
 setInterval(() => { if (fotosLista.length > 1) mostrarFoto(); }, 12000);
 async function tick() {
-  const d = await (await fetch('/apex')).json();
+  const [apex, noticias] = await Promise.all([
+    (await fetch('/apex')).json(),
+    (await fetch('/noticias')).json().catch(() => ({noticias: []}))
+  ]);
+  const d = {
+    ...apex,
+    noticias_crawl: noticias.noticias || []
+  };
   aplicarPrograma(d.programa);
   document.getElementById('gp').textContent =
     d.en_vivo ? (d.gp + ' — ' + d.circuito) : 'NO LIVE SESSION';
@@ -1437,7 +1463,22 @@ async function tick() {
     dir.classList.remove('on');
   }
   // Ticker de Alerta IA: refresca la lista; si cambió, repinta al vuelo
-  const nuevas = d.en_vivo ? (d.alertas || []) : [];
+  // Combina eventos de carrera + noticias en tiempo real
+  const eventosCarrera = d.en_vivo ? (d.alertas || []) : [];
+  const noticias = d.noticias_crawl || [];
+
+  // Mezcla eventos (rojo/urgente) y noticias (gris/info)
+  const nuevas = [
+    ...eventosCarrera.map(a => ({
+      txt: a.txt || a.texto,
+      nivel: a.nivel || 'hot'
+    })),
+    ...noticias.map(n => ({
+      txt: n.fuente.toUpperCase() + ' · ' + n.texto + ' · ' + n.hora,
+      nivel: 'info'
+    }))
+  ];
+
   const cambio = nuevas.length !== alertas.length ||
     nuevas.some((a, i) => !alertas[i] || a.txt !== alertas[i].txt);
   if (cambio) {
@@ -2479,6 +2520,134 @@ async def bucle_shorts():
             await asyncio.sleep(300)  # Evitar duplicados en la próxima ejecución
         else:
             await asyncio.sleep(60)
+
+
+async def _generar_todos_episodios():
+    """Pre-genera todos los episodios documentales para cachearlos."""
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        return
+    client = anthropic.AsyncAnthropic()
+    estado.pregen_en_curso = True
+    log.info("📚 Pre-generando todos los episodios documentales...")
+
+    for tipo in PROGRAMAS.keys():
+        try:
+            # Verificar si ya está cacheado
+            if _cargar_episodio_cache(tipo):
+                log.info("  ✓ %s ya cacheado", tipo)
+                continue
+            # Generar episodio completo
+            ep_completo = await _generar_episodio_completo(client, tipo, PROGRAMAS[tipo])
+            if ep_completo and ep_completo.get("capitulos"):
+                ep_id = _id_episodio_completo(tipo, ep_completo["titulo"])
+                _guardar_episodio_cache(ep_id, ep_completo)
+                log.info("  ✓ %s generado y cacheado", tipo)
+            await asyncio.sleep(2)  # Pequeña pausa entre episodios
+        except Exception as e:
+            log.warning("  ✗ Error en %s (%s)", tipo, e)
+
+    estado.pregen_en_curso = False
+    estado.pregen_completado = time.time()
+    log.info("📚 Pre-generación completa")
+
+
+async def bucle_pregen_carreras():
+    """Pre-genera episodios 3h antes de cada sesión en vivo."""
+    log.info("📅 Monitor de pre-generación activado")
+    pregen_hecho = False
+
+    while True:
+        ahora = dt.datetime.now(dt.timezone.utc)
+        s = sesion_en_ventana(ahora, estado.horario, antes_min=180, despues_min=0)
+
+        if s and not pregen_hecho:
+            # Faltan menos de 3h para sesión
+            log.info("⏰ Sesión en %s en %s — iniciando pre-generación",
+                     s["sesion"], s["pais"])
+            await _generar_todos_episodios()
+            pregen_hecho = True
+        elif not s:
+            pregen_hecho = False
+
+        await asyncio.sleep(60)  # Verificar cada minuto
+
+
+async def obtener_noticias_rss():
+    """Obtiene noticias de Motorsport.com vía RSS."""
+    noticias = []
+    feeds = [
+        "https://feeds.motorsport.com/rss",
+        "https://www.formula1.com/en/latest/rss.xml",
+    ]
+
+    try:
+        async with httpx.AsyncClient() as cliente:
+            for feed_url in feeds:
+                try:
+                    r = await cliente.get(feed_url, timeout=10)
+                    # Parser simple (en producción usar feedparser)
+                    if "Monaco" in r.text or "F1" in r.text or "racing" in r.text.lower():
+                        # Extraer títulos (regex simple)
+                        import re
+                        titulos = re.findall(r'<title>([^<]+)</title>', r.text)[1:6]
+                        for titulo in titulos:
+                            noticias.append({
+                                "titulo": titulo[:80],
+                                "fuente": feed_url.split("/")[2],
+                                "timestamp": ahora.isoformat(),
+                            })
+                except Exception:
+                    pass
+    except Exception as e:
+        log.warning("No se pudo obtener RSS (%s)", e)
+
+    return noticias
+
+
+async def generar_resumen_noticia(titulo):
+    """Resume una noticia en 1 línea para el crawl."""
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        return titulo[:70]
+    try:
+        client = anthropic.AsyncAnthropic()
+        response = await client.messages.create(
+            model=MODELO_AHORRO,
+            max_tokens=30,
+            system="Resume en 1 línea corta para ticker de TV (máx 70 caracteres). Solo el texto.",
+            messages=[{"role": "user", "content": f"Noticia: {titulo}"}],
+        )
+        texto = next((b.text for b in response.content if b.type == "text"), "")
+        return (texto[:70] if texto else titulo[:70])
+    except Exception:
+        return titulo[:70]
+
+
+async def bucle_noticias_crawl():
+    """Genera ticker de noticias para crawl en pantalla."""
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        return
+    log.info("📰 Ticker de noticias activado")
+
+    while True:
+        ahora = dt.datetime.now(dt.timezone.utc)
+
+        # Obtener noticias cada 10 minutos
+        if ahora.minute % 10 == 0:
+            noticias = await obtener_noticias_rss()
+            if noticias:
+                for noticia in noticias[:5]:
+                    resumen = await generar_resumen_noticia(noticia["titulo"])
+                    estado.noticias_crawl.append({
+                        "texto": resumen,
+                        "fuente": noticia.get("fuente", "motorsport"),
+                        "hora": ahora.strftime("%H:%M"),
+                        "timestamp": ahora.isoformat(),
+                    })
+                # Mantener últimas 50 noticias
+                del estado.noticias_crawl[:-50]
+                log.info("📰 %d noticias cargadas en crawl", len(noticias))
+
+        await asyncio.sleep(60)
 
 
 async def bucle_director():
