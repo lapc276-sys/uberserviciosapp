@@ -1084,6 +1084,11 @@ async def visor():
                border-radius: 10px; backdrop-filter: blur(6px);
                box-shadow: 0 10px 30px rgba(0,0,0,.45); }
   body.programa #standings, body.standby #standings { display: block; }
+  /* Durante la carrera el cuadro va arriba en la columna central (vacía),
+     para no pisar el leaderboard de la izquierda */
+  body.carrera #standings { display: block; left: 50%;
+                            transform: translateX(-50%); top: 72px;
+                            bottom: auto; width: 300px; }
   #standings .st-h { font-size: .6rem; letter-spacing: .18em;
                      color: var(--accent); text-transform: uppercase;
                      font-weight: 800; margin-bottom: 8px; }
@@ -1370,12 +1375,19 @@ function pintarStandings() {
   if (!vistas.length) return;
   standingsVista = standingsVista % vistas.length;
   const v = vistas[standingsVista];
-  document.getElementById('st-h').textContent = v.h;
+  const hEl = document.getElementById('st-h');
+  hEl.textContent = v.h;
+  if (v.tipo === 'o') {
+    const tag = document.createElement('span');
+    tag.textContent = ' · via news';
+    tag.style.cssText = 'color:var(--dim);font-weight:600;letter-spacing:.05em';
+    hEl.appendChild(tag);
+  }
   const body = document.getElementById('st-body');
   body.innerHTML = '';
   for (const r of v.rows.slice(0, 8)) {
     const row = document.createElement('div'); row.className = 'st-row';
-    const equipo = (v.tipo === 'p' && r.equipo)
+    const equipo = ((v.tipo === 'p' || v.tipo === 'o') && r.equipo)
       ? '<span class="st-t">' + escaparHTML(r.equipo) + '</span>' : '';
     row.innerHTML = '<span class="st-p">' + (r.pos || '') + '</span>' +
       '<span class="st-n">' + escaparHTML(r.nombre || '') + '</span>' +
@@ -1625,6 +1637,7 @@ async function tick() {
     noticias_crawl: noticiasResp.noticias || []
   };
   aplicarPrograma(d.programa);
+  document.body.classList.toggle('carrera', !!d.en_vivo);
   document.getElementById('gp').textContent =
     d.en_vivo ? (d.gp + ' — ' + d.circuito) : 'NO LIVE SESSION';
   document.getElementById('lap').textContent =
@@ -2934,12 +2947,103 @@ async def _f1_standings():
     return pilotos, equipos
 
 
+# Otras series de motor cuyas clasificaciones se estiman desde noticias
+# (no hay API gratuita). Configurable con OTROS_SERIES (separadas por ;).
+OTROS_SERIES = [s.strip() for s in os.environ.get(
+    "OTROS_SERIES", "MotoGP;NASCAR Cup;IndyCar").split(";") if s.strip()]
+
+_STANDINGS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "series": {"type": "array", "items": {
+            "type": "object",
+            "properties": {
+                "serie": {"type": "string"},
+                "tabla": {"type": "array", "items": {
+                    "type": "object",
+                    "properties": {
+                        "pos": {"type": "integer"},
+                        "nombre": {"type": "string"},
+                        "equipo": {"type": "string"},
+                        "puntos": {"type": "integer"},
+                    },
+                    "required": ["pos", "nombre", "equipo", "puntos"],
+                    "additionalProperties": False}},
+            },
+            "required": ["serie", "tabla"],
+            "additionalProperties": False}},
+    },
+    "required": ["series"],
+    "additionalProperties": False,
+}
+
+
+async def _otros_standings(client):
+    """Estima las clasificaciones de otras series (MotoGP, NASCAR...) a
+    partir de titulares recientes + conocimiento del modelo. Devuelve un
+    dict {serie: [{pos,nombre,equipo,puntos}]}. Si no está seguro de una
+    serie, la deja vacía (no inventa)."""
+    if not OTROS_SERIES or not os.environ.get("ANTHROPIC_API_KEY"):
+        return {}
+    # Titulares recientes de cada serie para dar contexto al modelo
+    contexto = []
+    async with httpx.AsyncClient(follow_redirects=True,
+                                 headers={"User-Agent": "Mozilla/5.0"}) as c:
+        for serie in OTROS_SERIES:
+            q = (serie + " championship standings").replace(" ", "+")
+            try:
+                r = await c.get(_GNEWS.format(q=q), timeout=12)
+                if r.status_code == 200:
+                    titulares = [n["texto"]
+                                 for n in _parsear_items(r.text, "")[:6]]
+                    if titulares:
+                        contexto.append(f"{serie}:\n" + "\n".join(titulares))
+            except Exception:
+                continue
+    pedido = (
+        "Using these recent motorsport news headlines plus your own "
+        "knowledge, give the CURRENT championship standings (top 6) for each "
+        "series below. Include rider/driver surname and their team, and "
+        "championship points. If you are not reasonably sure of a series' "
+        "current standings, return an empty table for it — never invent "
+        "numbers.\n\n" + ("\n\n".join(contexto) if contexto
+                          else "(no headlines available)")
+        + "\n\nSeries: " + ", ".join(OTROS_SERIES))
+    try:
+        resp = await client.messages.create(
+            model=MODELO_AHORRO, max_tokens=900,
+            system=("You are a motorsport statistician. Return only "
+                    "well-grounded current-season standings; empty when "
+                    "unsure. Never fabricate."),
+            output_config={"format": {"type": "json_schema",
+                                      "schema": _STANDINGS_SCHEMA}},
+            messages=[{"role": "user", "content": pedido}],
+        )
+        if resp.stop_reason == "refusal":
+            return {}
+        txt = next((b.text for b in resp.content if b.type == "text"), "")
+        data = json.loads(txt)
+    except Exception as e:
+        log.info("Otros standings no disponibles (%s)", e)
+        return {}
+    out = {}
+    for s in data.get("series", []):
+        filas = [{"pos": f.get("pos"), "nombre": (f.get("nombre") or "").upper(),
+                  "equipo": f.get("equipo", ""), "puntos": f.get("puntos")}
+                 for f in s.get("tabla", []) if f.get("nombre")]
+        if filas:
+            out[s.get("serie", "?")] = filas
+    return out
+
+
 async def bucle_standings():
-    """Refresca las clasificaciones de campeonato (F1 pilotos y equipos).
-    Datos reales, gratis (Jolpica). Corre al arrancar y cada 6 h."""
-    log.info("🏆 Clasificaciones de campeonato activadas (F1, cada %gs)",
+    """Refresca las clasificaciones: F1 pilotos y equipos (datos reales,
+    Jolpica) y otras series estimadas desde noticias. Cada 6 h."""
+    log.info("🏆 Clasificaciones activadas (F1 real + otras series, cada %gs)",
              STANDINGS_INTERVALO)
     await asyncio.sleep(5)
+    client = (anthropic.AsyncAnthropic()
+              if os.environ.get("ANTHROPIC_API_KEY") else None)
     while True:
         try:
             pilotos, equipos = await _f1_standings()
@@ -2950,6 +3054,13 @@ async def bucle_standings():
             if pilotos or equipos:
                 log.info("🏆 Clasificación F1: %d pilotos, %d equipos",
                          len(pilotos), len(equipos))
+            if client:
+                otros = await _otros_standings(client)
+                if otros:
+                    estado.standings_otros = otros
+                    log.info("🏆 Otras series: %s",
+                             ", ".join(f"{k} ({len(v)})"
+                                       for k, v in otros.items()))
         except Exception as e:
             log.warning("Clasificaciones: %s", e)
         await asyncio.sleep(STANDINGS_INTERVALO)
