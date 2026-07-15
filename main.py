@@ -979,31 +979,42 @@ async def visor():
              color: var(--accent); text-transform: uppercase;
              opacity: 0; transition: opacity .3s; }
   #director.on { opacity: 1; }
-  /* Ticker de Alerta IA: banda de "información privilegiada" medida */
-  #ticker { display: none; align-items: center; gap: 12px;
-            margin: 2px 22px 0; padding: 7px 14px; border-radius: 8px;
-            background: linear-gradient(90deg, rgba(21,25,34,.95),
-                        rgba(21,25,34,.6));
-            border: 1px solid var(--line); overflow: hidden; }
+  /* Ticker de noticias tipo Bloomberg/ESPN: barra fija abajo, scroll
+     continuo. Se ve SIEMPRE (carrera, standby, documental) — z-index alto
+     para quedar sobre la pantalla de espera. */
+  #ticker { position: fixed; left: 0; right: 0; bottom: 0; z-index: 50;
+            display: none; align-items: center; height: 40px;
+            background: linear-gradient(90deg, rgba(11,13,18,.97),
+                        rgba(18,22,30,.95));
+            border-top: 1px solid var(--line);
+            box-shadow: 0 -6px 24px rgba(0,0,0,.45); overflow: hidden; }
   #ticker.show { display: flex; }
-  #ticker .badge { flex: none; display: flex; align-items: center; gap: 6px;
-                   font-size: .6rem; font-weight: 800; letter-spacing: .18em;
-                   color: var(--accent); text-transform: uppercase; }
+  #ticker .badge { flex: none; display: flex; align-items: center; gap: 7px;
+                   height: 100%; padding: 0 16px; background: var(--accent);
+                   color: #fff; font-size: .62rem; font-weight: 800;
+                   letter-spacing: .16em; text-transform: uppercase;
+                   white-space: nowrap; z-index: 2; }
   #ticker .badge::before { content: ""; width: 7px; height: 7px;
-                   border-radius: 50%; background: var(--accent);
-                   box-shadow: 0 0 8px var(--accent);
+                   border-radius: 50%; background: #fff;
                    animation: aiPulse 1.1s infinite; }
-  @keyframes aiPulse { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
-  #ticker .sep { flex: none; width: 1px; height: 14px;
-                 background: var(--line); }
-  #ticker .txt { font-size: .82rem; font-weight: 600; letter-spacing: .02em;
-                 white-space: nowrap; overflow: hidden;
-                 text-overflow: ellipsis;
-                 font-variant-numeric: tabular-nums;
-                 transition: opacity .35s; }
-  #ticker .txt.hot { color: var(--txt); }
-  #ticker .txt.warn { color: var(--amber); }
-  #ticker .txt.info { color: var(--dim); }
+  @keyframes aiPulse { 0%,100% { opacity: 1; } 50% { opacity: .3; } }
+  #ticker .track { flex: 1; overflow: hidden; position: relative;
+                   height: 100%; }
+  #ticker .run { position: absolute; top: 0; left: 0; height: 100%;
+                 display: flex; align-items: center; white-space: nowrap;
+                 animation: crawl linear infinite; will-change: transform; }
+  #ticker .item { display: inline-flex; align-items: center; gap: 10px;
+                  padding: 0 26px; font-size: .84rem; font-weight: 600;
+                  border-right: 1px solid rgba(255,255,255,.06); }
+  #ticker .item .src { color: var(--accent); font-weight: 800;
+                       font-size: .66rem; letter-spacing: .08em;
+                       text-transform: uppercase; }
+  #ticker .item .tm { color: var(--dim); font-size: .72rem;
+                      font-variant-numeric: tabular-nums; }
+  #ticker .item.race { color: var(--amber); }
+  @keyframes crawl { from { transform: translateX(0); }
+                     to { transform: translateX(-50%); } }
+  #ticker:hover .run { animation-play-state: paused; }
   /* Modos de programa (Historia, etc.): fondo a pantalla completa */
   #fondo { position: fixed; inset: 0; z-index: -2; background: var(--bg);
            background-size: cover; background-position: center;
@@ -1061,9 +1072,10 @@ async def visor():
   body.standby main, body.standby header,
   body.standby #director, body.standby #progtitle,
   body.standby #progsub {
-    visibility: hidden; }
-  body.interludio #voz, body.standby #voz { opacity: .18; }
-  body.interludio #ticker, body.standby #ticker { display: none !important; }
+    display: none !important; }
+  body.interludio #voz, body.standby #voz { display: none !important; }
+  /* El ticker de noticias SÍ se ve en standby/interludio (contenido
+     para el espectador aunque no haya carrera) */
   body.standby #inter .t { color: var(--dim); letter-spacing: .32em; }
   body.standby #inter .m { color: var(--txt); font-size: 1.5rem;
                            letter-spacing: .1em; font-weight: 700;
@@ -1188,8 +1200,8 @@ async def visor():
   <span id="lap"></span>
 </header>
 <div id="ticker">
-  <span class="badge">◉ AI READ</span><span class="sep"></span>
-  <span class="txt" id="ticker-txt"></span>
+  <span class="badge">● LIVE NEWS</span>
+  <div class="track"><div class="run" id="ticker-run"></div></div>
 </div>
 <div id="director"></div>
 <div id="progtitle"></div>
@@ -1219,24 +1231,37 @@ async def visor():
 <script>
 let vozActiva = false, ultimoSegmento = -1, posPrevias = {};
 let reproduciendo = false, pendiente = null, amb = null;
-// Ticker de Alerta IA: rota entre las lecturas medidas cada pocos segundos
-let alertas = [], alertaIdx = 0, ultimoStandbyIso = null;
-function pintarAlerta() {
-  const t = document.getElementById('ticker');
-  const txt = document.getElementById('ticker-txt');
-  if (!alertas.length) { t.classList.remove('show'); return; }
-  t.classList.add('show');
-  alertaIdx = alertaIdx % alertas.length;
-  const a = alertas[alertaIdx];
-  txt.style.opacity = 0;
-  setTimeout(() => {
-    txt.textContent = a.txt;
-    txt.className = 'txt ' + (a.nivel || 'info');
-    txt.style.opacity = 1;
-  }, 180);
+// Ticker de noticias: crawl continuo estilo Bloomberg. Construye una
+// tira con todas las noticias/eventos, duplicada para bucle sin costura.
+let alertas = [], alertasSig = '', ultimoStandbyIso = null;
+function escaparHTML(s) {
+  const d = document.createElement('div'); d.textContent = s || '';
+  return d.innerHTML;
 }
-function rotarAlerta() { alertaIdx++; pintarAlerta(); }
-setInterval(rotarAlerta, 5000);
+function itemHTML(a) {
+  const cls = 'item' + (a.nivel === 'race' || a.nivel === 'hot'
+                        || a.nivel === 'warn' ? ' race' : '');
+  const src = a.fuente ? '<span class="src">' + escaparHTML(a.fuente) +
+              '</span>' : '';
+  const tm = a.hora ? '<span class="tm">' + escaparHTML(a.hora) +
+             '</span>' : '';
+  return '<span class="' + cls + '">' + src +
+         '<span>' + escaparHTML(a.txt) + '</span>' + tm + '</span>';
+}
+function pintarTicker() {
+  const t = document.getElementById('ticker');
+  const run = document.getElementById('ticker-run');
+  if (!alertas.length) { t.classList.remove('show'); return; }
+  const sig = alertas.map(a => a.txt).join('|');
+  if (sig === alertasSig) return;   // sin cambios: no reiniciar la animación
+  alertasSig = sig;
+  const tira = alertas.map(itemHTML).join('');
+  run.innerHTML = tira + tira;      // duplicado → bucle continuo
+  // Velocidad proporcional al contenido (~7s por noticia, mínimo 20s)
+  const dur = Math.max(20, alertas.length * 7);
+  run.style.animationDuration = dur + 's';
+  t.classList.add('show');
+}
 // Cuenta regresiva a la próxima sesión (pantalla de espera)
 function cuentaRegresiva(iso) {
   if (!iso) return '';
@@ -1462,31 +1487,19 @@ async function tick() {
   } else {
     dir.classList.remove('on');
   }
-  // Ticker de Alerta IA: refresca la lista; si cambió, repinta al vuelo
-  // Combina eventos de carrera + noticias en tiempo real
+  // Ticker de noticias: combina eventos de carrera (urgente) + noticias
   const eventosCarrera = d.en_vivo ? (d.alertas || []) : [];
   const noticias = d.noticias_crawl || [];
-
-  // Mezcla eventos (rojo/urgente) y noticias (gris/info)
-  const nuevas = [
+  alertas = [
     ...eventosCarrera.map(a => ({
-      txt: a.txt || a.texto,
-      nivel: a.nivel || 'hot'
+      txt: a.txt || a.texto, nivel: 'race', fuente: 'RACE', hora: ''
     })),
     ...noticias.map(n => ({
-      txt: n.fuente.toUpperCase() + ' · ' + n.texto + ' · ' + n.hora,
-      nivel: 'info'
+      txt: n.texto, nivel: 'info',
+      fuente: n.fuente || 'NEWS', hora: n.hora || ''
     }))
   ];
-
-  const cambio = nuevas.length !== alertas.length ||
-    nuevas.some((a, i) => !alertas[i] || a.txt !== alertas[i].txt);
-  if (cambio) {
-    const antes = alertas.length;
-    alertas = nuevas;
-    if (!antes || alertaIdx >= alertas.length) alertaIdx = 0;
-    pintarAlerta();
-  }
+  pintarTicker();
   // leaderboard en vivo, o calendario de próximas sesiones si no hay carrera
   const board = document.getElementById('board');
   const boardTitle = document.getElementById('board-title');
@@ -2572,82 +2585,115 @@ async def bucle_pregen_carreras():
         await asyncio.sleep(60)  # Verificar cada minuto
 
 
+# Fuentes de titulares. Google News RSS es la más fiable y gratuita:
+# busca por tema y devuelve titulares reales con su medio de origen.
+# Los términos de búsqueda se pueden cambiar con el Secret NOTICIAS_TEMAS
+# (separados por ;). "when:2d" limita a las últimas 48 horas.
+NOTICIAS_TEMAS = [t.strip() for t in os.environ.get(
+    "NOTICIAS_TEMAS",
+    "formula 1;motorsport racing;F1 driver").split(";") if t.strip()]
+_GNEWS = ("https://news.google.com/rss/search?q={q}+when:3d"
+          "&hl=en-US&gl=US&ceid=US:en")
+# Feeds directos de respaldo (por si Google News no está disponible)
+NOTICIAS_FEEDS_BACKUP = [
+    ("AUTOSPORT", "https://www.autosport.com/rss/feed/f1"),
+    ("MOTORSPORT", "https://www.motorsport.com/rss/f1/news/"),
+]
+# Cada cuántos segundos se refrescan las noticias (gratis, solo RSS)
+NOTICIAS_INTERVALO = float(os.environ.get("NOTICIAS_INTERVALO", "900"))
+
+
+def _limpiar_titulo(t):
+    """Limpia un título de RSS: quita CDATA, entidades y espacios."""
+    t = re.sub(r"<!\[CDATA\[(.*?)\]\]>", r"\1", t, flags=re.DOTALL)
+    t = re.sub(r"<[^>]+>", "", t)  # cualquier etiqueta suelta
+    t = (t.replace("&amp;", "&").replace("&#039;", "'")
+          .replace("&#39;", "'").replace("&quot;", '"')
+          .replace("&lt;", "<").replace("&gt;", ">").replace("&apos;", "'"))
+    return re.sub(r"\s+", " ", t).strip()
+
+
+def _parsear_items(xml, fuente_default):
+    """Extrae [{texto, fuente}] de un XML RSS. En Google News el título
+    viene como 'Titular - Medio' y hay una etiqueta <source> con el medio."""
+    out = []
+    items = re.findall(r"<(?:item|entry)\b.*?</(?:item|entry)>",
+                       xml, flags=re.DOTALL | re.IGNORECASE)
+    for item in items:
+        m = re.search(r"<title[^>]*>(.*?)</title>", item,
+                      flags=re.DOTALL | re.IGNORECASE)
+        if not m:
+            continue
+        titulo = _limpiar_titulo(m.group(1))
+        # Medio: etiqueta <source> (Google News) o el sufijo ' - Medio'
+        fuente = fuente_default
+        ms = re.search(r"<source[^>]*>(.*?)</source>", item,
+                       flags=re.DOTALL | re.IGNORECASE)
+        if ms:
+            fuente = _limpiar_titulo(ms.group(1))
+        # Google News añade ' - Medio' al final del titular: quitarlo
+        if " - " in titulo:
+            posible, _, medio = titulo.rpartition(" - ")
+            if len(medio) <= 30:  # es el medio, no parte del titular
+                titulo = posible
+                if not ms:
+                    fuente = medio.strip() or fuente_default
+        titulo = titulo.strip()
+        if titulo and len(titulo) > 8:
+            out.append({"texto": titulo[:120],
+                        "fuente": (fuente or fuente_default)[:22].upper()})
+    return out
+
+
 async def obtener_noticias_rss():
-    """Obtiene noticias de Motorsport.com vía RSS."""
-    noticias = []
-    feeds = [
-        "https://feeds.motorsport.com/rss",
-        "https://www.formula1.com/en/latest/rss.xml",
-    ]
-
-    try:
-        async with httpx.AsyncClient() as cliente:
-            for feed_url in feeds:
-                try:
-                    r = await cliente.get(feed_url, timeout=10)
-                    # Parser simple (en producción usar feedparser)
-                    if "Monaco" in r.text or "F1" in r.text or "racing" in r.text.lower():
-                        # Extraer títulos (regex simple)
-                        import re
-                        titulos = re.findall(r'<title>([^<]+)</title>', r.text)[1:6]
-                        for titulo in titulos:
-                            noticias.append({
-                                "titulo": titulo[:80],
-                                "fuente": feed_url.split("/")[2],
-                                "timestamp": ahora.isoformat(),
-                            })
-                except Exception:
-                    pass
-    except Exception as e:
-        log.warning("No se pudo obtener RSS (%s)", e)
-
+    """Titulares de automovilismo desde RSS (los títulos ya son titulares
+    listos — no se llama a ninguna IA, es gratis). Prueba Google News por
+    cada tema y, si falla, feeds directos de respaldo."""
+    noticias, vistos = [], set()
+    async with httpx.AsyncClient(follow_redirects=True,
+                                 headers={"User-Agent": "Mozilla/5.0 "
+                                          "(F1FanChannel news ticker)"}) as c:
+        fuentes = ([("GOOGLE NEWS",
+                     _GNEWS.format(q=t.replace(" ", "+")))
+                    for t in NOTICIAS_TEMAS] + NOTICIAS_FEEDS_BACKUP)
+        for fuente_default, url in fuentes:
+            try:
+                r = await c.get(url, timeout=12)
+                if r.status_code != 200:
+                    continue
+                for n in _parsear_items(r.text, fuente_default)[:8]:
+                    clave = n["texto"].lower()
+                    if clave not in vistos:
+                        vistos.add(clave)
+                        noticias.append(n)
+            except Exception:
+                continue
     return noticias
 
 
-async def generar_resumen_noticia(titulo):
-    """Resume una noticia en 1 línea para el crawl."""
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        return titulo[:70]
-    try:
-        client = anthropic.AsyncAnthropic()
-        response = await client.messages.create(
-            model=MODELO_AHORRO,
-            max_tokens=30,
-            system="Resume en 1 línea corta para ticker de TV (máx 70 caracteres). Solo el texto.",
-            messages=[{"role": "user", "content": f"Noticia: {titulo}"}],
-        )
-        texto = next((b.text for b in response.content if b.type == "text"), "")
-        return (texto[:70] if texto else titulo[:70])
-    except Exception:
-        return titulo[:70]
-
-
 async def bucle_noticias_crawl():
-    """Genera ticker de noticias para crawl en pantalla."""
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        return
-    log.info("📰 Ticker de noticias activado")
-
+    """Actualiza el ticker de noticias desde RSS (gratis, sin IA).
+    Corre una vez al arrancar y luego cada NOTICIAS_INTERVALO segundos."""
+    log.info("📰 Ticker de noticias activado (RSS gratis, cada %gs)",
+             NOTICIAS_INTERVALO)
+    await asyncio.sleep(3)  # dejar que el server termine de arrancar
     while True:
-        ahora = dt.datetime.now(dt.timezone.utc)
-
-        # Obtener noticias cada 10 minutos
-        if ahora.minute % 10 == 0:
+        try:
             noticias = await obtener_noticias_rss()
             if noticias:
-                for noticia in noticias[:5]:
-                    resumen = await generar_resumen_noticia(noticia["titulo"])
-                    estado.noticias_crawl.append({
-                        "texto": resumen,
-                        "fuente": noticia.get("fuente", "motorsport"),
-                        "hora": ahora.strftime("%H:%M"),
-                        "timestamp": ahora.isoformat(),
-                    })
-                # Mantener últimas 50 noticias
-                del estado.noticias_crawl[:-50]
-                log.info("📰 %d noticias cargadas en crawl", len(noticias))
-
-        await asyncio.sleep(60)
+                ahora = dt.datetime.now(dt.timezone.utc)
+                hora = ahora.strftime("%H:%M")
+                estado.noticias_crawl = [
+                    {"texto": n["texto"], "fuente": n["fuente"], "hora": hora,
+                     "timestamp": ahora.isoformat()}
+                    for n in noticias[:15]]
+                log.info("📰 %d titulares cargados en el ticker",
+                         len(estado.noticias_crawl))
+            else:
+                log.info("📰 Sin titulares RSS por ahora (reintenta luego)")
+        except Exception as e:
+            log.warning("Ticker de noticias: %s", e)
+        await asyncio.sleep(NOTICIAS_INTERVALO)
 
 
 async def bucle_director():
@@ -2731,15 +2777,22 @@ def poner_standby():
     no se llama a la API — cuesta $0. La cuenta la calcula el navegador a
     partir de 'inicia' (ISO), así se actualiza sola."""
     ahora = dt.datetime.now(dt.timezone.utc)
+    tarjeta = {"tipo": "standby", "titulo": "OFF AIR", "fondo": "standby"}
+    # 1º intento: horario de la parrilla (sesiones programables)
     prox = min((x for x in estado.horario if x["inicio"] > ahora),
                key=lambda x: x["inicio"], default=None)
-    tarjeta = {"tipo": "standby", "titulo": "OFF AIR", "fondo": "standby"}
     if prox:
         tarjeta["subtitulo"] = f"NEXT · {prox['sesion']} — {prox['pais']}"
         tarjeta["inicia"] = prox["inicio"].isoformat()
         tarjeta["horarios"] = _horarios(prox["inicio"].isoformat())
+    elif estado.calendario:
+        # 2º intento: calendario de pantalla (próximas sesiones ya con ISO)
+        s = estado.calendario[0]
+        tarjeta["subtitulo"] = f"NEXT · {s['sesion']} — {s['pais']}"
+        tarjeta["inicia"] = s.get("inicia")
+        tarjeta["horarios"] = s.get("horarios", [])
     else:
-        tarjeta["subtitulo"] = "SCHEDULE UNAVAILABLE"
+        tarjeta["subtitulo"] = "SEASON BREAK · SEE YOU SOON"
     estado.programa = tarjeta
 
 
@@ -2791,9 +2844,11 @@ async def bucle_programacion():
                 prox_rotacion = 0.0  # empezar programa de inmediato
                 en_standby = False
             if SOLO_SESIONES:
-                # Ahorro máximo: pantalla de espera, sin narración ni API
+                # Ahorro máximo: pantalla de espera, sin narración ni API.
+                # Se refresca cada vuelta (es gratis) para recoger el
+                # calendario en cuanto termine de cargar.
+                poner_standby()
                 if not en_standby:
-                    poner_standby()
                     log.info("💤 Fuera de sesión — canal en espera (sin gasto)")
                     en_standby = True
             elif time.time() >= prox_rotacion:
