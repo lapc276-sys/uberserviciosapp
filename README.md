@@ -46,6 +46,54 @@ Variables de entorno (Secrets en Replit, todas opcionales):
 | `VELOCIDAD_REPLAY` | `1` | Ej. `10` reproduce la carrera 10 veces más rápido |
 | `MUSICA_URL` | — | MP3 directo de música **libre/CC** para los interludios (sin URL, el interludio va en silencio) |
 | `INTERLUDIO_MINUTOS` | `2` | Duración del interludio foto+música entre programas |
+| `PROGRAMACION_AUTO` | `on` | Parrilla automática 24/7: rota documentales cuando no hay carrera |
+| `PLAYLIST` | `historia,interludio,tech,interludio` | Qué programas rotar |
+| `ROTACION_MINUTOS` | `8` | Cuántos minutos dura cada programa |
+
+## 🚀 Automatización y Caché (Eficiencia de Tokens)
+
+### Parrilla Automática (24/7)
+Por defecto ACTIVADA (`PROGRAMACION_AUTO=on`). El canal rota continuamente:
+- **Entre sesiones**: historia → interludio → tech → interludio → dinero → ...
+- **En sesión en vivo**: interrumpe rotación, transmite carrera
+- **Después de carrera**: retoma rotación automáticamente
+
+### Caché de Episodios (75-80% ahorro)
+Los programas documentales se generan UNA SOLA VEZ y se reutilizan:
+- Primera ejecución: Claude genera el episodio completo (~5-10 llamadas)
+- Siguientes ejecuciones: Se carga del caché (~0 llamadas)
+- **Resultado**: Después del primer episodio, cero costo en Claude para ese programa
+
+### Caché de Audio TTS (80% ahorro)
+El audio sintetizado se guarda por voz+texto:
+- Primera línea: ElevenLabs/OpenAI genera MP3 (~$0.015)
+- Segunda vez la misma línea: Se carga del caché (~$0)
+- **Resultado**: Líneas repetidas no cuestan nada
+
+### Shorts Automáticos (4 por día)
+Genera guiones virales a las **6h, 12h, 18h y 23h UTC**:
+- Noticias (6h, 18h) - "Verstappen breaks qualifying record!"
+- Momentos dramáticos (12h, 23h) - "The most controversial overtake of the season"
+- Scripts listos en JSON + audio MP3 para procesamiento
+
+**Acceso a shorts**:
+```bash
+curl https://TU-REPL.replit.app/shorts              # Listar todos
+curl https://TU-REPL.replit.app/shorts/{id}.json    # Descargar script
+curl https://TU-REPL.replit.app/shorts/{id}.mp3     # Descargar audio
+```
+
+### Auto-conexión de Chat YouTube
+Pega un link en el panel y se conecta automáticamente (sin hacer clic en botón).
+
+### Procesar Shorts
+```bash
+python3 procesar_shorts.py           # Genera audio para todos
+python3 procesar_shorts.py 20260715_1800  # Procesa uno específico
+python3 procesar_shorts.py --listar  # Muestra lista
+```
+
+Ver [CACHING.md](CACHING.md) para detalles técnicos y estimación de ahorros.
 
 ## Backend en Replit
 
