@@ -2671,10 +2671,23 @@ SHORTS_HORARIOS = [6, 12, 18, 23]  # Horas UTC para generar shorts (4/día)
 DURACION_SHORT_MIN = 1  # Duración objetivo de un short (minutos)
 
 
-async def generar_short(client: anthropic.AsyncAnthropic, tipo="noticia"):
-    """Genera el guión de un short (30-60 seg) para redes sociales."""
+async def generar_short(client: anthropic.AsyncAnthropic, tipo="noticia",
+                        titulares=None):
+    """Genera el guión de un short (30-60 seg) para redes sociales.
+
+    Para el tipo "noticia" usa los titulares reales del ticker RSS
+    (`titulares`) como fuente para no inventar hechos."""
     if tipo == "noticia":
+        fuente = ""
+        if titulares:
+            lineas = "\n".join(f"- {t}" for t in titulares[:8])
+            fuente = (
+                "Base the snippet ONLY on these REAL headlines from today. "
+                "Do NOT invent facts, names, numbers or results that are not "
+                "supported by them:\n" + lineas + "\n\n"
+            )
         prompt = (
+            fuente +
             "Write a VERY short, viral-worthy F1 news snippet for TikTok/YouTube Shorts "
             "(max 40 words, ~20-30 seconds when read). ONE hook, ONE fact, ONE emotion. "
             "Format as a single punchy paragraph. Make it sound like a sports news anchor "
@@ -2683,7 +2696,9 @@ async def generar_short(client: anthropic.AsyncAnthropic, tipo="noticia"):
             "FAST, Mercedes didn't see it coming. Championship chaos incoming.'"
         )
         system = ("You are a viral F1 news writer creating 20-30 second content clips. "
-                  "Write ONLY the script, nothing else. Make it punchy, exciting, factual.")
+                  "Write ONLY the script, nothing else. Make it punchy, exciting, factual. "
+                  "Never fabricate results, records or quotes: if headlines are given, "
+                  "stay strictly within what they state.")
     else:  # "drama"
         prompt = (
             "Create a SHORT emotional F1 moment for viral video (max 50 words, ~25-35 seconds). "
@@ -2717,32 +2732,61 @@ def _guardar_short(short_id, datos):
         log.warning("No se pudo guardar short (%s)", e)
 
 
+def _slot_short_pendiente(ahora):
+    """Devuelve (slot_id, hora_slot) de la última franja del día que ya pasó
+    y todavía no tiene short guardado; o None si están todas al día.
+
+    Con esto el generador es idempotente y recupera franjas perdidas (por
+    reinicios del server o por no estar corriendo en el minuto exacto)."""
+    for h in sorted(SHORTS_HORARIOS, reverse=True):
+        if ahora.hour < h:
+            continue  # esa franja aún no llega hoy
+        slot_id = ahora.strftime("%Y%m%d_") + f"{h:02d}00"
+        if not os.path.exists(f"shorts/short_{slot_id}.json"):
+            return slot_id, h
+    return None
+
+
 async def bucle_shorts():
-    """Genera 4 shorts por día (noticias + momentos dramáticos) a horas fijas."""
+    """Genera 4 shorts por día (noticias + momentos dramáticos) a horas fijas.
+
+    Idempotente: una franja se genera una sola vez. Si el server estaba caído
+    o pasó del minuto exacto, la recupera al arrancar/al siguiente ciclo."""
     if not os.environ.get("ANTHROPIC_API_KEY"):
         return
+    os.makedirs("shorts", exist_ok=True)
     client = anthropic.AsyncAnthropic()
     log.info("📹 Generador de shorts activado (4/día a horas %s UTC)",
              SHORTS_HORARIOS)
     while True:
-        ahora = dt.datetime.now(dt.timezone.utc)
-        hora = ahora.hour
-        if (hora in SHORTS_HORARIOS and ahora.minute < 5
-                and not estado.api_sin_creditos):
-            short_id = ahora.strftime("%Y%m%d_%H%M")
-            tipo = "drama" if ahora.hour in [12, 23] else "noticia"
-            guion = await generar_short(client, tipo)
-            if guion:
-                _guardar_short(short_id, {
-                    "id": short_id,
-                    "timestamp": ahora.isoformat(),
-                    "tipo": tipo,
-                    "guion": guion,
-                    "duracion_segundos": max(20, min(50, len(guion.split()) * 3)),
-                })
-            await asyncio.sleep(300)  # Evitar duplicados en la próxima ejecución
-        else:
-            await asyncio.sleep(60)
+        try:
+            ahora = dt.datetime.now(dt.timezone.utc)
+            pendiente = _slot_short_pendiente(ahora)
+            if pendiente and not estado.api_sin_creditos:
+                slot_id, hora_slot = pendiente
+                tipo = "drama" if hora_slot in (12, 23) else "noticia"
+                titulares = ([n["texto"] for n in estado.noticias_crawl]
+                             if tipo == "noticia" else None)
+                # Para "noticia" esperamos a tener titulares reales (el ticker
+                # los carga a los pocos segundos de arrancar) antes de generar,
+                # así el short se basa en hechos y no en contenido inventado.
+                if tipo == "noticia" and not titulares:
+                    log.info("📹 Short de noticia en espera de titulares RSS…")
+                    await asyncio.sleep(120)
+                    continue
+                guion = await generar_short(client, tipo, titulares=titulares)
+                if guion:
+                    _guardar_short(slot_id, {
+                        "id": slot_id,
+                        "timestamp": ahora.isoformat(),
+                        "tipo": tipo,
+                        "guion": guion,
+                        "duracion_segundos": max(20, min(50, len(guion.split()) * 3)),
+                        "fuente_titulares": bool(titulares),
+                    })
+        except Exception as e:
+            log.warning("Generador de shorts: %s", e)
+        await asyncio.sleep(120)
 
 
 async def _generar_todos_episodios():
