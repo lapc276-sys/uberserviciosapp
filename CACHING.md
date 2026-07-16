@@ -216,4 +216,4 @@ Ver logs del caché:
 
 3. **Fuera de sesiones**: Con `SOLO_SESIONES=on`, el canal está COMPLETAMENTE APAGADO entre sesiones reales. Cero gasto en API.
 
-4. **Shorts locales**: Los guiones de shorts se generan, pero subirlos a YouTube requiere configuración manual (no está automatizado aún, para evitar problemas de derechos de autor/contenido).
+4. **Shorts a YouTube**: Los shorts se generan como guion + audio y, si configuras OAuth de YouTube y hay `ffmpeg`, el canal arma un video vertical y lo **sube solo** a YouTube. Ver la sección "Subida automática a YouTube" en el README. Por seguridad se suben como `unlisted` por defecto (cambia `YOUTUBE_PRIVACIDAD=public` cuando revises que salen bien).

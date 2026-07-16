@@ -96,6 +96,50 @@ python3 procesar_shorts.py --listar  # Muestra lista
 
 Ver [CACHING.md](CACHING.md) para detalles técnicos y estimación de ahorros.
 
+### 📤 Subida automática a YouTube
+
+El canal puede **armar un video vertical** (9:16) de cada short — voz + fotos
+de libre uso de Wikimedia rotando como documental — y **subirlo solo** a
+YouTube. Para subir video hace falta OAuth (una API key no basta) y `ffmpeg`
+en el sistema. Si falta cualquiera de los dos, el canal sigue funcionando
+normal y solo avisa en el log; no gasta nada.
+
+**Configuración (una sola vez):**
+
+1. En https://console.cloud.google.com activa **YouTube Data API v3** y crea
+   un **ID de cliente OAuth de tipo "Aplicación de escritorio"**. Copia el
+   Client ID y el Client Secret.
+2. En una máquina con navegador (tu Mac):
+   ```bash
+   pip3 install google-auth-oauthlib google-api-python-client
+   export YOUTUBE_CLIENT_ID="...apps.googleusercontent.com"
+   export YOUTUBE_CLIENT_SECRET="..."
+   python3 autorizar_youtube.py
+   ```
+   Acepta los permisos en el navegador; el script imprime tu
+   `YOUTUBE_REFRESH_TOKEN`.
+3. Guarda estos 3 Secrets en Replit (o variables de entorno):
+   `YOUTUBE_CLIENT_ID`, `YOUTUBE_CLIENT_SECRET`, `YOUTUBE_REFRESH_TOKEN`.
+4. Asegúrate de tener `ffmpeg` disponible (Replit lo trae; en Mac:
+   `brew install ffmpeg`).
+
+Variables opcionales:
+
+| Variable | Default | Qué hace |
+|---|---|---|
+| `YOUTUBE_SUBIR_AUTO` | `on` | `off` desactiva la subida automática |
+| `YOUTUBE_PRIVACIDAD` | `unlisted` | `private`, `unlisted` o `public`. Empieza en `unlisted` para revisar que salgan bien; luego pon `public` |
+| `YOUTUBE_CLIENT_ID` / `YOUTUBE_CLIENT_SECRET` / `YOUTUBE_REFRESH_TOKEN` | — | Credenciales OAuth (obligatorias para subir) |
+
+Cada short subido queda marcado en su JSON con `youtube_id` y `youtube_url`,
+así no se vuelve a subir. Si una subida falla, reintenta hasta 3 veces y luego
+la deja. La cuota gratis de la API alcanza para ~6 subidas/día (el canal hace
+4), así que no se agota.
+
+> ⚠️ Ojo con el contenido: sube solo material propio (guion generado + voz
+> sintética + fotos con licencia libre de Wikimedia Commons). No metas audio
+> ni imágenes con copyright para evitar strikes en tu canal.
+
 ## Backend en Replit
 
 1. Importa este repositorio en Replit (Create Repl → Import from GitHub).

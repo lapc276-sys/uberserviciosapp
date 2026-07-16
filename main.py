@@ -38,6 +38,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 import telemetria
+import youtube_subir
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 log = logging.getLogger("f1tv-backend")
@@ -379,6 +380,7 @@ async def lifespan(app: FastAPI):
               asyncio.create_task(bucle_noticias_crawl()),
               asyncio.create_task(bucle_standings()),
               asyncio.create_task(bucle_shorts()),
+              asyncio.create_task(bucle_youtube()),
               asyncio.create_task(bucle_chat())]
     yield
     for t in tareas:
@@ -2787,6 +2789,124 @@ async def bucle_shorts():
         except Exception as e:
             log.warning("Generador de shorts: %s", e)
         await asyncio.sleep(120)
+
+
+def _titulo_short(short):
+    """Título corto y atractivo para YouTube a partir del guion."""
+    guion = short.get("guion", "").strip()
+    corte = guion[:70]
+    if len(guion) > 70:
+        corte = corte.rsplit(" ", 1)[0] + "…"
+    etiqueta = "F1 Drama" if short.get("tipo") == "drama" else "F1 News"
+    titulo = corte or f"{etiqueta} Short"
+    return f"{titulo} #Shorts #F1"[:100]
+
+
+def _shorts_sin_subir():
+    """Shorts guardados que todavía no se subieron a YouTube."""
+    pendientes = []
+    try:
+        for archivo in sorted(os.listdir("shorts")):
+            if not (archivo.startswith("short_") and archivo.endswith(".json")):
+                continue
+            ruta = f"shorts/{archivo}"
+            try:
+                with open(ruta) as f:
+                    short = json.load(f)
+            except Exception:
+                continue
+            if short.get("youtube_id"):
+                continue
+            if short.get("yt_intentos", 0) >= 3:
+                continue  # dejó de intentar tras 3 fallos
+            pendientes.append((ruta, short))
+    except FileNotFoundError:
+        pass
+    return pendientes
+
+
+async def bucle_youtube():
+    """Arma un video vertical de cada short y lo sube a YouTube.
+
+    Requiere ffmpeg (video) y OAuth de YouTube (subida). Si falta cualquiera
+    de los dos, el bucle avisa una vez y queda inactivo sin gastar nada."""
+    if os.environ.get("YOUTUBE_SUBIR_AUTO", "on").lower() in ("off", "0", ""):
+        return
+    await asyncio.sleep(20)  # dejar que arranque el resto
+
+    avisado = False
+    while True:
+        try:
+            listo = (youtube_subir.ffmpeg_disponible()
+                     and youtube_subir.oauth_configurado())
+            if not listo:
+                if not avisado:
+                    faltan = []
+                    if not youtube_subir.ffmpeg_disponible():
+                        faltan.append("ffmpeg")
+                    if not youtube_subir.oauth_configurado():
+                        faltan.append("OAuth de YouTube "
+                                      "(CLIENT_ID/SECRET/REFRESH_TOKEN)")
+                    log.info("📤 Subida a YouTube inactiva — falta: %s",
+                             ", ".join(faltan))
+                    avisado = True
+                await asyncio.sleep(600)
+                continue
+            avisado = False
+
+            for ruta, short in _shorts_sin_subir():
+                sid = short["id"]
+                # 1) Asegurar audio (MP3)
+                audio_ruta = f"shorts/short_{sid}.mp3"
+                if not os.path.exists(audio_ruta):
+                    audio = await sintetizar("narrador", short.get("guion", ""))
+                    if audio:
+                        with open(audio_ruta, "wb") as f:
+                            f.write(audio)
+                if not os.path.exists(audio_ruta):
+                    log.info("📤 Short %s sin audio — se pospone", sid)
+                    continue
+
+                # 2) Fotos de libre uso
+                tema = short.get("tema") or "Formula 1"
+                fotos = short.get("fotos") or await imagenes_wikimedia(tema)
+
+                # 3) Armar video vertical
+                video_ruta = f"shorts/short_{sid}.mp4"
+                ok = await youtube_subir.armar_video(
+                    audio_ruta, fotos, _titulo_short(short), video_ruta)
+                if not ok:
+                    short["yt_intentos"] = short.get("yt_intentos", 0) + 1
+                    _guardar_short(sid, short)
+                    log.info("📤 No se pudo armar video de %s (intento %d)",
+                             sid, short["yt_intentos"])
+                    continue
+
+                # 4) Subir a YouTube
+                descripcion = (
+                    short.get("guion", "") + "\n\n"
+                    "#F1 #Formula1 #Racing #MotorSport #Shorts\n"
+                    "Contenido generado automáticamente por el canal F1."
+                )
+                tags = ["F1", "Formula1", "Racing", "MotorSport", "Shorts",
+                        short.get("tipo", "news")]
+                res = await youtube_subir.subir_video(
+                    video_ruta, _titulo_short(short), descripcion, tags)
+
+                if res:
+                    short["youtube_id"] = res["id"]
+                    short["youtube_url"] = res["url"]
+                    _guardar_short(sid, short)
+                    with contextlib.suppress(OSError):
+                        os.remove(video_ruta)  # ya subido, liberar disco
+                else:
+                    short["yt_intentos"] = short.get("yt_intentos", 0) + 1
+                    _guardar_short(sid, short)
+
+                await asyncio.sleep(30)  # espaciar subidas (cuota API)
+        except Exception as e:
+            log.warning("Subida a YouTube: %s", e)
+        await asyncio.sleep(300)
 
 
 async def _generar_todos_episodios():

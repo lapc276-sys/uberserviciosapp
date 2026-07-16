@@ -3,6 +3,12 @@ fastapi
 uvicorn[standard]
 anthropic
 
+# Subida automática de shorts a YouTube (opcional; también necesita ffmpeg
+# en el sistema para armar el video vertical)
+google-api-python-client
+google-auth-oauthlib
+google-auth-httplib2
+
 # Script de captura en la Mac (captura_mac.py)
 mss
 pillow
