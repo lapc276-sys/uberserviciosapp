@@ -1937,7 +1937,11 @@ we said he was saving his tyres? Here's the payoff" make it feel human. \
 Never repeat previous lines.
 - Ground EVERYTHING in the provided data. Never invent lap times, \
 positions, gaps or causes that are not in the data. General F1 knowledge \
-(circuit history, how tyres behave) is welcome for quiet moments.
+(circuit history, how tyres behave) is welcome for quiet moments, and so is \
+casual off-track chat between the two about the wider motorsport world — \
+other series (Le Mans, WEC, MotoGP, NASCAR, IndyCar, F2), FIA rules and \
+whether they're fair — as long as it stays factual and leans on the real \
+headlines when they're provided.
 - MATCH THE ENERGY TO THE RACE SITUATION. Safety car or red flag: \
 urgent, focused, explaining what it changes. Crash or retirement: \
 concerned first, analysis second. Battle for the lead: maximum \
@@ -1999,6 +2003,9 @@ def _situacion(eventos):
         return "SAFETY CAR / RED FLAG deployed — urgent, explain the impact"
     if any(p in texto for p in ("YELLOW", "INCIDENT", "ACCIDENT", "CRASH")):
         return "incident on track — concerned first, then analysis"
+    if tele and tele.clima.get("lluvia"):
+        return ("RAIN on track — treacherous, worry about safety and grip, "
+                "wonder aloud about tyre calls and whether everyone's okay")
     if (tele and tele.total_vueltas and tele.vuelta
             and tele.vuelta >= tele.total_vueltas - 3):
         return "FINAL LAPS — building excitement, counting down"
@@ -2025,16 +2032,42 @@ async def narrar_datos(client: anthropic.AsyncAnthropic, eventos):
         if estrategia:
             contexto += (f"\nMEASURED STRATEGY DATA (real, quotable): "
                          f"{estrategia}")
+        clima = estado.tele.clima
+        if clima.get("lluvia"):
+            contexto += ("\nWEATHER: it is RAINING on track — treacherous, "
+                         "low grip, safety a real concern.")
+        elif clima.get("aire") is not None:
+            contexto += (f"\nWEATHER: dry. Air {clima.get('aire')}°C, track "
+                         f"{clima.get('pista')}°C.")
     situacion = _situacion(eventos)
     memoria = "\n".join(estado.diario[-10:]) or "(nothing said yet)"
     if eventos:
         pedido = "NEW EVENTS (from live telemetry):\n" + "\n".join(eventos)
     else:
-        pedido = ("No new events right now. You MAY fill the quiet moment "
-                  "(strategy, circuit history, tyres, a prediction, a stat "
-                  "— without inventing figures), but if the memory shows "
-                  "you've already covered the interesting angles recently, "
-                  "return an empty lineas array and let the race breathe.")
+        titulares = [n["texto"] for n in estado.noticias_crawl[:6]]
+        bloque_news = ("\n".join(f"- {t}" for t in titulares)
+                       if titulares else "(no headlines loaded right now)")
+        pedido = (
+            "No new events on track right now — the race has gone quiet and "
+            "the cars are strung out. Fill the lull NATURALLY, the way real "
+            "commentators do. Pick ONE angle and keep it SHORT:\n"
+            "  • race strategy, tyre life, an undercut window, a prediction "
+            "(never invent numbers);\n"
+            "  • circuit history or a driver storyline;\n"
+            "  • CASUAL OFF-TRACK CHAT between the two, like two friends "
+            "killing time: bring up REAL motorsport news from the headlines "
+            "below — other series (Le Mans, WEC, MotoGP, NASCAR, IndyCar, "
+            "F2), a recent result, a transfer rumour. Open it "
+            "conversationally, e.g. 'Hey, did you catch Le Mans last night?' "
+            "— 'Ohh, that last hour was nerve-wracking...'. Use ONLY facts "
+            "stated in the headlines; never invent results or names;\n"
+            "  • question or debate an F1 / FIA rule or regulation and "
+            "whether it's fair — general knowledge is fine, stay factual.\n"
+            "REAL HEADLINES (today, from the news ticker — you may quote "
+            f"ONLY what's here):\n{bloque_news}\n\n"
+            "If the memory shows you already chatted off-track very recently, "
+            "return to the race or return an empty lineas array and let it "
+            "breathe.")
     response = await client.messages.create(
         model=modelo_actual(),
         max_tokens=500,

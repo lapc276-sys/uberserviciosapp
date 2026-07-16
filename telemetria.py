@@ -281,7 +281,8 @@ class Telemetria:
             return None
         if tipo == "clima":
             self.clima = {"aire": dato.get("air_temperature"),
-                         "pista": dato.get("track_temperature")}
+                         "pista": dato.get("track_temperature"),
+                         "lluvia": bool(dato.get("rainfall"))}
             return None
         if tipo == "vuelta":
             n = dato.get("lap_number") or 0
