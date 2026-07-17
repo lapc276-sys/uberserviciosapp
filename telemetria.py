@@ -17,6 +17,7 @@ darle contexto al narrador.
 import asyncio
 import datetime as dt
 import logging
+import os
 import random
 import time
 
@@ -25,6 +26,40 @@ import httpx
 log = logging.getLogger("telemetria")
 
 BASE = "https://api.openf1.org/v1"
+TOKEN_URL = "https://api.openf1.org/token"
+JOLPICA = "https://api.jolpi.ca/ergast/f1"
+
+# OpenF1 ahora exige cuenta (de pago) para datos en tiempo real; los
+# históricos siguen gratis. Con los Secrets OPENF1_USERNAME/OPENF1_PASSWORD
+# se autentican todas las llamadas. Sin cuenta, se usa el modo gratis y el
+# calendario cae a Jolpica (gratis) si OpenF1 rechaza la petición.
+_token = {"valor": "", "hasta": 0.0}
+
+
+async def _auth_headers(client):
+    """Bearer de OpenF1 si hay cuenta configurada; {} en modo gratis."""
+    usuario = os.environ.get("OPENF1_USERNAME", "")
+    clave = os.environ.get("OPENF1_PASSWORD", "")
+    if not (usuario and clave):
+        return {}
+    ahora = time.time()
+    if _token["valor"] and ahora < _token["hasta"]:
+        return {"Authorization": f"Bearer {_token['valor']}"}
+    try:
+        r = await client.post(TOKEN_URL, data={"username": usuario,
+                                               "password": clave},
+                              timeout=20)
+        r.raise_for_status()
+        d = r.json()
+        _token["valor"] = d.get("access_token", "")
+        _token["hasta"] = ahora + float(d.get("expires_in", 3600) or 3600) - 60
+        if _token["valor"]:
+            log.info("🔑 Autenticado con OpenF1 (token ~1 h)")
+    except Exception as e:
+        log.warning("No se pudo obtener el token de OpenF1 (%s)", e)
+        return {}
+    return ({"Authorization": f"Bearer {_token['valor']}"}
+            if _token["valor"] else {})
 
 
 def _fecha(texto):
@@ -58,20 +93,76 @@ _DURACION = {"Race": 135, "Sprint": 70, "Qualifying": 80,
              "Practice 3": 80}
 
 
+# Sesiones del fin de semana en el calendario de Jolpica (formato Ergast)
+_SESIONES_JOLPICA = [("FirstPractice", "Practice 1"),
+                     ("SecondPractice", "Practice 2"),
+                     ("ThirdPractice", "Practice 3"),
+                     ("SprintQualifying", "Sprint Qualifying"),
+                     ("Sprint", "Sprint"),
+                     ("Qualifying", "Qualifying")]
+
+
+async def _sesiones_jolpica():
+    """Calendario de respaldo (gratis, sin cuenta) desde Jolpica cuando
+    OpenF1 no responde. No trae session_key de OpenF1, así que se usa
+    'latest': durante la sesión en vivo apunta a la sesión en curso."""
+    out = []
+    async with httpx.AsyncClient() as client:
+        r = await client.get(f"{JOLPICA}/current.json",
+                             params={"limit": 100}, timeout=30)
+        r.raise_for_status()
+        carreras = (r.json().get("MRData", {}).get("RaceTable", {})
+                    .get("Races", []))
+    for c in carreras:
+        circ = c.get("Circuit", {})
+        pais = circ.get("Location", {}).get("country", "?")
+        circuito = circ.get("circuitName", "?")
+        eventos = [(nombre, c.get(clave)) for clave, nombre in
+                   _SESIONES_JOLPICA if c.get(clave, {}).get("date")]
+        if c.get("date"):
+            eventos.append(("Race", {"date": c["date"],
+                                     "time": c.get("time") or "12:00:00Z"}))
+        for nombre, ev in eventos:
+            hora = ev.get("time") or "12:00:00Z"
+            try:
+                inicio = dt.datetime.fromisoformat(
+                    f"{ev['date']}T{hora}".replace("Z", "+00:00"))
+            except ValueError:
+                continue
+            dur = _DURACION.get(nombre, 80)
+            out.append({"session_key": "latest", "sesion": nombre,
+                        "pais": pais, "circuito": circuito, "inicio": inicio,
+                        "fin": inicio + dt.timedelta(minutes=dur)})
+    out.sort(key=lambda s: s["inicio"])
+    return out
+
+
 async def sesiones_programables():
     """Todas las sesiones del año con inicio/fin (UTC) y su clave, para
     que el director sepa cuándo poner cada carrera al aire. Datos reales;
-    lista vacía si falla. Comparar en UTC hace el cambio de hora (DST)
-    automáticamente correcto."""
+    si OpenF1 no responde (ahora exige cuenta para tiempo real), cae al
+    calendario gratis de Jolpica. Lista vacía solo si fallan ambos."""
     ahora = dt.datetime.now(dt.timezone.utc)
     out = []
+    sesiones = []
     async with httpx.AsyncClient() as client:
         try:
             r = await client.get(f"{BASE}/sessions",
-                                 params={"year": ahora.year}, timeout=30)
+                                 params={"year": ahora.year}, timeout=30,
+                                 headers=await _auth_headers(client))
             r.raise_for_status()
             sesiones = r.json()
-        except Exception:
+        except Exception as e:
+            log.info("OpenF1 sin calendario (%s) — probando Jolpica", e)
+    if not sesiones:
+        try:
+            out = await _sesiones_jolpica()
+            if out:
+                log.info("📅 Calendario cargado desde Jolpica (respaldo "
+                         "gratis, %d sesiones)", len(out))
+            return out
+        except Exception as e:
+            log.warning("Jolpica tampoco respondió (%s)", e)
             return []
     for s in sesiones:
         if not s.get("date_start"):
@@ -92,21 +183,33 @@ async def sesiones_programables():
 
 async def proximas_sesiones(n=5):
     """Próximas sesiones de F1 (libres, clasificación, carrera) desde
-    OpenF1. Lista real y verificable; vacía si no hay datos disponibles
-    — nunca se inventa una fecha."""
+    OpenF1, con respaldo gratis en Jolpica. Lista real y verificable;
+    vacía si no hay datos — nunca se inventa una fecha."""
     ahora = dt.datetime.now(dt.timezone.utc)
+    sesiones = []
     async with httpx.AsyncClient() as client:
         try:
             r = await client.get(f"{BASE}/sessions",
-                                 params={"year": ahora.year}, timeout=30)
+                                 params={"year": ahora.year}, timeout=30,
+                                 headers=await _auth_headers(client))
             r.raise_for_status()
             sesiones = r.json()
         except Exception:
-            return []
+            pass
     futuras = [s for s in sesiones
               if s.get("date_start") and _fecha(s["date_start"]) > ahora]
     futuras.sort(key=lambda s: s["date_start"])
-    return futuras[:n]
+    if futuras:
+        return futuras[:n]
+    # Respaldo: mismo formato que OpenF1, construido desde Jolpica
+    try:
+        todas = await _sesiones_jolpica()
+    except Exception:
+        return []
+    return [{"country_name": s["pais"], "session_name": s["sesion"],
+             "circuit_short_name": s["circuito"],
+             "date_start": s["inicio"].isoformat()}
+            for s in todas if s["inicio"] > ahora][:n]
 
 
 async def carreras_clasicas(n=15):
@@ -120,7 +223,8 @@ async def carreras_clasicas(n=15):
             try:
                 r = await client.get(f"{BASE}/sessions",
                                      params={"session_type": "Race",
-                                            "year": año}, timeout=30)
+                                            "year": año}, timeout=30,
+                                     headers=await _auth_headers(client))
                 r.raise_for_status()
                 for s in r.json():
                     if (s.get("session_name") == "Race"
@@ -159,9 +263,16 @@ class Telemetria:
     # ---------- descarga ----------
 
     async def _get(self, client, path, **params):
-        """GET con reintentos: la API gratuita de OpenF1 limita el ritmo."""
+        """GET con reintentos: la API gratuita de OpenF1 limita el ritmo.
+        Si hay cuenta de OpenF1 (Secrets), va autenticado."""
         for intento in range(6):
-            r = await client.get(BASE + path, params=params, timeout=60)
+            r = await client.get(BASE + path, params=params, timeout=60,
+                                 headers=await _auth_headers(client))
+            if r.status_code == 401:
+                log.warning("OpenF1 rechazó la petición (%s): los datos en "
+                            "tiempo real ahora requieren cuenta de pago "
+                            "(Secrets OPENF1_USERNAME/OPENF1_PASSWORD)", path)
+                r.raise_for_status()
             if r.status_code != 429:
                 r.raise_for_status()
                 return r.json()
