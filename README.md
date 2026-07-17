@@ -131,6 +131,7 @@ Variables opcionales:
 | `YOUTUBE_PRIVACIDAD` | `public` | `private`, `unlisted` o `public` |
 | `YOUTUBE_CLIENT_ID` / `YOUTUBE_CLIENT_SECRET` / `YOUTUBE_REFRESH_TOKEN` | — | Credenciales OAuth (obligatorias para subir) |
 | `VOD_SESIONES` | `on` | Al terminar cada sesión en vivo sube un VOD 16:9 con NUESTRA narración (voz del dúo + fotos libres — sin video de F1TV). `off` lo apaga |
+| `PANEL_CLAVE` | — | **Recomendado**: clave del panel. Con esto, los botones de control (cambiar show, OFF AIR, calidad, chat) y la generación de audio exigen la clave — sin ella, cualquiera con tu URL pública podría manejar el canal o gastarte créditos. El panel te la pide una sola vez |
 | `YOUTUBE_CHANNEL_ID` | — | ID de tu canal (empieza con `UC...`, en YouTube → Configuración → Cuenta avanzada). Con esto el chat se conecta SOLO al detectar tu directo durante las sesiones — sin pegar URL en el panel |
 
 Cada short subido queda marcado en su JSON con `youtube_id` y `youtube_url`,
