@@ -2768,32 +2768,44 @@ async def segmento_documental(client: anthropic.AsyncAnthropic, tipo):
     prog = PROGRAMAS.get(tipo)
     if not prog:
         return []
-    objetivo_palabras = DURACION_EPISODIO_MIN * PALABRAS_POR_MINUTO
     ep = estado.episodio
-    es_nuevo = not ep or ep["tipo"] != tipo or ep["palabras"] >= objetivo_palabras
+    # Un episodio se agota cuando se emitió su último capítulo — la vieja
+    # comparación por palabras marcaba "nuevo" SIEMPRE con episodios
+    # cacheados (llegan con todas sus palabras) y repetía el capítulo uno
+    # en bucle infinito.
+    caps_previos = (ep.get("_episodio_cache", {}).get("capitulos", [])
+                    if ep else [])
+    agotado = bool(ep) and ep.get("capitulo", 0) + 1 >= len(caps_previos)
+    es_nuevo = not ep or ep.get("tipo") != tipo or agotado
 
     if es_nuevo:
-        # Intentar cargar episodio desde caché
-        ep_cache = _cargar_episodio_cache(tipo)
+        # Elegir un episodio cacheado DISTINTO al recién emitido; si no
+        # hay otro, generar uno nuevo (la biblioteca crece y no se repite
+        # el mismo episodio dos veces seguidas)
+        evitar = ep.get("titulo") if ep else None
+        ep_cache = _cargar_episodio_cache(tipo, evitar_titulo=evitar)
         if ep_cache:
-            ep = {"tipo": tipo, "capitulo": 0, "palabras": ep_cache.get("palabras", 0),
-                  "titulo": ep_cache.get("titulo"),
-                  "_episodio_cache": ep_cache}
             log.info("📚 Episodio de %s cacheado: %s (%d capitulos)",
-                     tipo, ep.get("titulo"), len(ep_cache.get("capitulos", [])))
+                     tipo, ep_cache.get("titulo"),
+                     len(ep_cache.get("capitulos", [])))
         else:
-            # Generar episodio COMPLETO y guardarlo en caché
             ep_completo = await _generar_episodio_completo(client, tipo, prog)
-            if not ep_completo or not ep_completo.get("capitulos"):
-                return []
-            ep_id = _id_episodio_completo(tipo, ep_completo["titulo"])
-            _guardar_episodio_cache(ep_id, ep_completo)
-            log.info("📚 Episodio nuevo de %s generado y cacheado: %s "
-                     "(%d capitulos)", tipo, ep_completo["titulo"],
-                     len(ep_completo.get("capitulos", [])))
-            ep = {"tipo": tipo, "capitulo": 0, "palabras": ep_completo.get("palabras", 0),
-                  "titulo": ep_completo.get("titulo"),
-                  "_episodio_cache": ep_completo}
+            if ep_completo and ep_completo.get("capitulos"):
+                ep_id = _id_episodio_completo(tipo, ep_completo["titulo"])
+                _guardar_episodio_cache(ep_id, ep_completo)
+                log.info("📚 Episodio nuevo de %s generado y cacheado: %s "
+                         "(%d capitulos)", tipo, ep_completo["titulo"],
+                         len(ep_completo.get("capitulos", [])))
+                ep_cache = ep_completo
+            else:
+                # Sin forma de generar (¿créditos/red?): repetir lo que haya
+                ep_cache = _cargar_episodio_cache(tipo)
+                if not ep_cache:
+                    return []
+        ep = {"tipo": tipo, "capitulo": 0,
+              "palabras": ep_cache.get("palabras", 0),
+              "titulo": ep_cache.get("titulo"),
+              "_episodio_cache": ep_cache}
     else:
         ep["capitulo"] += 1
 
@@ -2845,22 +2857,30 @@ def _id_episodio_completo(tipo, titulo):
     return hashlib.md5(s.encode()).hexdigest()[:12]
 
 
-def _cargar_episodio_cache(tipo):
-    """Carga un episodio cacheado del tipo especificado."""
+def _cargar_episodio_cache(tipo, evitar_titulo=None):
+    """Elige un episodio cacheado del tipo pedido, AL AZAR entre los
+    disponibles y evitando el recién emitido (`evitar_titulo`) si hay
+    más de uno. Devuelve None si no hay ninguno distinto (para que el
+    llamador genere uno nuevo)."""
+    candidatos = []
     try:
-        archivos = os.listdir("episodes")
-        for archivo in archivos:
+        for archivo in os.listdir("episodes"):
             if archivo.startswith("ep_") and archivo.endswith(".json"):
                 try:
                     with open(f"episodes/{archivo}", "r") as f:
                         ep = json.load(f)
-                        if ep.get("tipo") == tipo:
-                            return ep
+                    if ep.get("tipo") == tipo:
+                        candidatos.append(ep)
                 except Exception:
                     pass
     except Exception:
         pass
-    return None
+    if not candidatos:
+        return None
+    frescos = [e for e in candidatos if e.get("titulo") != evitar_titulo]
+    if evitar_titulo is not None and not frescos:
+        return None   # solo existe el que acabamos de emitir → generar otro
+    return random.choice(frescos or candidatos)
 
 
 def poner_al_aire(tipo):
@@ -3883,8 +3903,17 @@ async def bucle_programacion():
                     log.info("🎬 Cerca de una sesión — arranca la "
                              "programación de documentales")
                 en_standby = False
-                minutos = await _rotar_show(playlist[idx % len(playlist)])
-                log.info("🎬 Ahora al aire: %s", estado.programa["titulo"])
+                try:
+                    minutos = await _rotar_show(playlist[idx % len(playlist)])
+                    log.info("🎬 Ahora al aire: %s",
+                             (estado.programa or {}).get("titulo", "?"))
+                except Exception as e:
+                    # Una falla al rotar NO debe congelar la parrilla
+                    log.error("Parrilla: no pude rotar el show (%s) — "
+                              "reintento en 60 s", e)
+                    prox_rotacion = time.time() + 60
+                    await asyncio.sleep(INTERVALO_PARRILLA)
+                    continue
                 idx += 1
                 # Guardar el título del PRÓXIMO show (para el "up next")
                 estado.proximo_programa = _titulo_show(playlist[idx % len(playlist)])
@@ -4429,10 +4458,18 @@ async def bucle_narracion():
             else:
                 log.error("Error de la API de Anthropic: %s", e)
             continue
+        except Exception as e:
+            # Cualquier otra falla NO debe matar la narración: se anota y
+            # se sigue en el próximo ciclo
+            log.error("Narración (se recupera sola): %s", e)
+            continue
         # Si llegamos aquí con texto, la API respondió bien → hay créditos
         if texto:
             estado.api_sin_creditos = False
-            await difundir(texto)
+            try:
+                await difundir(texto)
+            except Exception as e:
+                log.error("Difusión falló (%s) — se sigue", e)
 
 
 def _es_error_creditos(e):
