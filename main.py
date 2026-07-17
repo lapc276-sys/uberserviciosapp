@@ -1160,11 +1160,10 @@ async def visor():
                border-radius: 10px; backdrop-filter: blur(6px);
                box-shadow: 0 10px 30px rgba(0,0,0,.45); }
   body.programa #standings, body.standby #standings { display: block; }
-  /* Durante la carrera el cuadro va arriba en la columna central (vacía),
-     para no pisar el leaderboard de la izquierda */
-  body.carrera #standings { display: block; left: 50%;
-                            transform: translateX(-50%); top: 72px;
-                            bottom: auto; width: 300px; }
+  /* Durante la carrera el cuadro va a la esquina inferior derecha (bajo
+     Race Intelligence, sobre el ticker) — así no tapa el mapa del centro */
+  body.carrera #standings { display: block; left: auto; right: 22px;
+                            bottom: 78px; top: auto; width: 280px; }
   #standings .st-h { font-size: .6rem; letter-spacing: .18em;
                      color: var(--accent); text-transform: uppercase;
                      font-weight: 800; margin-bottom: 8px; }
