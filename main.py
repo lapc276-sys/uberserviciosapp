@@ -3127,6 +3127,25 @@ async def bucle_youtube():
                          "— los shorts se subirán solos como %s",
                          os.environ.get("YOUTUBE_PRIVACIDAD", "public"))
                 activo_avisado = True
+                # Amnistía: los shorts que se rindieron por fallas de un
+                # arranque anterior (p. ej. faltaba la librería de Google)
+                # recuperan sus intentos ahora que todo está listo
+                try:
+                    for archivo in os.listdir("shorts"):
+                        if not (archivo.startswith("short_")
+                                and archivo.endswith(".json")):
+                            continue
+                        ruta = f"shorts/{archivo}"
+                        with open(ruta) as f:
+                            s = json.load(f)
+                        if not s.get("youtube_id") and s.get("yt_intentos"):
+                            s["yt_intentos"] = 0
+                            with open(ruta, "w") as f:
+                                json.dump(s, f, indent=2)
+                            log.info("📤 Short %s recupera sus intentos "
+                                     "de subida", s.get("id"))
+                except Exception:
+                    pass
 
             for ruta, short in _shorts_sin_subir():
                 sid = short["id"]
@@ -3142,6 +3161,8 @@ async def bucle_youtube():
                     continue
 
                 # 2) Fotos de libre uso
+                log.info("📤 Preparando short %s para YouTube "
+                         "(video + subida)…", sid)
                 tema = short.get("tema") or "Formula 1"
                 fotos = short.get("fotos") or await imagenes_wikimedia(tema)
 
