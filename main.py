@@ -2868,6 +2868,7 @@ async def bucle_youtube():
     await asyncio.sleep(20)  # dejar que arranque el resto
 
     avisado = False
+    activo_avisado = False
     while True:
         try:
             listo = (youtube_subir.ffmpeg_disponible()
@@ -2883,9 +2884,15 @@ async def bucle_youtube():
                     log.info("📤 Subida a YouTube inactiva — falta: %s",
                              ", ".join(faltan))
                     avisado = True
+                activo_avisado = False
                 await asyncio.sleep(600)
                 continue
             avisado = False
+            if not activo_avisado:
+                log.info("📤 Subida a YouTube ACTIVA (ffmpeg + OAuth listos) "
+                         "— los shorts se subirán solos como %s",
+                         os.environ.get("YOUTUBE_PRIVACIDAD", "unlisted"))
+                activo_avisado = True
 
             for ruta, short in _shorts_sin_subir():
                 sid = short["id"]
