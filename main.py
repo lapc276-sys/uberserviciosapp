@@ -1453,8 +1453,8 @@ function pintarMapa(d) {
   // Mapa GRANDE en el centro cuando no hay video de la Mac; si hay video,
   // el mapa chico va en la columna derecha
   const grande = !d.hay_frame;
-  caja.style.display = grande ? '' : 'none';
-  panel.style.display = grande ? 'none' : '';
+  caja.style.display = grande ? 'block' : 'none';
+  panel.style.display = grande ? 'none' : 'block';
   document.getElementById('mapa-titulo').textContent =
     ((d.circuito || 'TRACK') + ' — LIVE TRACK MAP').toUpperCase();
   // Acumular el trazado solo cuando llegan datos nuevos del servidor
