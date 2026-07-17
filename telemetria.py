@@ -489,10 +489,12 @@ class Telemetria:
         return None
 
     def tabla(self):
-        """Leaderboard: [{pos, acr, nombre, color, gap, pelea, neumatico}]."""
+        """Leaderboard completo (los 20): [{pos, acr, nombre, color, gap,
+        mejor, pelea, neumatico}]. `mejor` es la mejor vuelta personal —
+        el dato clave en libres/clasificación."""
         orden = sorted(self.posiciones.items(), key=lambda kv: kv[1])
         filas = []
-        for n, pos in orden[:10]:
+        for n, pos in orden[:20]:
             p = self.pilotos.get(n, {})
             gap = self.gaps.get(n)
             if pos == 1 or gap is None:
@@ -504,11 +506,18 @@ class Telemetria:
             pelea = (pos > 1 and isinstance(gap, (int, float))
                      and gap < 1.0)
             neu = self.neumaticos.get(n, {})
+            durs = [v["dur"] for v in (self._vueltas.get(n) or [])
+                    if v.get("dur")]
+            mejor = ""
+            if durs:
+                d = min(durs)
+                mejor = f"{int(d // 60)}:{d % 60:06.3f}"
             filas.append({"pos": pos,
                           "acr": p.get("acronimo", str(n)),
                           "nombre": self._nombre(n),
                           "color": p.get("color", ""),
                           "gap": gap_txt,
+                          "mejor": mejor,
                           "pelea": pelea,
                           "neumatico": neu.get("compuesto", ""),
                           "vueltas_neumatico": neu.get("vueltas", 0)})

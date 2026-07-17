@@ -1282,11 +1282,13 @@ async def visor():
              letter-spacing: .04em; display: none; }
   /* Leaderboard */
   #mapa { width: 100%; height: auto; display: block; }
-  #board .row { display: flex; align-items: center; gap: 8px;
-                padding: 6px 4px; border-bottom: 1px solid var(--line);
-                font-variant-numeric: tabular-nums; }
+  #board .row { display: flex; align-items: center; gap: 7px;
+                padding: 3px 4px; border-bottom: 1px solid var(--line);
+                font-variant-numeric: tabular-nums; font-size: .82rem; }
   #board .row:last-child { border-bottom: none; }
-  .p { color: var(--dim); width: 1.4em; font-size: .85rem; }
+  .tiempo { margin-left: auto; font-weight: 600; font-size: .74rem;
+            font-variant-numeric: tabular-nums; color: var(--txt); }
+  .p { color: var(--dim); width: 1.4em; font-size: .8rem; }
   .chip { width: 4px; height: 15px; border-radius: 2px;
           background: var(--line); flex: none; }
   .acr { font-weight: 700; letter-spacing: .06em; }
@@ -1296,7 +1298,8 @@ async def visor():
   .tyre.S { color: var(--down); border-color: var(--down); }
   .tyre.M { color: var(--amber); border-color: var(--amber); }
   .tyre.H { color: var(--txt); border-color: var(--dim); }
-  .gap { margin-left: auto; color: var(--dim); font-size: .78rem; }
+  .gap { color: var(--dim); font-size: .72rem; min-width: 3.6em;
+         text-align: right; }
   .delta { font-size: .8rem; width: 1.1em; text-align: right;
            transition: opacity .6s; opacity: 0; }
   .delta.up   { color: var(--up); opacity: 1; }
@@ -1313,6 +1316,15 @@ async def visor():
   #centro { display: flex; flex-direction: column; gap: 14px; }
   #framebox { display: none; }
   #framebox img { width: 100%; border-radius: 12px; display: block; }
+  /* Mapa grande del circuito (protagonista cuando no hay video) */
+  #mapabox { display: none; position: relative; border-radius: 16px;
+             border: 1px solid var(--line); padding: 8px;
+             background: radial-gradient(ellipse at 50% 40%,
+                         #131926 0%, #0B0D12 75%); }
+  #mapabox #mapa-grande { width: 100%; height: auto; display: block; }
+  #mapa-titulo { position: absolute; top: 16px; left: 20px;
+                 font-weight: 700; letter-spacing: .14em;
+                 font-size: .82rem; color: var(--dim); z-index: 2; }
   /* Subtítulo estilo TV: SOLO la línea que se está narrando, abajo al
      centro; cambia cuando el audio pasa a la siguiente línea */
   #dialogo { position: fixed; left: 50%; transform: translateX(-50%);
@@ -1402,6 +1414,10 @@ async def visor():
   <section class="panel" id="panel-board"><h3 id="board-title">Leaderboard</h3><div id="board"></div></section>
   <section id="centro">
     <div id="framebox"><img id="frame" alt=""></div>
+    <div id="mapabox">
+      <div id="mapa-titulo">TRACK MAP</div>
+      <canvas id="mapa-grande" width="980" height="600"></canvas>
+    </div>
   </section>
   <div id="right-col">
     <section class="panel" id="panel-mapa" style="display:none"><h3>Track Map</h3><canvas id="mapa" width="300" height="200"></canvas></section>
@@ -1425,36 +1441,72 @@ let proxSesionIso = null, standingsData = null, standingsVista = 0;
 // Mapa del circuito: el trazado se dibuja solo acumulando las posiciones
 // (x, y) reales que van pasando los coches — a los pocos minutos la línea
 // del circuito queda completa
-let trazoMapa = [];
+let trazoMapa = [], mapaSig = '', mapaSuave = {};
 function pintarMapa(d) {
   const panel = document.getElementById('panel-mapa');
-  if (!panel) return;
+  const caja = document.getElementById('mapabox');
+  if (!panel || !caja) return;
   const coches = d.en_vivo ? (d.mapa || []) : [];
-  if (!coches.length) { panel.style.display = 'none'; return; }
-  panel.style.display = '';
-  for (const c of coches) trazoMapa.push([c.x, c.y]);
-  if (trazoMapa.length > 12000) trazoMapa = trazoMapa.slice(-9000);
-  const cv = document.getElementById('mapa'), ctx = cv.getContext('2d');
+  if (!coches.length) {
+    panel.style.display = 'none'; caja.style.display = 'none'; return;
+  }
+  // Mapa GRANDE en el centro cuando no hay video de la Mac; si hay video,
+  // el mapa chico va en la columna derecha
+  const grande = !d.hay_frame;
+  caja.style.display = grande ? '' : 'none';
+  panel.style.display = grande ? 'none' : '';
+  document.getElementById('mapa-titulo').textContent =
+    ((d.circuito || 'TRACK') + ' — LIVE TRACK MAP').toUpperCase();
+  // Acumular el trazado solo cuando llegan datos nuevos del servidor
+  const sig = coches.map(c => c.n + ':' + c.x).join('|');
+  if (sig !== mapaSig) {
+    mapaSig = sig;
+    for (const c of coches) trazoMapa.push([c.x, c.y]);
+    if (trazoMapa.length > 14000) trazoMapa = trazoMapa.slice(-11000);
+  }
+  // Interpolación: cada repintado (1 s) los puntos avanzan hacia su
+  // objetivo — movimiento fluido aunque los datos lleguen cada pocos seg
+  for (const c of coches) {
+    const p = mapaSuave[c.n];
+    if (!p) { mapaSuave[c.n] = {x: c.x, y: c.y}; }
+    else { p.x += (c.x - p.x) * 0.45; p.y += (c.y - p.y) * 0.45; }
+  }
+  const cv = document.getElementById(grande ? 'mapa-grande' : 'mapa');
+  const ctx = cv.getContext('2d');
   let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
   for (const [x, y] of trazoMapa) {
     if (x < minX) minX = x; if (x > maxX) maxX = x;
     if (y < minY) minY = y; if (y > maxY) maxY = y;
   }
-  const pad = 16, w = cv.width, h = cv.height;
+  const pad = grande ? 46 : 16, w = cv.width, h = cv.height;
   const s = Math.min((w - 2 * pad) / Math.max(1, maxX - minX),
                      (h - 2 * pad) / Math.max(1, maxY - minY));
   const px = x => pad + (x - minX) * s, py = y => h - pad - (y - minY) * s;
   ctx.clearRect(0, 0, w, h);
-  ctx.fillStyle = 'rgba(255,255,255,.18)';
-  for (const [x, y] of trazoMapa) ctx.fillRect(px(x) - 1, py(y) - 1, 2, 2);
-  ctx.font = '600 9px Inter,sans-serif';
+  // Trazado estilo carretera: banda oscura ancha + línea clara encima
+  const rBase = grande ? 5 : 2, rLinea = grande ? 2 : 1;
+  ctx.fillStyle = 'rgba(60,70,90,.55)';
+  for (const [x, y] of trazoMapa)
+    ctx.fillRect(px(x) - rBase, py(y) - rBase, rBase * 2, rBase * 2);
+  ctx.fillStyle = 'rgba(210,220,240,.5)';
+  for (const [x, y] of trazoMapa)
+    ctx.fillRect(px(x) - rLinea, py(y) - rLinea, rLinea * 2, rLinea * 2);
+  // Coches: punto con color de equipo, anillo blanco y acrónimo
+  const rCoche = grande ? 8 : 4;
+  ctx.font = (grande ? '700 13px' : '600 9px') + ' Inter,sans-serif';
   for (const c of coches) {
-    ctx.beginPath(); ctx.arc(px(c.x), py(c.y), 4, 0, 7);
+    const p = mapaSuave[c.n] || c;
+    const X = px(p.x), Y = py(p.y);
+    ctx.shadowColor = c.c ? ('#' + c.c) : '#E10600';
+    ctx.shadowBlur = grande ? 14 : 5;
+    ctx.beginPath(); ctx.arc(X, Y, rCoche, 0, 7);
     ctx.fillStyle = c.c ? ('#' + c.c) : '#E10600';
     ctx.fill();
-    ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(0,0,0,.7)'; ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.lineWidth = grande ? 2 : 1;
+    ctx.strokeStyle = 'rgba(255,255,255,.9)'; ctx.stroke();
     ctx.fillStyle = '#fff';
-    ctx.fillText(c.a || '', px(c.x) + 6, py(c.y) + 3);
+    ctx.fillText(c.a || '', X + rCoche + 4, Y + 4);
   }
 }
 function pintarNextUp(d) {
@@ -1838,6 +1890,7 @@ async function tick() {
       row.innerHTML = '<span class="p">' + f.pos + '</span>' +
         '<span class="chip" style="background:' + color + '"></span>' +
         '<span class="acr">' + f.acr + '</span>' + tyre +
+        '<span class="tiempo">' + (f.mejor || '') + '</span>' +
         '<span class="gap">' + (f.gap || '') + '</span>' +
         '<span class="delta ' + cls + '">' + flecha + '</span>';
       board.appendChild(row);
@@ -3221,7 +3274,7 @@ async def bucle_mapa():
     if os.environ.get("MAPA_PISTA", "on").lower() in ("off", "0", ""):
         return
     while True:
-        await asyncio.sleep(5)
+        await asyncio.sleep(2)
         t = estado.tele
         if t is None:
             if estado.mapa:
