@@ -390,6 +390,7 @@ async def lifespan(app: FastAPI):
               asyncio.create_task(bucle_shorts()),
               asyncio.create_task(bucle_youtube()),
               asyncio.create_task(bucle_vod()),
+              asyncio.create_task(bucle_mapa()),
               asyncio.create_task(bucle_chat())]
     yield
     for t in tareas:
@@ -453,6 +454,7 @@ class Estado:
         self.ultimo_cta: float = 0.0     # última invitación a suscribirse
         self.sesion_meta: dict = {}      # sesión al aire (nombre/país) aunque
                                          # la telemetría no esté disponible
+        self.mapa: list = []             # coches en pista (x, y) para el mapa
         self.modo_calidad: str = "auto"    # auto | max | ahorro (botón del panel)
         self.off_air_manual: bool = False  # botón OFF AIR: silencio total, sin gasto
         self.segmento_id: int = 0      # id del último segmento con audio
@@ -994,6 +996,7 @@ async def apex():
         "standings": {"pilotos": estado.standings_pilotos[:10],
                       "equipos": estado.standings_equipos[:10],
                       "otros": estado.standings_otros},
+        "mapa": estado.mapa,
     })
 
 
@@ -1278,6 +1281,7 @@ async def visor():
              font-size: .62rem; color: var(--dim); opacity: .7;
              letter-spacing: .04em; display: none; }
   /* Leaderboard */
+  #mapa { width: 100%; height: auto; display: block; }
   #board .row { display: flex; align-items: center; gap: 8px;
                 padding: 6px 4px; border-bottom: 1px solid var(--line);
                 font-variant-numeric: tabular-nums; }
@@ -1400,6 +1404,7 @@ async def visor():
     <div id="framebox"><img id="frame" alt=""></div>
   </section>
   <div id="right-col">
+    <section class="panel" id="panel-mapa" style="display:none"><h3>Track Map</h3><canvas id="mapa" width="300" height="200"></canvas></section>
     <section class="panel" id="panel-incidentes"><h3>Race Control</h3><div id="incidentes"></div></section>
     <section class="panel"><h3>Race Intelligence</h3><div id="intel"></div><div id="pitloss"></div></section>
   </div>
@@ -1417,6 +1422,41 @@ let reproduciendo = false, pendiente = null, amb = null;
 let alertas = [], alertasSig = '', ultimoStandbyIso = null;
 // "Coming up" + clasificaciones
 let proxSesionIso = null, standingsData = null, standingsVista = 0;
+// Mapa del circuito: el trazado se dibuja solo acumulando las posiciones
+// (x, y) reales que van pasando los coches — a los pocos minutos la línea
+// del circuito queda completa
+let trazoMapa = [];
+function pintarMapa(d) {
+  const panel = document.getElementById('panel-mapa');
+  if (!panel) return;
+  const coches = d.en_vivo ? (d.mapa || []) : [];
+  if (!coches.length) { panel.style.display = 'none'; return; }
+  panel.style.display = '';
+  for (const c of coches) trazoMapa.push([c.x, c.y]);
+  if (trazoMapa.length > 12000) trazoMapa = trazoMapa.slice(-9000);
+  const cv = document.getElementById('mapa'), ctx = cv.getContext('2d');
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const [x, y] of trazoMapa) {
+    if (x < minX) minX = x; if (x > maxX) maxX = x;
+    if (y < minY) minY = y; if (y > maxY) maxY = y;
+  }
+  const pad = 16, w = cv.width, h = cv.height;
+  const s = Math.min((w - 2 * pad) / Math.max(1, maxX - minX),
+                     (h - 2 * pad) / Math.max(1, maxY - minY));
+  const px = x => pad + (x - minX) * s, py = y => h - pad - (y - minY) * s;
+  ctx.clearRect(0, 0, w, h);
+  ctx.fillStyle = 'rgba(255,255,255,.18)';
+  for (const [x, y] of trazoMapa) ctx.fillRect(px(x) - 1, py(y) - 1, 2, 2);
+  ctx.font = '600 9px Inter,sans-serif';
+  for (const c of coches) {
+    ctx.beginPath(); ctx.arc(px(c.x), py(c.y), 4, 0, 7);
+    ctx.fillStyle = c.c ? ('#' + c.c) : '#E10600';
+    ctx.fill();
+    ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(0,0,0,.7)'; ctx.stroke();
+    ctx.fillStyle = '#fff';
+    ctx.fillText(c.a || '', px(c.x) + 6, py(c.y) + 3);
+  }
+}
 function pintarNextUp(d) {
   const ps = d.proxima_sesion;
   proxSesionIso = ps ? ps.inicia : null;
@@ -1824,6 +1864,7 @@ async function tick() {
     boardTitle.textContent = 'Leaderboard';
     board.innerHTML = '<div class="vacio">No live session</div>';
   }
+  pintarMapa(d);
   // Race Intelligence: duelos con puntaje y su porqué (nunca un número
   // sin explicación — regla de oro de métricas honestas)
   const intel = document.getElementById('intel');
@@ -3170,6 +3211,32 @@ async def _vod_procesar(ruta):
     with open(meta_ruta, "w") as f:
         json.dump(meta, f)
     return False
+
+
+async def bucle_mapa():
+    """Mapa del circuito en pantalla: posición (x, y) de cada coche desde
+    OpenF1 /location, al ritmo del reloj del replay. Solo corre durante
+    sesiones con telemetría; ~1 consulta cada 5 s (dentro del límite del
+    plan). MAPA_PISTA=off lo apaga."""
+    if os.environ.get("MAPA_PISTA", "on").lower() in ("off", "0", ""):
+        return
+    while True:
+        await asyncio.sleep(5)
+        t = estado.tele
+        if t is None:
+            if estado.mapa:
+                estado.mapa = []
+            continue
+        try:
+            pos = await t.posiciones_pista()
+        except Exception:
+            continue
+        if pos:
+            estado.mapa = [
+                {"n": n, "x": p["x"], "y": p["y"],
+                 "a": t.pilotos.get(n, {}).get("acronimo", str(n)),
+                 "c": t.pilotos.get(n, {}).get("color", "")}
+                for n, p in pos.items()]
 
 
 async def bucle_vod():

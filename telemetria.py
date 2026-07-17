@@ -259,6 +259,7 @@ class Telemetria:
         self._pits = []           # [{"numero", "vuelta"}] paradas ya ocurridas
         # timeline: lista de (fecha, tipo, dato) ordenada por fecha
         self._timeline = []
+        self.fecha_actual = None  # reloj del replay (avanza en correr)
 
     # ---------- descarga ----------
 
@@ -366,6 +367,31 @@ class Telemetria:
             if pasadas:
                 return pasadas[-1]
         raise RuntimeError("no se encontró ninguna carrera pasada en OpenF1")
+
+    async def posiciones_pista(self):
+        """Última posición (x, y) de cada coche alrededor del reloj del
+        replay — para pintar el mapa del circuito. {} si no hay datos."""
+        if not (self.fecha_actual and self.sesion.get("session_key")):
+            return {}
+        sk = self.sesion["session_key"]
+        desde = (self.fecha_actual
+                 - dt.timedelta(seconds=20)).isoformat()
+        hasta = self.fecha_actual.isoformat()
+        salida = {}
+        try:
+            async with httpx.AsyncClient() as client:
+                url = (f"{BASE}/location?session_key={sk}"
+                       f"&date>{desde}&date<{hasta}")
+                r = await client.get(url, timeout=15,
+                                     headers=await _auth_headers(client))
+                r.raise_for_status()
+                for p in r.json():  # ordenado por fecha: la última gana
+                    n = p.get("driver_number")
+                    if n and p.get("x") is not None:
+                        salida[n] = {"x": p["x"], "y": p["y"]}
+        except Exception as e:
+            log.info("Mapa de pista sin datos (%s)", e)
+        return salida
 
     # ---------- estado / contexto ----------
 
@@ -723,6 +749,7 @@ class Telemetria:
             espera = objetivo - (time.monotonic() - inicio_real)
             if espera > 0:
                 await asyncio.sleep(espera)
+            self.fecha_actual = fecha   # reloj del replay (para el mapa)
             texto = self._procesar(tipo, dato)
             if texto:
                 al_evento(texto)
