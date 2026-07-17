@@ -324,6 +324,7 @@ def _guardar_audio_cache(quien, texto, audio):
     h = _hash_audio(quien, texto)
     ruta = f"cache/audio_{h}.mp3"
     try:
+        os.makedirs("cache", exist_ok=True)
         with open(ruta, "wb") as f:
             f.write(audio)
     except Exception as e:
@@ -373,6 +374,10 @@ async def lifespan(app: FastAPI):
     else:
         log.warning("Sin clave de TTS (ELEVENLABS_API_KEY / OPENAI_API_KEY) "
                     "— la Mac usará sus voces del sistema (robóticas)")
+    # Carpetas de trabajo: sin ellas los cachés fallan en silencio y se
+    # paga TTS/Claude de nuevo por contenido ya generado
+    for d in ("cache", "episodes", "shorts", "vods"):
+        os.makedirs(d, exist_ok=True)
     tareas = [asyncio.create_task(bucle_telemetria()),
               asyncio.create_task(bucle_narracion()),
               asyncio.create_task(bucle_ambiente()),

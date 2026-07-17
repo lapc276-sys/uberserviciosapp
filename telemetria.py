@@ -287,14 +287,26 @@ class Telemetria:
             sesion = await self._elegir_sesion(client)
             sk = sesion["session_key"]
             self.sesion = sesion
-            # De uno en uno y con pausa: la API gratuita limita el ritmo
+            # De uno en uno y con pausa: la API gratuita limita el ritmo.
+            # Un 404 en un dato secundario (intervals, stints...) no debe
+            # tumbar la sesión: se sigue sin ese dato — en unos libres en
+            # curso muchos endpoints aún no tienen contenido.
             datos = {}
             for endpoint in ("/drivers", "/position", "/pit",
                              "/race_control", "/laps", "/intervals",
                              "/stints", "/weather"):
                 await asyncio.sleep(1.0)
-                datos[endpoint] = await self._get(client, endpoint,
-                                                  session_key=sk)
+                try:
+                    datos[endpoint] = await self._get(client, endpoint,
+                                                      session_key=sk)
+                except httpx.HTTPStatusError as e:
+                    if (e.response.status_code == 404
+                            and endpoint not in ("/drivers", "/position")):
+                        log.info("OpenF1 %s sin datos aún (404) — la sesión "
+                                 "sigue sin ese dato", endpoint)
+                        datos[endpoint] = []
+                    else:
+                        raise
             drivers = datos["/drivers"]
             posiciones = datos["/position"]
             pits = datos["/pit"]

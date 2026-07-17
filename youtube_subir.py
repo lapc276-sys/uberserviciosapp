@@ -174,9 +174,12 @@ async def armar_video(audio_path, fotos_urls, titulo, salida_mp4,
     dur = _duracion_audio(audio_path) or 25.0
     tmp = tempfile.mkdtemp(prefix="video_")
     try:
-        # Descargar fotos de libre uso
+        # Descargar fotos de libre uso (con pausa: Wikimedia devuelve 429
+        # si se piden muy seguidas)
         imgs = []
         for i, url in enumerate((fotos_urls or [])[:6]):
+            if i:
+                await asyncio.sleep(2)
             destino = os.path.join(tmp, f"img_{i}.jpg")
             if await _descargar(url, destino):
                 imgs.append(destino)
