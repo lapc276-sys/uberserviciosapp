@@ -446,6 +446,8 @@ class Estado:
         self.carrera_en_vivo: bool = False # True solo en carrera real (parrilla)
         self.apertura_pendiente: bool = False  # saludo de bienvenida al abrir
         self.ultimo_cta: float = 0.0     # última invitación a suscribirse
+        self.sesion_meta: dict = {}      # sesión al aire (nombre/país) aunque
+                                         # la telemetría no esté disponible
         self.modo_calidad: str = "auto"    # auto | max | ahorro (botón del panel)
         self.off_air_manual: bool = False  # botón OFF AIR: silencio total, sin gasto
         self.segmento_id: int = 0      # id del último segmento con audio
@@ -2082,9 +2084,11 @@ async def narrar_apertura(client: anthropic.AsyncAnthropic):
     transmisión (previa de la sesión). Saluda, pregunta cómo está la gente,
     invita al chat y a suscribirse."""
     s = estado.tele.sesion if estado.tele else {}
-    sesion = (f"{s.get('session_name', 'the session')} — "
-              f"{s.get('country_name', '')} "
-              f"({s.get('circuit_short_name', '')})")
+    m = estado.sesion_meta or {}
+    nombre_s = s.get("session_name") or m.get("sesion") or "the session"
+    pais = s.get("country_name") or m.get("pais") or ""
+    circuito = s.get("circuit_short_name") or m.get("circuito") or ""
+    sesion = f"{nombre_s} — {pais} ({circuito})"
     response = await client.messages.create(
         model=modelo_actual(), max_tokens=500, system=SYSTEM_DUO,
         output_config={"format": {"type": "json_schema",
@@ -3069,8 +3073,9 @@ VOD_MIN_LINEAS = 12  # menos que esto = grabación de prueba, se descarta
 
 def _vod_grabar(quien, texto, audio):
     """Graba una línea hablada de la sesión EN VIVO para el VOD propio.
-    Solo audio del dúo + guion — nunca imágenes de F1TV."""
-    if estado.tele is None or not audio:
+    Solo audio del dúo + guion — nunca imágenes de F1TV. También graba en
+    modo visión/radio (sesión real sin telemetría)."""
+    if (estado.tele is None and not estado.carrera_en_vivo) or not audio:
         return
     try:
         actual = os.path.join(VOD_DIR, "actual")
@@ -3080,10 +3085,13 @@ def _vod_grabar(quien, texto, audio):
             with open(meta_ruta) as f:
                 meta = json.load(f)
         else:
-            s = estado.tele.sesion or {}
-            meta = {"sesion": s.get("session_name", "Session"),
-                    "pais": s.get("country_name", ""),
-                    "circuito": s.get("circuit_short_name", ""),
+            s = estado.tele.sesion if estado.tele else {}
+            m = estado.sesion_meta or {}
+            meta = {"sesion": (s.get("session_name")
+                               or m.get("sesion") or "Session"),
+                    "pais": s.get("country_name") or m.get("pais") or "",
+                    "circuito": (s.get("circuit_short_name")
+                                 or m.get("circuito") or ""),
                     "inicio": dt.datetime.now(dt.timezone.utc).isoformat(),
                     "n": 0, "intentos": 0}
         n = meta.get("n", 0)
@@ -3171,8 +3179,10 @@ async def bucle_vod():
         try:
             actual = os.path.join(VOD_DIR, "actual")
             meta_ruta = os.path.join(actual, "meta.json")
-            # 1) ¿Terminó la sesión que estábamos grabando?
-            if estado.tele is None and os.path.exists(meta_ruta):
+            # 1) ¿Terminó la sesión que estábamos grabando? (en modo
+            # visión/radio la sesión sigue viva aunque tele sea None)
+            if (estado.tele is None and not estado.carrera_en_vivo
+                    and os.path.exists(meta_ruta)):
                 with open(meta_ruta) as f:
                     meta = json.load(f)
                 if meta.get("n", 0) >= VOD_MIN_LINEAS:
@@ -3574,26 +3584,51 @@ def sesion_en_ventana(ahora, sesiones, antes_min=30, despues_min=0):
 
 
 async def _correr_sesion(clave):
-    """Carga y reproduce una sesión concreta (usado por la parrilla)."""
-    estado.tele_cargando = True
+    """Carga y reproduce una sesión concreta (usado por la parrilla).
+
+    Si la telemetría no está disponible (OpenF1 cobra por el tiempo real,
+    o hay un corte), NO se rinde: sale al aire igual en modo visión/radio
+    — el dúo narra desde los frames de la Mac si llegan, o conversa
+    (noticias, contexto) si no — y reintenta la telemetría cada 5 min."""
+    primera_falla = True
     try:
-        tele = telemetria.Telemetria(clave, VELOCIDAD_REPLAY)
-        await tele.cargar()
-        estado.tele = tele
-        estado.programa = None
-        # Carrera de la parrilla = evento en vivo real → calidad máxima
-        estado.carrera_en_vivo = True
-        estado.apertura_pendiente = True   # saludo de bienvenida al abrir
-        estado.ultimo_cta = time.time()    # 1ª invitación ~20 min después
-        log.info("📺 Al aire (parrilla, calidad %s): %s",
-                 MODELO_VIVO, tele.descripcion())
+        while True:
+            estado.tele_cargando = True
+            try:
+                tele = telemetria.Telemetria(clave, VELOCIDAD_REPLAY)
+                await tele.cargar()
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                estado.tele_cargando = False
+                if primera_falla:
+                    log.warning("Telemetría no disponible (%s) — AL AIRE en "
+                                "modo visión/radio; reintento en 5 min", e)
+                    primera_falla = False
+                # Al aire sin telemetría: visión (frames) o radio (charla)
+                estado.programa = None
+                estado.carrera_en_vivo = True
+                estado.apertura_pendiente = True
+                estado.ultimo_cta = estado.ultimo_cta or time.time()
+                await asyncio.sleep(300)
+                continue
+            estado.tele = tele
+            estado.tele_cargando = False
+            estado.programa = None
+            # Carrera de la parrilla = evento en vivo real → calidad máxima
+            estado.carrera_en_vivo = True
+            estado.apertura_pendiente = True   # bienvenida al abrir
+            estado.ultimo_cta = time.time()    # 1ª invitación ~20 min después
+            log.info("📺 Al aire (parrilla, calidad %s): %s",
+                     MODELO_VIVO, tele.descripcion())
 
-        def al_evento(texto):
-            estado.eventos.append(texto)
-            del estado.eventos[:-30]
-            log.info("📊 %s", texto)
+            def al_evento(texto):
+                estado.eventos.append(texto)
+                del estado.eventos[:-30]
+                log.info("📊 %s", texto)
 
-        await tele.correr(al_evento)
+            await tele.correr(al_evento)
+            return
     except asyncio.CancelledError:
         raise
     except Exception as e:
@@ -3670,6 +3705,9 @@ async def bucle_programacion():
                 estado.sesion_actual = s["session_key"]
                 estado.show_manual = None   # la carrera real toma el control
                 en_standby = False
+                estado.sesion_meta = {"sesion": s["sesion"],
+                                      "pais": s["pais"],
+                                      "circuito": s.get("circuito", "")}
                 log.info("🗓️  Es hora de %s en %s → al aire",
                         s["sesion"], s["pais"])
                 tarea_carrera = asyncio.create_task(
@@ -3917,7 +3955,8 @@ async def bucle_chat():
         # Auto-conexión: en sesión en vivo y sin chat conectado, buscar el
         # directo del canal cada 5 min (evita pegar la URL en el panel)
         if (not estado.chat_video and YOUTUBE_CHANNEL_ID
-                and not estado.off_air_manual and estado.tele is not None
+                and not estado.off_air_manual
+                and (estado.tele is not None or estado.carrera_en_vivo)
                 and time.time() - ultima_busqueda >= 300):
             ultima_busqueda = time.time()
             vid = await _buscar_directo_canal()
@@ -4174,8 +4213,10 @@ async def bucle_narracion():
         chat_listo = (estado.chat_pendientes and not hay_eventos
                       and ahora - estado.chat_ultima >= CHAT_RESPUESTA_CADA)
         try:
-            if estado.tele is not None and estado.apertura_pendiente:
+            if (estado.apertura_pendiente
+                    and (estado.tele is not None or estado.carrera_en_vivo)):
                 # Arranca el directo: bienvenida cálida antes que nada
+                # (también en modo visión/radio, sin telemetría)
                 estado.apertura_pendiente = False
                 texto = await narrar_apertura(client)
             elif chat_listo:
@@ -4203,7 +4244,7 @@ async def bucle_narracion():
                 # Interludio (foto+música) o espera (canal apagado): nadie
                 # habla y no se llama a la API — así no se gasta nada
                 continue
-            elif estado.frame is not None:
+            elif estado.frame is not None and ahora - estado.frame_ts < 60:
                 # Respaldo por visión: frame nuevo cada INTERVALO_NARRACION
                 if (estado.tele_cargando
                         or estado.frame_ts <= ultimo_frame_narrado
@@ -4212,6 +4253,16 @@ async def bucle_narracion():
                 ultimo_frame_narrado = estado.frame_ts
                 texto = await narrar_frame(client, estado.frame,
                                            estado.narracion)
+            elif estado.carrera_en_vivo:
+                # Sesión real sin telemetría NI frames: modo radio — el dúo
+                # conversa (noticias reales, contexto, predicciones) para
+                # que el directo nunca quede mudo
+                if (desde_ultima >= RELLENO_SEGUNDOS
+                        and ahora - ultimo_relleno >= RELLENO_SEGUNDOS):
+                    ultimo_relleno = ahora
+                    texto = await narrar_datos(client, None)
+                else:
+                    continue
             elif (estado.programa
                     and estado.programa.get("tipo") in PROGRAMAS):
                 # Programa sin telemetría (Historia, Tech...): el dúo
