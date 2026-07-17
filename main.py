@@ -3663,6 +3663,8 @@ async def _correr_sesion(clave):
     — el dúo narra desde los frames de la Mac si llegan, o conversa
     (noticias, contexto) si no — y reintenta la telemetría cada 5 min."""
     primera_falla = True
+    primera_vez = True
+    ultima_fecha = None   # hasta dónde ya se narró (para recargas en vivo)
     try:
         while True:
             estado.tele_cargando = True
@@ -3689,18 +3691,26 @@ async def _correr_sesion(clave):
             estado.programa = None
             # Carrera de la parrilla = evento en vivo real → calidad máxima
             estado.carrera_en_vivo = True
-            estado.apertura_pendiente = True   # bienvenida al abrir
-            estado.ultimo_cta = time.time()    # 1ª invitación ~20 min después
-            log.info("📺 Al aire (parrilla, calidad %s): %s",
-                     MODELO_VIVO, tele.descripcion())
+            if primera_vez:
+                estado.apertura_pendiente = True   # bienvenida al abrir
+                estado.ultimo_cta = time.time()    # 1ª invitación en ~20 min
+                log.info("📺 Al aire (parrilla, calidad %s): %s",
+                         MODELO_VIVO, tele.descripcion())
+                primera_vez = False
 
             def al_evento(texto):
                 estado.eventos.append(texto)
                 del estado.eventos[:-30]
                 log.info("📊 %s", texto)
 
-            await tele.correr(al_evento)
-            return
+            await tele.correr(al_evento, desde=ultima_fecha)
+            ultima_fecha = tele.fecha_actual or ultima_fecha
+            # Se acabaron los datos descargados pero la sesión sigue en su
+            # ventana: recargar datos frescos y continuar donde quedamos.
+            # (La parrilla cancela esta tarea cuando la ventana termina.)
+            log.info("🔁 Sesión en curso — recargando telemetría fresca "
+                     "en 60 s")
+            await asyncio.sleep(60)
     except asyncio.CancelledError:
         raise
     except Exception as e:

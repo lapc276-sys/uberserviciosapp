@@ -738,13 +738,28 @@ class Telemetria:
 
         return out
 
-    async def correr(self, al_evento):
-        """Reproduce la línea de tiempo llamando a al_evento(texto)."""
+    async def correr(self, al_evento, desde=None):
+        """Reproduce la línea de tiempo llamando a al_evento(texto).
+
+        Con `desde` (fecha), lo anterior a esa fecha se procesa EN
+        SILENCIO (reconstruye posiciones/estado sin narrar) y la
+        reproducción con ritmo real arranca justo después — así una
+        sesión EN CURSO puede recargarse con datos frescos sin repetir
+        lo ya narrado."""
         if not self._timeline:
             raise RuntimeError("timeline vacía: ¿faltó llamar a cargar()?")
-        inicio_datos = self._timeline[0][0]
+        pendientes = self._timeline
+        if desde is not None:
+            for fecha, tipo, dato in pendientes:
+                if fecha <= desde:
+                    self.fecha_actual = fecha
+                    self._procesar(tipo, dato)  # estado sí, narración no
+            pendientes = [e for e in pendientes if e[0] > desde]
+            if not pendientes:
+                return
+        inicio_datos = pendientes[0][0]
         inicio_real = time.monotonic()
-        for fecha, tipo, dato in self._timeline:
+        for fecha, tipo, dato in pendientes:
             objetivo = (fecha - inicio_datos).total_seconds() / self.velocidad
             espera = objetivo - (time.monotonic() - inicio_real)
             if espera > 0:
@@ -753,4 +768,5 @@ class Telemetria:
             texto = self._procesar(tipo, dato)
             if texto:
                 al_evento(texto)
-        log.info("Replay terminado: %s", self.descripcion())
+        log.info("Replay al día: %s (fin de los datos descargados)",
+                 self.descripcion())
