@@ -424,6 +424,8 @@ class Estado:
         self.horario: list[dict] = []      # sesiones programables (reales)
         self.sesion_actual = None          # clave de la sesión al aire
         self.carrera_en_vivo: bool = False # True solo en carrera real (parrilla)
+        self.apertura_pendiente: bool = False  # saludo de bienvenida al abrir
+        self.ultimo_cta: float = 0.0     # última invitación a suscribirse
         self.modo_calidad: str = "auto"    # auto | max | ahorro (botón del panel)
         self.off_air_manual: bool = False  # botón OFF AIR: silencio total, sin gasto
         self.segmento_id: int = 0      # id del último segmento con audio
@@ -2022,6 +2024,42 @@ def _situacion(eventos):
     return "quiet stint — relaxed, low gear"
 
 
+SUSCRIBIR_SEGUNDOS = float(os.environ.get("SUSCRIBIR_MINUTOS", "20")) * 60
+
+
+async def narrar_apertura(client: anthropic.AsyncAnthropic):
+    """Apertura del directo: bienvenida cálida del dúo al arrancar la
+    transmisión (previa de la sesión). Saluda, pregunta cómo está la gente,
+    invita al chat y a suscribirse."""
+    s = estado.tele.sesion if estado.tele else {}
+    sesion = (f"{s.get('session_name', 'the session')} — "
+              f"{s.get('country_name', '')} "
+              f"({s.get('circuit_short_name', '')})")
+    response = await client.messages.create(
+        model=modelo_actual(), max_tokens=500, system=SYSTEM_DUO,
+        output_config={"format": {"type": "json_schema",
+                                  "schema": DUO_SCHEMA}},
+        messages=[{"role": "user", "content": (
+            f"THE BROADCAST IS JUST GOING LIVE. Coming up: {sesion}.\n\n"
+            "Write the OPENING of the show — the very first thing viewers "
+            "hear. A warm, friendly welcome like two hosts who are happy "
+            "to be back: greet everyone ('hello everyone, welcome back to "
+            "the channel...'), ask how they're all doing, invite them to "
+            "say hi in the chat and tell where they're watching from, "
+            "build a little excitement about today's session, and slip in "
+            "ONE natural invitation to subscribe so they never miss a "
+            "session. 3 to 5 short lines, both voices, upbeat and human — "
+            "never salesy or robotic.")}],
+    )
+    if response.stop_reason == "refusal":
+        return []
+    texto = next((b.text for b in response.content if b.type == "text"), "")
+    try:
+        return json.loads(texto).get("lineas", [])
+    except json.JSONDecodeError:
+        return []
+
+
 async def narrar_datos(client: anthropic.AsyncAnthropic, eventos):
     """Genera el siguiente segmento de conversación del dúo.
 
@@ -2071,6 +2109,15 @@ async def narrar_datos(client: anthropic.AsyncAnthropic, eventos):
             "If the memory shows you already chatted off-track very recently, "
             "return to the race or return an empty lineas array and let it "
             "breathe.")
+    # Cada tanto, invitar a suscribirse — tejido en la charla, nunca vendedor
+    cta = ""
+    if time.time() - estado.ultimo_cta >= SUSCRIBIR_SEGUNDOS:
+        estado.ultimo_cta = time.time()
+        cta = ("\n\nALSO: weave ONE short, warm reminder into this segment "
+               "to subscribe to the channel (and drop a like) — casual and "
+               "blended into the flow, e.g. 'if you're enjoying the ride, "
+               "hit subscribe, it genuinely helps us'. Just one line, from "
+               "either voice, never salesy.")
     response = await client.messages.create(
         model=modelo_actual(),
         max_tokens=500,
@@ -2082,7 +2129,7 @@ async def narrar_datos(client: anthropic.AsyncAnthropic, eventos):
             "content": (f"RACE CONTEXT: {contexto}\n"
                         f"SITUATION: {situacion}\n\n"
                         f"WHAT THE DUO ALREADY SAID (memory):\n{memoria}\n\n"
-                        f"{pedido}\n\n"
+                        f"{pedido}{cta}\n\n"
                         "Write the next segment of the conversation."),
         }],
     )
@@ -3474,6 +3521,8 @@ async def _correr_sesion(clave):
         estado.programa = None
         # Carrera de la parrilla = evento en vivo real → calidad máxima
         estado.carrera_en_vivo = True
+        estado.apertura_pendiente = True   # saludo de bienvenida al abrir
+        estado.ultimo_cta = time.time()    # 1ª invitación ~20 min después
         log.info("📺 Al aire (parrilla, calidad %s): %s",
                  MODELO_VIVO, tele.descripcion())
 
@@ -3632,6 +3681,8 @@ async def bucle_telemetria():
             tele = telemetria.Telemetria(clave, VELOCIDAD_REPLAY)
             await tele.cargar()
             estado.tele = tele
+            estado.apertura_pendiente = True
+            estado.ultimo_cta = time.time()
             log.info("📺 Al aire: %s", tele.descripcion())
 
             def al_evento(texto):
@@ -3994,7 +4045,11 @@ async def bucle_narracion():
         chat_listo = (estado.chat_pendientes and not hay_eventos
                       and ahora - estado.chat_ultima >= CHAT_RESPUESTA_CADA)
         try:
-            if chat_listo:
+            if estado.tele is not None and estado.apertura_pendiente:
+                # Arranca el directo: bienvenida cálida antes que nada
+                estado.apertura_pendiente = False
+                texto = await narrar_apertura(client)
+            elif chat_listo:
                 pregunta = estado.chat_pendientes.pop(0)
                 estado.chat_ultima = ahora
                 texto = await responder_chat(client, pregunta)
