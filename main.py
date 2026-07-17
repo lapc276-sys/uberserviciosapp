@@ -2805,6 +2805,7 @@ async def poner_interludio():
 
 
 SHORTS_HORARIOS = [6, 12, 18, 23]  # Horas UTC para generar shorts (4/día)
+_shorts_reintento = [0.0]  # último reintento con la bandera sin-créditos
 DURACION_SHORT_MIN = 1  # Duración objetivo de un short (minutos)
 
 
@@ -2901,7 +2902,13 @@ async def bucle_shorts():
         try:
             ahora = dt.datetime.now(dt.timezone.utc)
             pendiente = _slot_short_pendiente(ahora)
-            if pendiente and not estado.api_sin_creditos:
+            # Con la bandera de "sin créditos" puesta igual se reintenta
+            # cada 30 min: si ya recargaste, el primer intento que funcione
+            # limpia la bandera solo (sin reiniciar el server).
+            puede = (not estado.api_sin_creditos
+                     or time.time() - _shorts_reintento[0] >= 1800)
+            if pendiente and puede:
+                _shorts_reintento[0] = time.time()
                 slot_id, hora_slot = pendiente
                 tipo = "drama" if hora_slot in (12, 23) else "noticia"
                 titulares = ([n["texto"] for n in estado.noticias_crawl]
@@ -2915,6 +2922,7 @@ async def bucle_shorts():
                     continue
                 guion = await generar_short(client, tipo, titulares=titulares)
                 if guion:
+                    estado.api_sin_creditos = False  # volvió el saldo
                     _guardar_short(slot_id, {
                         "id": slot_id,
                         "timestamp": ahora.isoformat(),
