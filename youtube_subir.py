@@ -19,6 +19,7 @@ Config opcional:
 """
 
 import asyncio
+import contextlib
 import logging
 import os
 import shutil
@@ -98,7 +99,7 @@ def _envolver(texto, ancho=26):
     return "\n".join(lineas[:4])
 
 
-def _construir_ffmpeg(imgs, audio, salida, per, rotulo_txt):
+def _construir_ffmpeg(imgs, audio, salida, per, rotulo_txt, w, h, fps):
     """Arma la lista de argumentos de ffmpeg (con o sin rótulo de texto)."""
     args = ["ffmpeg", "-y"]
     for img in imgs:
@@ -109,19 +110,21 @@ def _construir_ffmpeg(imgs, audio, salida, per, rotulo_txt):
     partes = []
     for i in range(n):
         partes.append(
-            f"[{i}:v]scale={VERT_W}:{VERT_H}:force_original_aspect_ratio="
-            f"increase,crop={VERT_W}:{VERT_H},setsar=1,fps=30[v{i}]")
+            f"[{i}:v]scale={w}:{h}:force_original_aspect_ratio="
+            f"increase,crop={w}:{h},setsar=1,fps={fps}[v{i}]")
     cadena = "".join(f"[v{i}]" for i in range(n))
     partes.append(f"{cadena}concat=n={n}:v=1:a=0[vc]")
 
     salida_v = "[vc]"
     fuente = _fuente()
     if rotulo_txt and fuente:
+        tam = 54 if h > w else 40
+        margen = 190 if h > w else 60
         partes.append(
             f"[vc]drawtext=fontfile='{fuente}':textfile='{rotulo_txt}':"
-            "fontcolor=white:fontsize=54:line_spacing=14:box=1:"
+            f"fontcolor=white:fontsize={tam}:line_spacing=14:box=1:"
             "boxcolor=black@0.55:boxborderw=26:x=(w-text_w)/2:"
-            "y=h-text_h-190[vt]")
+            f"y=h-text_h-{margen}[vt]")
         salida_v = "[vt]"
 
     args += [
@@ -134,17 +137,42 @@ def _construir_ffmpeg(imgs, audio, salida, per, rotulo_txt):
     return args
 
 
-async def armar_video(audio_path, fotos_urls, titulo, salida_mp4):
-    """Construye el MP4 vertical. Devuelve True si se creó."""
+def concat_audios(rutas, salida):
+    """Une varios MP3 en un solo archivo (para el VOD de una sesión)."""
+    if not rutas:
+        return False
+    lista = salida + ".txt"
+    try:
+        with open(lista, "w") as f:
+            for r in rutas:
+                f.write(f"file '{os.path.abspath(r)}'\n")
+        r = subprocess.run(
+            ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", lista,
+             "-c:a", "libmp3lame", "-b:a", "128k", salida],
+            capture_output=True, timeout=900)
+        return r.returncode == 0 and os.path.exists(salida)
+    except Exception as e:
+        log.warning("No se pudo unir el audio del VOD (%s)", e)
+        return False
+    finally:
+        with contextlib.suppress(OSError):
+            os.remove(lista)
+
+
+async def armar_video(audio_path, fotos_urls, titulo, salida_mp4,
+                      horizontal=False):
+    """Construye el MP4 (vertical para shorts; 16:9 para VODs de sesión).
+    Devuelve True si se creó."""
     if not ffmpeg_disponible():
         log.warning("ffmpeg no disponible: no se puede armar el video")
         return False
     if not (audio_path and os.path.exists(audio_path)):
-        log.warning("Short sin audio: no se puede armar el video")
+        log.warning("Sin audio: no se puede armar el video")
         return False
 
+    w, h, fps = (1280, 720, 24) if horizontal else (VERT_W, VERT_H, 30)
     dur = _duracion_audio(audio_path) or 25.0
-    tmp = tempfile.mkdtemp(prefix="short_")
+    tmp = tempfile.mkdtemp(prefix="video_")
     try:
         # Descargar fotos de libre uso
         imgs = []
@@ -158,7 +186,7 @@ async def armar_video(audio_path, fotos_urls, titulo, salida_mp4):
             fondo = os.path.join(tmp, "fondo.png")
             r = subprocess.run(
                 ["ffmpeg", "-y", "-f", "lavfi", "-i",
-                 f"color=c=0x0a0a12:s={VERT_W}x{VERT_H}", "-frames:v", "1",
+                 f"color=c=0x0a0a12:s={w}x{h}", "-frames:v", "1",
                  fondo], capture_output=True, timeout=30)
             if r.returncode == 0:
                 imgs = [fondo]
@@ -171,13 +199,14 @@ async def armar_video(audio_path, fotos_urls, titulo, salida_mp4):
         # Rótulo con el título (si hay fuente disponible)
         rotulo = os.path.join(tmp, "rotulo.txt")
         with open(rotulo, "w") as f:
-            f.write(_envolver(titulo))
+            f.write(_envolver(titulo, ancho=40 if horizontal else 26))
 
+        limite = 1800 if horizontal else 300  # un VOD largo tarda en codificar
         for con_texto in (True, False):  # si el texto falla, reintenta sin él
             args = _construir_ffmpeg(
                 imgs, audio_path, salida_mp4, per,
-                rotulo if con_texto else None)
-            r = subprocess.run(args, capture_output=True, timeout=300)
+                rotulo if con_texto else None, w, h, fps)
+            r = subprocess.run(args, capture_output=True, timeout=limite)
             if r.returncode == 0 and os.path.exists(salida_mp4):
                 return True
             log.info("ffmpeg %s texto falló: %s", "con" if con_texto else "sin",
@@ -229,7 +258,7 @@ async def subir_video(video_path, titulo, descripcion, tags, privacidad=None):
         log.warning("OAuth de YouTube sin configurar: no se sube "
                     "(faltan YOUTUBE_CLIENT_ID / SECRET / REFRESH_TOKEN)")
         return None
-    privacidad = privacidad or os.environ.get("YOUTUBE_PRIVACIDAD", "unlisted")
+    privacidad = privacidad or os.environ.get("YOUTUBE_PRIVACIDAD", "public")
     try:
         resp = await asyncio.to_thread(
             _subir_sync, video_path, titulo, descripcion, tags, privacidad)

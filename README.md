@@ -128,8 +128,10 @@ Variables opcionales:
 | Variable | Default | Qué hace |
 |---|---|---|
 | `YOUTUBE_SUBIR_AUTO` | `on` | `off` desactiva la subida automática |
-| `YOUTUBE_PRIVACIDAD` | `unlisted` | `private`, `unlisted` o `public`. Empieza en `unlisted` para revisar que salgan bien; luego pon `public` |
+| `YOUTUBE_PRIVACIDAD` | `public` | `private`, `unlisted` o `public` |
 | `YOUTUBE_CLIENT_ID` / `YOUTUBE_CLIENT_SECRET` / `YOUTUBE_REFRESH_TOKEN` | — | Credenciales OAuth (obligatorias para subir) |
+| `VOD_SESIONES` | `on` | Al terminar cada sesión en vivo sube un VOD 16:9 con NUESTRA narración (voz del dúo + fotos libres — sin video de F1TV). `off` lo apaga |
+| `YOUTUBE_CHANNEL_ID` | — | ID de tu canal (empieza con `UC...`, en YouTube → Configuración → Cuenta avanzada). Con esto el chat se conecta SOLO al detectar tu directo durante las sesiones — sin pegar URL en el panel |
 
 Cada short subido queda marcado en su JSON con `youtube_id` y `youtube_url`,
 así no se vuelve a subir. Si una subida falla, reintenta hasta 3 veces y luego

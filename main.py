@@ -28,6 +28,7 @@ import logging
 import os
 import random
 import re
+import shutil
 import time
 from zoneinfo import ZoneInfo
 
@@ -148,6 +149,7 @@ IDIOMA = os.environ.get("IDIOMA", "en")
 # directo y los presentadores responden preguntas al aire. El video del
 # directo se conecta desde el panel (sin tocar Secrets).
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY", "")
+YOUTUBE_CHANNEL_ID = os.environ.get("YOUTUBE_CHANNEL_ID", "").strip()
 # Cada cuánto se consulta el chat (seg). La cuota gratis de la API es
 # 10.000 unidades/día; a 45s el canal puede leer chat ~20h/día sin
 # pasarse. Si transmites pocas horas, puedes bajarlo a 20-30.
@@ -381,6 +383,7 @@ async def lifespan(app: FastAPI):
               asyncio.create_task(bucle_standings()),
               asyncio.create_task(bucle_shorts()),
               asyncio.create_task(bucle_youtube()),
+              asyncio.create_task(bucle_vod()),
               asyncio.create_task(bucle_chat())]
     yield
     for t in tareas:
@@ -2891,7 +2894,7 @@ async def bucle_youtube():
             if not activo_avisado:
                 log.info("📤 Subida a YouTube ACTIVA (ffmpeg + OAuth listos) "
                          "— los shorts se subirán solos como %s",
-                         os.environ.get("YOUTUBE_PRIVACIDAD", "unlisted"))
+                         os.environ.get("YOUTUBE_PRIVACIDAD", "public"))
                 activo_avisado = True
 
             for ruta, short in _shorts_sin_subir():
@@ -2947,6 +2950,140 @@ async def bucle_youtube():
         except Exception as e:
             log.warning("Subida a YouTube: %s", e)
         await asyncio.sleep(300)
+
+
+# ---------- VOD de sesiones (NUESTRA narración, cero video de F1TV) ----------
+
+VOD_DIR = "vods"
+VOD_MIN_LINEAS = 12  # menos que esto = grabación de prueba, se descarta
+
+
+def _vod_grabar(quien, texto, audio):
+    """Graba una línea hablada de la sesión EN VIVO para el VOD propio.
+    Solo audio del dúo + guion — nunca imágenes de F1TV."""
+    if estado.tele is None or not audio:
+        return
+    try:
+        actual = os.path.join(VOD_DIR, "actual")
+        os.makedirs(actual, exist_ok=True)
+        meta_ruta = os.path.join(actual, "meta.json")
+        if os.path.exists(meta_ruta):
+            with open(meta_ruta) as f:
+                meta = json.load(f)
+        else:
+            s = estado.tele.sesion or {}
+            meta = {"sesion": s.get("session_name", "Session"),
+                    "pais": s.get("country_name", ""),
+                    "circuito": s.get("circuit_short_name", ""),
+                    "inicio": dt.datetime.now(dt.timezone.utc).isoformat(),
+                    "n": 0, "intentos": 0}
+        n = meta.get("n", 0)
+        with open(os.path.join(actual, f"linea_{n:04d}.mp3"), "wb") as f:
+            f.write(audio)
+        with open(os.path.join(actual, "guion.txt"), "a") as f:
+            f.write(f"{_nombre_de(quien)}: {texto}\n")
+        meta["n"] = n + 1
+        with open(meta_ruta, "w") as f:
+            json.dump(meta, f)
+    except Exception as e:
+        log.info("Grabadora VOD: %s", e)
+
+
+def _vod_titulo(meta):
+    sesion = meta.get("sesion") or "Session"
+    pais = meta.get("pais") or "F1"
+    return f"F1 {pais} — {sesion} | Live Commentary Replay"[:100]
+
+
+async def _vod_procesar(ruta):
+    """Arma el video 16:9 de un VOD grabado y lo sube. True si se subió."""
+    meta_ruta = os.path.join(ruta, "meta.json")
+    with open(meta_ruta) as f:
+        meta = json.load(f)
+    if meta.get("intentos", 0) >= 3:
+        return False  # se rindió; queda la carpeta por si quieres verla
+
+    audios = sorted(
+        os.path.join(ruta, a) for a in os.listdir(ruta)
+        if a.startswith("linea_") and a.endswith(".mp3"))
+    audio_total = os.path.join(ruta, "audio_completo.mp3")
+    if not os.path.exists(audio_total):
+        if not youtube_subir.concat_audios(audios, audio_total):
+            meta["intentos"] = meta.get("intentos", 0) + 1
+            with open(meta_ruta, "w") as f:
+                json.dump(meta, f)
+            return False
+
+    tema = (f"{meta.get('circuito') or meta.get('pais')} "
+            "Formula 1 circuit").strip()
+    fotos = await imagenes_wikimedia(tema)
+
+    titulo = _vod_titulo(meta)
+    video = os.path.join(ruta, "vod.mp4")
+    ok = await youtube_subir.armar_video(audio_total, fotos, titulo, video,
+                                         horizontal=True)
+    if not ok:
+        meta["intentos"] = meta.get("intentos", 0) + 1
+        with open(meta_ruta, "w") as f:
+            json.dump(meta, f)
+        return False
+
+    descripcion = (
+        f"Full live commentary from our broadcast of the "
+        f"{meta.get('sesion', 'session')} — {meta.get('pais', '')} "
+        f"({meta.get('circuito', '')}).\n\n"
+        "AI-powered race radio: commentary and timing data only — "
+        "no race footage. Images are free-licensed (Wikimedia Commons).\n\n"
+        "#F1 #Formula1 #RaceRadio #Commentary"
+    )
+    res = await youtube_subir.subir_video(
+        video, titulo, descripcion,
+        ["F1", "Formula1", "Commentary", "RaceRadio",
+         meta.get("sesion", ""), meta.get("pais", "")])
+    if res:
+        log.info("🎞️  VOD de sesión subido: %s", res["url"])
+        shutil.rmtree(ruta, ignore_errors=True)
+        return True
+    meta["intentos"] = meta.get("intentos", 0) + 1
+    with open(meta_ruta, "w") as f:
+        json.dump(meta, f)
+    return False
+
+
+async def bucle_vod():
+    """Al terminar cada sesión en vivo (libres, clasificación, carrera),
+    arma un VOD con NUESTRA narración (voz del dúo + fotos libres, sin
+    video de F1TV) y lo sube a YouTube como video aparte."""
+    if os.environ.get("VOD_SESIONES", "on").lower() in ("off", "0", ""):
+        return
+    os.makedirs(VOD_DIR, exist_ok=True)
+    while True:
+        await asyncio.sleep(60)
+        try:
+            actual = os.path.join(VOD_DIR, "actual")
+            meta_ruta = os.path.join(actual, "meta.json")
+            # 1) ¿Terminó la sesión que estábamos grabando?
+            if estado.tele is None and os.path.exists(meta_ruta):
+                with open(meta_ruta) as f:
+                    meta = json.load(f)
+                if meta.get("n", 0) >= VOD_MIN_LINEAS:
+                    destino = os.path.join(
+                        VOD_DIR, "listo_" + dt.datetime.now(
+                            dt.timezone.utc).strftime("%Y%m%d_%H%M%S"))
+                    os.rename(actual, destino)
+                    log.info("🎞️  Sesión terminada (%d líneas grabadas) — "
+                             "VOD en cola para armar y subir", meta["n"])
+                else:
+                    shutil.rmtree(actual, ignore_errors=True)
+            # 2) Armar y subir los VOD en cola
+            if not (youtube_subir.ffmpeg_disponible()
+                    and youtube_subir.oauth_configurado()):
+                continue
+            for d in sorted(os.listdir(VOD_DIR)):
+                if d.startswith("listo_"):
+                    await _vod_procesar(os.path.join(VOD_DIR, d))
+        except Exception as e:
+            log.warning("VOD de sesiones: %s", e)
 
 
 async def _generar_todos_episodios():
@@ -3547,6 +3684,25 @@ def _extraer_video_id(texto):
     return ""
 
 
+async def _buscar_directo_canal():
+    """Busca el directo activo del canal (YOUTUBE_CHANNEL_ID) para conectar
+    el chat solo, sin pegar la URL en el panel. Cuesta ~100 unidades de
+    cuota por búsqueda, por eso solo se llama cada 5 min y en sesión."""
+    try:
+        async with httpx.AsyncClient() as c:
+            r = await c.get(f"{_YT_API}/search", params={
+                "part": "id", "channelId": YOUTUBE_CHANNEL_ID,
+                "eventType": "live", "type": "video", "maxResults": 1,
+                "key": YOUTUBE_API_KEY}, timeout=20)
+            r.raise_for_status()
+            items = r.json().get("items", [])
+            if items:
+                return items[0]["id"]["videoId"]
+    except Exception as e:
+        log.info("Búsqueda del directo del canal: %s", e)
+    return ""
+
+
 async def _chat_live_id(video_id):
     """liveChatId activo de un video en directo, o None si no está en
     vivo (o el ID no existe)."""
@@ -3594,7 +3750,23 @@ async def bucle_chat():
     if not YOUTUBE_API_KEY:
         log.info("Sin YOUTUBE_API_KEY — lector de chat desactivado")
         return
+    if YOUTUBE_CHANNEL_ID:
+        log.info("💬 Chat con auto-conexión: buscará el directo del canal "
+                 "solo durante las sesiones (sin pegar URL)")
+    ultima_busqueda = 0.0
     while True:
+        # Auto-conexión: en sesión en vivo y sin chat conectado, buscar el
+        # directo del canal cada 5 min (evita pegar la URL en el panel)
+        if (not estado.chat_video and YOUTUBE_CHANNEL_ID
+                and not estado.off_air_manual and estado.tele is not None
+                and time.time() - ultima_busqueda >= 300):
+            ultima_busqueda = time.time()
+            vid = await _buscar_directo_canal()
+            if vid:
+                estado.chat_video = vid
+                estado.chat_estado = "directo detectado automáticamente"
+                log.info("💬 Directo del canal detectado solo (video %s) — "
+                         "conectando chat", vid)
         if not estado.chat_video or estado.off_air_manual:
             await asyncio.sleep(3)
             continue
@@ -3767,6 +3939,7 @@ async def difundir(lineas):
         audio = await sintetizar(l["quien"], l["texto"])
         audios.append(audio)
         if audio:
+            _vod_grabar(l["quien"], l["texto"], audio)
             lineas_ws.append(
                 {**l, "audio": base64.standard_b64encode(audio).decode()})
         else:
