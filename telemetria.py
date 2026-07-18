@@ -378,6 +378,43 @@ class Telemetria:
                 return pasadas[-1]
         raise RuntimeError("no se encontró ninguna carrera pasada en OpenF1")
 
+    async def trazado_circuito(self):
+        """Trazado COMPLETO del circuito: una vuelta de un piloto sacada de
+        /location, para dibujar la pista entera de una vez (en vez de irla
+        acumulando). Devuelve [{"x","y"}] normalizados o [] si no se pudo."""
+        sk = self.sesion.get("session_key")
+        if not sk:
+            return []
+        # Un piloto cualquiera que tengamos, y una ventana de 3 min bien
+        # dentro de la sesión (coches rodando, no en garaje)
+        num = next(iter(self.pilotos), None)
+        if num is None:
+            return []
+        try:
+            inicio = _fecha(self.sesion["date_start"])
+        except Exception:
+            return []
+        desde = (inicio + dt.timedelta(minutes=15)).isoformat()
+        hasta = (inicio + dt.timedelta(minutes=18)).isoformat()
+        try:
+            async with httpx.AsyncClient() as client:
+                url = (f"{BASE}/location?session_key={sk}"
+                       f"&driver_number={num}&date>{desde}&date<{hasta}")
+                r = await client.get(url, timeout=25,
+                                     headers=await _auth_headers(client))
+                r.raise_for_status()
+                filas = r.json()
+        except Exception as e:
+            log.info("Trazado del circuito no disponible (%s)", e)
+            return []
+        # Puntos válidos (descartar 0,0 = fuera de pista) submuestreados
+        puntos = [(f["x"], f["y"]) for f in filas
+                  if f.get("x") not in (None, 0) and f.get("y") not in (None, 0)]
+        if len(puntos) < 50:
+            return []
+        paso = max(1, len(puntos) // 500)
+        return [{"x": x, "y": y} for x, y in puntos[::paso]]
+
     def reloj(self):
         """Reloj CONTINUO del replay: avanza en tiempo real aunque no haya
         eventos que procesar (la fecha de la última fila avanza a saltos y
