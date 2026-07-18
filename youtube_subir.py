@@ -32,7 +32,12 @@ log = logging.getLogger("youtube")
 
 VERT_W, VERT_H = 1080, 1920
 SCOPES_SUBIR = ["https://www.googleapis.com/auth/youtube.upload"]
-_UA = {"User-Agent": "Mozilla/5.0 (F1FanChannel shorts uploader)"}
+# User-Agent conforme a la política de Wikimedia (identificable + contacto);
+# sin esto, upload.wikimedia.org responde 429 a IPs compartidas como Replit
+_UA = {"User-Agent":
+       "F1FanChannelBot/1.0 "
+       "(https://github.com/lapc276-sys/uberserviciosapp; automated "
+       "motorsport channel) httpx"}
 
 _FUENTES = [
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
@@ -61,16 +66,27 @@ def _fuente():
 
 
 async def _descargar(url, destino):
-    try:
-        async with httpx.AsyncClient(follow_redirects=True, headers=_UA) as c:
-            r = await c.get(url, timeout=30)
-            r.raise_for_status()
-            with open(destino, "wb") as f:
-                f.write(r.content)
-        return os.path.getsize(destino) > 0
-    except Exception as e:
-        log.info("No se pudo descargar imagen (%s)", e)
-        return False
+    """Descarga una imagen con reintentos: si Wikimedia pide esperar
+    (429), espera y reintenta hasta 3 veces."""
+    for intento in range(3):
+        try:
+            async with httpx.AsyncClient(follow_redirects=True,
+                                         headers=_UA) as c:
+                r = await c.get(url, timeout=30)
+                if r.status_code == 429:
+                    espera = (float(r.headers.get("retry-after", 0) or 0)
+                              or 5.0 * (intento + 1))
+                    log.info("Wikimedia pide esperar %.0fs (imagen)", espera)
+                    await asyncio.sleep(min(espera, 30))
+                    continue
+                r.raise_for_status()
+                with open(destino, "wb") as f:
+                    f.write(r.content)
+            return os.path.getsize(destino) > 0
+        except Exception as e:
+            log.info("No se pudo descargar imagen (%s)", e)
+            return False
+    return False
 
 
 def _duracion_audio(path):
@@ -184,17 +200,28 @@ async def armar_video(audio_path, fotos_urls, titulo, salida_mp4,
             if await _descargar(url, destino):
                 imgs.append(destino)
 
-        # Sin fotos: un fondo negro sólido como respaldo
+        # Sin fotos: un fondo oscuro sólido como respaldo. Pillow primero
+        # (siempre disponible); ffmpeg lavfi como plan B con su error real
+        # en el log.
         if not imgs:
             fondo = os.path.join(tmp, "fondo.png")
-            r = subprocess.run(
-                ["ffmpeg", "-y", "-f", "lavfi", "-i",
-                 f"color=c=0x0a0a12:s={w}x{h}", "-frames:v", "1",
-                 fondo], capture_output=True, timeout=30)
-            if r.returncode == 0:
+            try:
+                from PIL import Image
+                Image.new("RGB", (w, h), (10, 12, 18)).save(fondo)
+            except Exception as e:
+                log.info("Pillow no pudo crear el fondo (%s) — pruebo "
+                         "ffmpeg", e)
+                r = subprocess.run(
+                    ["ffmpeg", "-y", "-f", "lavfi", "-i",
+                     f"color=c=0x0a0a12:s={w}x{h}", "-frames:v", "1",
+                     fondo], capture_output=True, timeout=30)
+                if r.returncode != 0:
+                    log.warning("Fondo de respaldo imposible: %s",
+                                (r.stderr or b"")[-200:].decode(
+                                    "utf-8", "ignore"))
+            if os.path.exists(fondo):
                 imgs = [fondo]
             else:
-                log.warning("No se pudo crear fondo de respaldo")
                 return False
 
         per = max(2.0, dur / len(imgs))
