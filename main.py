@@ -2202,21 +2202,33 @@ async def narrar_apertura(client: anthropic.AsyncAnthropic):
     pais = s.get("country_name") or m.get("pais") or ""
     circuito = s.get("circuit_short_name") or m.get("circuito") or ""
     sesion = f"{nombre_s} — {pais} ({circuito})"
+    # Contexto de datos: lo que está en juego según la clasificación real
+    contexto_datos = ""
+    top = estado.standings_pilotos[:3]
+    if top:
+        linea = ", ".join(
+            f"{p.get('pos')}. {p.get('nombre')} {int(p.get('puntos', 0))} pts"
+            for p in top)
+        contexto_datos = (
+            f"\nCHAMPIONSHIP RIGHT NOW (real, for a quick data-driven "
+            f"'what's at stake' beat): {linea}.")
     response = await client.messages.create(
         model=modelo_actual(), max_tokens=500, system=SYSTEM_DUO,
         output_config={"format": {"type": "json_schema",
                                   "schema": DUO_SCHEMA}},
         messages=[{"role": "user", "content": (
-            f"THE BROADCAST IS JUST GOING LIVE. Coming up: {sesion}.\n\n"
+            f"THE BROADCAST IS JUST GOING LIVE. Coming up: {sesion}."
+            f"{contexto_datos}\n\n"
             "Write the OPENING of the show — the very first thing viewers "
             "hear. A warm, friendly welcome like two hosts who are happy "
             "to be back: greet everyone ('hello everyone, welcome back to "
             "the channel...'), ask how they're all doing, invite them to "
-            "say hi in the chat and tell where they're watching from, "
-            "build a little excitement about today's session, and slip in "
-            "ONE natural invitation to subscribe so they never miss a "
-            "session. 3 to 5 short lines, both voices, upbeat and human — "
-            "never salesy or robotic.")}],
+            "say hi in the chat and tell where they're watching from, then "
+            "ONE sharp data-driven line on what's at stake today (use the "
+            "championship numbers if given), and slip in ONE natural "
+            "invitation to subscribe so they never miss a session. 4 to 6 "
+            "short lines, both voices, upbeat and human — never salesy or "
+            "robotic.")}],
     )
     if response.stop_reason == "refusal":
         return []
@@ -3333,6 +3345,7 @@ async def bucle_mapa():
     if os.environ.get("MAPA_PISTA", "on").lower() in ("off", "0", ""):
         return
     tele_trazada = None
+    ultimo_guardado = 0.0
     while True:
         await asyncio.sleep(2)
         t = estado.tele
@@ -3343,6 +3356,10 @@ async def bucle_mapa():
                 estado.mapa_trazado = []
             tele_trazada = None
             continue
+        # Guardar cada 10 s dónde va el replay, para retomar tras reinicio
+        if time.time() - ultimo_guardado >= 10:
+            ultimo_guardado = time.time()
+            _guardar_pos_replay(t.sesion.get("session_key"), t.fecha_actual)
         # Precargar el trazado COMPLETO del circuito una sola vez por sesión
         if t is not tele_trazada:
             try:
@@ -3782,16 +3799,53 @@ def sesion_en_ventana(ahora, sesiones, antes_min=30, despues_min=0):
     return None
 
 
+REPLAY_ESTADO = "replay_estado.json"
+
+
+def _guardar_pos_replay(session_key, fecha):
+    """Guarda dónde va el replay para retomar tras un reinicio."""
+    if not (session_key and fecha):
+        return
+    try:
+        with open(REPLAY_ESTADO, "w") as f:
+            json.dump({"session_key": session_key,
+                       "fecha": fecha.isoformat(), "ts": time.time()}, f)
+    except Exception:
+        pass
+
+
+def _cargar_pos_replay(session_key):
+    """Posición guardada del replay para esta sesión, o None. Solo si es
+    la MISMA sesión y no es vieja (>8 h = otra ocasión, empezar de cero)."""
+    try:
+        with open(REPLAY_ESTADO) as f:
+            d = json.load(f)
+        if d.get("session_key") != session_key:
+            return None
+        if time.time() - d.get("ts", 0) > 8 * 3600:
+            return None
+        return dt.datetime.fromisoformat(d["fecha"])
+    except Exception:
+        return None
+
+
 async def _correr_sesion(clave):
     """Carga y reproduce una sesión concreta (usado por la parrilla).
 
     Si la telemetría no está disponible (OpenF1 cobra por el tiempo real,
     o hay un corte), NO se rinde: sale al aire igual en modo visión/radio
     — el dúo narra desde los frames de la Mac si llegan, o conversa
-    (noticias, contexto) si no — y reintenta la telemetría cada 5 min."""
+    (noticias, contexto) si no — y reintenta la telemetría cada 5 min.
+
+    Si el server se reinició a media sesión, retoma donde iba (posición
+    guardada en disco) y NO repite la bienvenida."""
     primera_falla = True
     primera_vez = True
-    ultima_fecha = None   # hasta dónde ya se narró (para recargas en vivo)
+    # Retomar donde quedó el replay si es la misma sesión (tras un reinicio)
+    ultima_fecha = _cargar_pos_replay(clave)
+    reanudado = ultima_fecha is not None
+    if reanudado:
+        log.info("⏪ Retomando la sesión donde quedó (sin repetir bienvenida)")
     try:
         while True:
             estado.tele_cargando = True
@@ -3819,7 +3873,8 @@ async def _correr_sesion(clave):
             # Carrera de la parrilla = evento en vivo real → calidad máxima
             estado.carrera_en_vivo = True
             if primera_vez:
-                estado.apertura_pendiente = True   # bienvenida al abrir
+                # Bienvenida solo si NO estamos retomando tras un reinicio
+                estado.apertura_pendiente = not reanudado
                 estado.ultimo_cta = time.time()    # 1ª invitación en ~20 min
                 log.info("📺 Al aire (parrilla, calidad %s): %s",
                          MODELO_VIVO, tele.descripcion())
@@ -3929,6 +3984,9 @@ async def bucle_programacion():
                     tarea_carrera = None
                 estado.tele = None
                 estado.sesion_actual = None
+                # La sesión terminó: borrar la posición para no retomarla
+                with contextlib.suppress(OSError):
+                    os.remove(REPLAY_ESTADO)
                 prox_rotacion = 0.0  # empezar programa de inmediato
                 en_standby = False
             # ¿Estamos en la ventana de documentales alrededor de una sesión?
