@@ -348,6 +348,14 @@ class Telemetria:
         self.total_vueltas = max(
             (v.get("lap_number") or 0 for v in vueltas), default=0)
         tl.sort(key=lambda e: e[0])
+        # Recortar la previa muerta (garaje): el replay arranca cerca del
+        # inicio OFICIAL de la sesión, no cuando aparece la primera fila —
+        # menos desfase con el vivo y el mapa se mueve desde el minuto uno
+        try:
+            corte = _fecha(sesion["date_start"]) - dt.timedelta(seconds=90)
+            tl = [e for e in tl if e[0] >= corte] or tl
+        except Exception:
+            pass
         self._timeline = tl
         log.info("Telemetría cargada: %s — %d filas de datos",
                  self.descripcion(), len(tl))

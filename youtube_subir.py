@@ -200,8 +200,10 @@ def _envolver(texto, ancho=26):
     return "\n".join(lineas[:4])
 
 
-def _construir_ffmpeg(imgs, audio, salida, per, rotulo_txt, w, h, fps):
-    """Arma la lista de argumentos de ffmpeg (con o sin rótulo de texto)."""
+def _construir_ffmpeg(imgs, audio, salida, per, w, h, fps):
+    """Arma la lista de argumentos de ffmpeg (el rótulo ya viene pintado
+    en las imágenes con Pillow — el drawtext del build estático no está
+    disponible)."""
     args = [_ffmpeg(), "-y"]
     for img in imgs:
         args += ["-loop", "1", "-t", f"{per:.2f}", "-i", img]
@@ -216,26 +218,57 @@ def _construir_ffmpeg(imgs, audio, salida, per, rotulo_txt, w, h, fps):
     cadena = "".join(f"[v{i}]" for i in range(n))
     partes.append(f"{cadena}concat=n={n}:v=1:a=0[vc]")
 
-    salida_v = "[vc]"
-    fuente = _fuente()
-    if rotulo_txt and fuente:
-        tam = 54 if h > w else 40
-        margen = 190 if h > w else 60
-        partes.append(
-            f"[vc]drawtext=fontfile='{fuente}':textfile='{rotulo_txt}':"
-            f"fontcolor=white:fontsize={tam}:line_spacing=14:box=1:"
-            "boxcolor=black@0.55:boxborderw=26:x=(w-text_w)/2:"
-            f"y=h-text_h-{margen}[vt]")
-        salida_v = "[vt]"
-
     args += [
         "-filter_complex", ";".join(partes),
-        "-map", salida_v, "-map", f"{n}:a",
+        "-map", "[vc]", "-map", f"{n}:a",
         "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-b:a", "128k", "-shortest",
         "-movflags", "+faststart", salida,
     ]
     return args
+
+
+def _preparar_imagen(ruta, texto, w, h):
+    """Deja la imagen lista con Pillow: recorte a w×h (tipo cover) y el
+    título pintado sobre una banda oscura. Nunca lanza — si algo falla,
+    la imagen queda como estaba."""
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+        im = Image.open(ruta).convert("RGB")
+        esc = max(w / im.width, h / im.height)
+        im = im.resize((max(1, round(im.width * esc)),
+                        max(1, round(im.height * esc))))
+        x = (im.width - w) // 2
+        y = (im.height - h) // 2
+        im = im.crop((x, y, x + w, y + h))
+        if texto:
+            d = ImageDraw.Draw(im, "RGBA")
+            tam = w // 18
+            fnt = None
+            for f in _FUENTES:
+                if os.path.exists(f):
+                    try:
+                        fnt = ImageFont.truetype(f, size=tam)
+                        break
+                    except Exception:
+                        pass
+            if fnt is None:
+                try:
+                    fnt = ImageFont.load_default(size=tam)
+                except TypeError:
+                    fnt = ImageFont.load_default()
+            lineas = _envolver(texto, ancho=26 if h > w else 44).split("\n")
+            alto = round(tam * 1.35)
+            total = alto * len(lineas)
+            y0 = h - total - (190 if h > w else 64)
+            d.rectangle([0, y0 - 26, w, y0 + total + 26], fill=(0, 0, 0, 150))
+            for i, ln in enumerate(lineas):
+                caja = d.textbbox((0, 0), ln, font=fnt)
+                d.text(((w - (caja[2] - caja[0])) / 2, y0 + i * alto),
+                       ln, font=fnt, fill=(255, 255, 255, 255))
+        im.save(ruta, quality=88)
+    except Exception as e:
+        log.info("No se pudo rotular la imagen (%s)", e)
 
 
 def concat_audios(rutas, salida):
@@ -311,21 +344,17 @@ async def armar_video(audio_path, fotos_urls, titulo, salida_mp4,
 
         per = max(2.0, dur / len(imgs))
 
-        # Rótulo con el título (si hay fuente disponible)
-        rotulo = os.path.join(tmp, "rotulo.txt")
-        with open(rotulo, "w") as f:
-            f.write(_envolver(titulo, ancho=40 if horizontal else 26))
+        # Rótulo del título pintado sobre cada imagen (Pillow, infalible)
+        for img in imgs:
+            _preparar_imagen(img, titulo, w, h)
 
         limite = 1800 if horizontal else 300  # un VOD largo tarda en codificar
-        for con_texto in (True, False):  # si el texto falla, reintenta sin él
-            args = _construir_ffmpeg(
-                imgs, audio_path, salida_mp4, per,
-                rotulo if con_texto else None, w, h, fps)
-            r = subprocess.run(args, capture_output=True, timeout=limite)
-            if r.returncode == 0 and os.path.exists(salida_mp4):
-                return True
-            log.info("ffmpeg %s texto falló: %s", "con" if con_texto else "sin",
-                     (r.stderr or b"")[-300:].decode("utf-8", "ignore"))
+        args = _construir_ffmpeg(imgs, audio_path, salida_mp4, per, w, h, fps)
+        r = subprocess.run(args, capture_output=True, timeout=limite)
+        if r.returncode == 0 and os.path.exists(salida_mp4):
+            return True
+        log.warning("ffmpeg falló al armar el video: %s",
+                    (r.stderr or b"")[-300:].decode("utf-8", "ignore"))
         return False
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
