@@ -4527,12 +4527,17 @@ async def bucle_narracion():
 
 
 def _es_error_creditos(e):
-    """True si el error de la API es por falta de créditos o cuota."""
+    """True si el error de la API es por falta de créditos, cuota o por
+    alcanzar el límite de gasto configurado en la cuenta (mensaje típico:
+    'You have reached your specified API usage limits')."""
     msg = str(getattr(e, "message", "") or e).lower()
     status = getattr(e, "status_code", None)
     return (status in (402, 429)
             or "credit" in msg or "quota" in msg
-            or "billing" in msg or "insufficient" in msg)
+            or "billing" in msg or "insufficient" in msg
+            or "usage limit" in msg or "spend" in msg
+            or "rate limit" in msg
+            or ("limit" in msg and "reached" in msg))
 
 
 if __name__ == "__main__":
