@@ -3105,8 +3105,8 @@ async def bucle_youtube():
     activo_avisado = False
     while True:
         try:
-            listo = (youtube_subir.ffmpeg_disponible()
-                     and youtube_subir.oauth_configurado())
+            listo = (youtube_subir.oauth_configurado()
+                     and await youtube_subir.asegurar_ffmpeg())
             if not listo:
                 if not avisado:
                     faltan = []
@@ -3360,8 +3360,8 @@ async def bucle_vod():
                 else:
                     shutil.rmtree(actual, ignore_errors=True)
             # 2) Armar y subir los VOD en cola
-            if not (youtube_subir.ffmpeg_disponible()
-                    and youtube_subir.oauth_configurado()):
+            if not (youtube_subir.oauth_configurado()
+                    and await youtube_subir.asegurar_ffmpeg()):
                 continue
             for d in sorted(os.listdir(VOD_DIR)):
                 if d.startswith("listo_"):

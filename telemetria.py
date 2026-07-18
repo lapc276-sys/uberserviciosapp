@@ -259,7 +259,9 @@ class Telemetria:
         self._pits = []           # [{"numero", "vuelta"}] paradas ya ocurridas
         # timeline: lista de (fecha, tipo, dato) ordenada por fecha
         self._timeline = []
-        self.fecha_actual = None  # reloj del replay (avanza en correr)
+        self.fecha_actual = None  # última fila procesada (avanza a saltos)
+        self._ancla_datos = None  # inicio de datos del tramo en reproducción
+        self._ancla_real = 0.0    # monotonic al arrancar ese tramo
 
     # ---------- descarga ----------
 
@@ -368,15 +370,27 @@ class Telemetria:
                 return pasadas[-1]
         raise RuntimeError("no se encontró ninguna carrera pasada en OpenF1")
 
+    def reloj(self):
+        """Reloj CONTINUO del replay: avanza en tiempo real aunque no haya
+        eventos que procesar (la fecha de la última fila avanza a saltos y
+        congelaba el mapa)."""
+        if self._ancla_datos is None:
+            return self.fecha_actual
+        avance = (time.monotonic() - self._ancla_real) * self.velocidad
+        est = self._ancla_datos + dt.timedelta(seconds=avance)
+        if self.fecha_actual and self.fecha_actual > est:
+            return self.fecha_actual
+        return est
+
     async def posiciones_pista(self):
         """Última posición (x, y) de cada coche alrededor del reloj del
         replay — para pintar el mapa del circuito. {} si no hay datos."""
-        if not (self.fecha_actual and self.sesion.get("session_key")):
+        ahora_replay = self.reloj()
+        if not (ahora_replay and self.sesion.get("session_key")):
             return {}
         sk = self.sesion["session_key"]
-        desde = (self.fecha_actual
-                 - dt.timedelta(seconds=20)).isoformat()
-        hasta = self.fecha_actual.isoformat()
+        desde = (ahora_replay - dt.timedelta(seconds=60)).isoformat()
+        hasta = ahora_replay.isoformat()
         salida = {}
         try:
             async with httpx.AsyncClient() as client:
@@ -768,6 +782,8 @@ class Telemetria:
                 return
         inicio_datos = pendientes[0][0]
         inicio_real = time.monotonic()
+        self._ancla_datos = inicio_datos   # reloj continuo (para el mapa)
+        self._ancla_real = inicio_real
         for fecha, tipo, dato in pendientes:
             objetivo = (fecha - inicio_datos).total_seconds() / self.velocidad
             espera = objetivo - (time.monotonic() - inicio_real)

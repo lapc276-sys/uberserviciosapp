@@ -48,8 +48,93 @@ _FUENTES = [
 ]
 
 
+# ffmpeg propio: el de Replit (nix) puede estar roto en tiempo de
+# ejecución (symbol lookup error de harfbuzz/freetype) aunque exista en el
+# PATH. Se prueba de verdad (-version) y, si falla, se descarga un build
+# ESTÁTICO independiente del sistema a ./bin (una sola vez, ~80 MB).
+BIN_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bin")
+FFMPEG_STATICO_URL = ("https://johnvansickle.com/ffmpeg/releases/"
+                      "ffmpeg-release-amd64-static.tar.xz")
+_bins = {"ffmpeg": None, "ffprobe": None, "probado": False}
+
+
+def _funciona(ruta):
+    try:
+        r = subprocess.run([ruta, "-version"], capture_output=True,
+                           timeout=20)
+        return r.returncode == 0
+    except Exception:
+        return False
+
+
+def _resolver_binarios():
+    if _bins["probado"]:
+        return
+    candidatos = []
+    if os.environ.get("FFMPEG_BIN"):
+        candidatos.append(os.path.dirname(os.environ["FFMPEG_BIN"]))
+    candidatos.append(BIN_DIR)
+    candidatos.append(None)  # PATH del sistema
+    for base in candidatos:
+        f = (os.path.join(base, "ffmpeg") if base
+             else shutil.which("ffmpeg"))
+        p = (os.path.join(base, "ffprobe") if base
+             else shutil.which("ffprobe"))
+        if f and p and os.path.exists(f) and _funciona(f):
+            _bins["ffmpeg"], _bins["ffprobe"] = f, p
+            break
+    _bins["probado"] = True
+    if _bins["ffmpeg"]:
+        log.info("🎞️  ffmpeg operativo: %s", _bins["ffmpeg"])
+
+
+def _descargar_ffmpeg_estatico():
+    """Baja el build estático de ffmpeg a ./bin. Devuelve True si quedó
+    operativo."""
+    import tarfile
+    import urllib.request
+    os.makedirs(BIN_DIR, exist_ok=True)
+    paquete = os.path.join(BIN_DIR, "ffmpeg-static.tar.xz")
+    log.info("⬇️  El ffmpeg del sistema está roto — descargando build "
+             "estático (~80 MB, solo esta vez)…")
+    urllib.request.urlretrieve(FFMPEG_STATICO_URL, paquete)
+    with tarfile.open(paquete, "r:xz") as t:
+        for m in t.getmembers():
+            nombre = os.path.basename(m.name)
+            if nombre in ("ffmpeg", "ffprobe") and m.isfile():
+                m.name = nombre
+                t.extract(m, BIN_DIR)
+                os.chmod(os.path.join(BIN_DIR, nombre), 0o755)
+    with contextlib.suppress(OSError):
+        os.remove(paquete)
+    _bins["probado"] = False
+    _resolver_binarios()
+    return _bins["ffmpeg"] is not None
+
+
+async def asegurar_ffmpeg():
+    """True si hay un ffmpeg que FUNCIONA (descargándolo si hace falta)."""
+    _resolver_binarios()
+    if _bins["ffmpeg"]:
+        return True
+    try:
+        return await asyncio.to_thread(_descargar_ffmpeg_estatico)
+    except Exception as e:
+        log.warning("No se pudo descargar el ffmpeg estático (%s)", e)
+        return False
+
+
+def _ffmpeg():
+    return _bins["ffmpeg"] or "ffmpeg"
+
+
+def _ffprobe():
+    return _bins["ffprobe"] or "ffprobe"
+
+
 def ffmpeg_disponible():
-    return shutil.which("ffmpeg") is not None and shutil.which("ffprobe") is not None
+    _resolver_binarios()
+    return _bins["ffmpeg"] is not None
 
 
 def oauth_configurado():
@@ -92,7 +177,7 @@ async def _descargar(url, destino):
 def _duracion_audio(path):
     try:
         out = subprocess.run(
-            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+            [_ffprobe(), "-v", "error", "-show_entries", "format=duration",
              "-of", "default=noprint_wrappers=1:nokey=1", path],
             capture_output=True, text=True, timeout=30)
         return float(out.stdout.strip())
@@ -117,7 +202,7 @@ def _envolver(texto, ancho=26):
 
 def _construir_ffmpeg(imgs, audio, salida, per, rotulo_txt, w, h, fps):
     """Arma la lista de argumentos de ffmpeg (con o sin rótulo de texto)."""
-    args = ["ffmpeg", "-y"]
+    args = [_ffmpeg(), "-y"]
     for img in imgs:
         args += ["-loop", "1", "-t", f"{per:.2f}", "-i", img]
     args += ["-i", audio]
@@ -163,7 +248,7 @@ def concat_audios(rutas, salida):
             for r in rutas:
                 f.write(f"file '{os.path.abspath(r)}'\n")
         r = subprocess.run(
-            ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", lista,
+            [_ffmpeg(), "-y", "-f", "concat", "-safe", "0", "-i", lista,
              "-c:a", "libmp3lame", "-b:a", "128k", salida],
             capture_output=True, timeout=900)
         return r.returncode == 0 and os.path.exists(salida)
@@ -212,7 +297,7 @@ async def armar_video(audio_path, fotos_urls, titulo, salida_mp4,
                 log.info("Pillow no pudo crear el fondo (%s) — pruebo "
                          "ffmpeg", e)
                 r = subprocess.run(
-                    ["ffmpeg", "-y", "-f", "lavfi", "-i",
+                    [_ffmpeg(), "-y", "-f", "lavfi", "-i",
                      f"color=c=0x0a0a12:s={w}x{h}", "-frames:v", "1",
                      fondo], capture_output=True, timeout=30)
                 if r.returncode != 0:
