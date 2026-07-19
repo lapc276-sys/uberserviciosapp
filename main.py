@@ -454,6 +454,7 @@ class Estado:
         self.sesion_actual = None          # clave de la sesión al aire
         self.carrera_en_vivo: bool = False # True solo en carrera real (parrilla)
         self.apertura_pendiente: bool = False  # saludo de bienvenida al abrir
+        self.cierre_pendiente: bool = False    # despedida al terminar (post-show)
         self.ultimo_cta: float = 0.0     # última invitación a suscribirse
         self.sesion_meta: dict = {}      # sesión al aire (nombre/país) aunque
                                          # la telemetría no esté disponible
@@ -2232,6 +2233,43 @@ async def narrar_apertura(client: anthropic.AsyncAnthropic):
             "invitation to subscribe so they never miss a session. 4 to 6 "
             "short lines, both voices, upbeat and human — never salesy or "
             "robotic.")}],
+    )
+    if response.stop_reason == "refusal":
+        return []
+    texto = next((b.text for b in response.content if b.type == "text"), "")
+    try:
+        return json.loads(texto).get("lineas", [])
+    except json.JSONDecodeError:
+        return []
+
+
+async def narrar_cierre(client: anthropic.AsyncAnthropic):
+    """Despedida del directo al terminar el post-show: recapitula el
+    resultado final (tabla real), agradece y se despide como haría un
+    programa de TV de verdad — no un corte seco a documentales."""
+    t = estado.tele
+    tabla = t.tabla()[:3] if t else []
+    s = t.sesion if t else {}
+    m = estado.sesion_meta or {}
+    nombre_s = s.get("session_name") or m.get("sesion") or "the session"
+    resultado = ""
+    if tabla:
+        top3 = ", ".join(f"{f['pos']}. {f['nombre']}" for f in tabla)
+        resultado = f"\nFINAL RESULT (real, quotable): {top3}."
+    response = await client.messages.create(
+        model=modelo_actual(), max_tokens=400, system=SYSTEM_DUO,
+        output_config={"format": {"type": "json_schema",
+                                  "schema": DUO_SCHEMA}},
+        messages=[{"role": "user", "content": (
+            f"THE BROADCAST IS WRAPPING UP after {nombre_s}.{resultado}\n\n"
+            "Write the CLOSING of the show — the last thing viewers hear "
+            "before the channel moves on. Briefly recap the result/top "
+            "finishers (only using the data given, never invent it), one "
+            "warm line thanking the viewers and the chat for hanging out, "
+            "one line teasing what's coming up next on the channel "
+            "(documentaries and the next session), and a genuine goodbye. "
+            "3 to 5 short lines, both voices — sounds like a real TV sign-"
+            "off, not an abrupt cut.")}],
     )
     if response.stop_reason == "refusal":
         return []
@@ -4064,6 +4102,7 @@ async def bucle_programacion():
     prox_rotacion = 0.0
     en_standby = False
     tarea_carrera = None
+    cierre_hecho_para = None  # session_key ya despedida (evita repetir)
     while True:
         ahora = dt.datetime.now(dt.timezone.utc)
         s = sesion_en_ventana(ahora, estado.horario, PRESHOW_MINUTOS,
@@ -4076,6 +4115,7 @@ async def bucle_programacion():
                 estado.sesion_actual = s["session_key"]
                 estado.show_manual = None   # la carrera real toma el control
                 en_standby = False
+                cierre_hecho_para = None
                 estado.sesion_meta = {"sesion": s["sesion"],
                                       "pais": s["pais"],
                                       "circuito": s.get("circuito", "")}
@@ -4083,6 +4123,12 @@ async def bucle_programacion():
                         s["sesion"], s["pais"])
                 tarea_carrera = asyncio.create_task(
                     _correr_sesion(s["session_key"]))
+            # Post-show: la sesión ya terminó pero seguimos en la ventana
+            # de cortesía (POSTSHOW_MINUTOS) — disparar la despedida UNA vez
+            elif (ahora >= s["fin"]
+                    and cierre_hecho_para != s["session_key"]):
+                cierre_hecho_para = s["session_key"]
+                estado.cierre_pendiente = True
         else:
             # Fuera de sesión: cerrar cualquier sesión en curso
             if estado.sesion_actual is not None:
@@ -4601,6 +4647,11 @@ async def bucle_narracion():
                 # (también en modo visión/radio, sin telemetría)
                 estado.apertura_pendiente = False
                 texto = await narrar_apertura(client)
+            elif estado.cierre_pendiente:
+                # Termina el post-show: despedida antes de cortar a
+                # documentales, con la tabla final todavía en pantalla
+                estado.cierre_pendiente = False
+                texto = await narrar_cierre(client)
             elif chat_listo:
                 pregunta = estado.chat_pendientes.pop(0)
                 estado.chat_ultima = ahora
