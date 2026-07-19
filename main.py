@@ -46,6 +46,9 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 log = logging.getLogger("f1tv-backend")
 
 INTERVALO_NARRACION = 10   # segundos entre narraciones con eventos
+# Segundos detrás del borde de datos al saltar al vivo (deja margen para la
+# demora de OpenF1 y para tener algo que narrar). Ajustable por Secret.
+LIVE_BUFFER = float(os.environ.get("LIVE_BUFFER", "25"))
 # Sin eventos, cada cuánto considerar rellenar (configurable por Secret)
 RELLENO_SEGUNDOS = float(os.environ.get("RELLENO_SEGUNDOS", "90"))
 # Fuera de vivo: cada cuánto anuncia el dúo la próxima sesión (segundos)
@@ -3971,14 +3974,32 @@ async def _correr_sesion(clave):
                 del estado.eventos[:-30]
                 log.info("📊 %s", texto)
 
+            # SALTO AL VIVO: si los datos son frescos (sesión en curso), no
+            # reproducir desde el principio — saltar al borde de los datos
+            # (menos LIVE_BUFFER) para ir casi en tiempo real con la TV.
+            fin = tele.fin_datos()
+            ahora_utc = dt.datetime.now(dt.timezone.utc)
+            es_live = fin is not None and (
+                ahora_utc - fin).total_seconds() < 900
+            if es_live:
+                borde = fin - dt.timedelta(seconds=LIVE_BUFFER)
+                atras = ((borde - ultima_fecha).total_seconds()
+                         if ultima_fecha else 1e9)
+                # Sincronizar al vivo si vamos muy atrás (o al empezar)
+                if atras > 120:
+                    ultima_fecha = borde
+                    log.info("⏩ Saltando al VIVO (borde de datos, ~%ds de "
+                             "desfase)", LIVE_BUFFER)
+
             await tele.correr(al_evento, desde=ultima_fecha)
             ultima_fecha = tele.fecha_actual or ultima_fecha
             # Se acabaron los datos descargados pero la sesión sigue en su
-            # ventana: recargar datos frescos y continuar donde quedamos.
-            # (La parrilla cancela esta tarea cuando la ventana termina.)
-            log.info("🔁 Sesión en curso — recargando telemetría fresca "
-                     "en 60 s")
-            await asyncio.sleep(60)
+            # ventana: recargar datos frescos y continuar. En vivo se recarga
+            # rápido para no acumular desfase; en histórico, más espaciado.
+            espera = 20 if es_live else 60
+            log.info("🔁 Sesión en curso — recargando telemetría en %ds",
+                     espera)
+            await asyncio.sleep(espera)
     except asyncio.CancelledError:
         raise
     except Exception as e:

@@ -415,6 +415,11 @@ class Telemetria:
         paso = max(1, len(puntos) // 500)
         return [{"x": x, "y": y} for x, y in puntos[::paso]]
 
+    def fin_datos(self):
+        """Fecha del último dato descargado (el borde de la sesión). Sirve
+        para saltar al 'ahora' en una sesión en vivo."""
+        return self._timeline[-1][0] if self._timeline else None
+
     def reloj(self):
         """Reloj CONTINUO del replay: avanza en tiempo real aunque no haya
         eventos que procesar (la fecha de la última fila avanza a saltos y
