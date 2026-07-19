@@ -3123,6 +3123,71 @@ def _shorts_sin_subir():
     return pendientes
 
 
+# Temas para buscar fotos VARIADAS de libre uso (Wikimedia Commons) — se
+# rotan para que cada short use imágenes distintas y no las mismas 5.
+_TEMAS_FOTOS = [
+    "Max Verstappen", "Lewis Hamilton", "Charles Leclerc", "Lando Norris",
+    "Oscar Piastri", "George Russell", "Fernando Alonso", "Carlos Sainz",
+    "Sergio Perez", "Yuki Tsunoda", "Red Bull Racing Formula One",
+    "Scuderia Ferrari Formula One", "McLaren Formula One car",
+    "Mercedes Formula One car", "Aston Martin Formula One",
+    "Williams Formula One", "Formula 1 pit stop", "Formula 1 race start",
+    "Formula 1 podium", "Formula 1 starting grid", "Formula 1 wet race",
+    "Spa-Francorchamps", "Circuit de Monaco", "Silverstone Circuit",
+    "Autodromo Nazionale Monza", "Suzuka Circuit", "Red Bull Ring",
+    "Formula One steering wheel", "Formula One front wing",
+    "Formula One tyres Pirelli",
+]
+_FOTOS_USADAS = "fotos_usadas.json"
+
+
+def _cargar_fotos_usadas():
+    try:
+        with open(_FOTOS_USADAS) as f:
+            return set(json.load(f))
+    except Exception:
+        return set()
+
+
+def _guardar_fotos_usadas(usadas):
+    try:
+        with open(_FOTOS_USADAS, "w") as f:
+            json.dump(list(usadas)[-500:], f)
+    except Exception:
+        pass
+
+
+async def _fotos_variadas(short, n=6):
+    """Fotos de libre uso VARIADAS para un short, evitando las ya usadas
+    en shorts anteriores. Combina temas que aparecen en el guion con otros
+    al azar de la lista, para no repetir siempre las mismas imágenes."""
+    usadas = _cargar_fotos_usadas()
+    guion = (short.get("guion", "") + " " + (short.get("tema") or "")).lower()
+    presentes = [t for t in _TEMAS_FOTOS
+                 if t.split()[0].lower() in guion]
+    otros = random.sample(_TEMAS_FOTOS, k=min(5, len(_TEMAS_FOTOS)))
+    temas = list(dict.fromkeys(presentes + otros))
+    fotos = []
+    for t in temas:
+        try:
+            for url in await imagenes_wikimedia(t, n=4):
+                if url not in usadas and url not in fotos:
+                    fotos.append(url)
+        except Exception:
+            pass
+        if len(fotos) >= n:
+            break
+    # Si casi todo estaba usado, permitir repetir para no quedar sin imagen
+    if len(fotos) < 2:
+        fotos = await imagenes_wikimedia(short.get("tema") or "Formula 1", n=n)
+    fotos = fotos[:n]
+    usadas.update(fotos)
+    if len(usadas) > 500:
+        usadas = set(list(usadas)[-400:])
+    _guardar_fotos_usadas(usadas)
+    return fotos
+
+
 async def bucle_youtube():
     """Arma un video vertical de cada short y lo sube a YouTube.
 
@@ -3191,11 +3256,10 @@ async def bucle_youtube():
                     log.info("📤 Short %s sin audio — se pospone", sid)
                     continue
 
-                # 2) Fotos de libre uso
+                # 2) Fotos de libre uso VARIADAS (sin repetir entre shorts)
                 log.info("📤 Preparando short %s para YouTube "
                          "(video + subida)…", sid)
-                tema = short.get("tema") or "Formula 1"
-                fotos = short.get("fotos") or await imagenes_wikimedia(tema)
+                fotos = short.get("fotos") or await _fotos_variadas(short)
 
                 # 3) Armar video vertical
                 video_ruta = f"shorts/short_{sid}.mp4"
