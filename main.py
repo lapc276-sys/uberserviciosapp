@@ -4544,13 +4544,12 @@ async def bucle_narracion():
         # mientras, los documentales YA cacheados siguen con voz (no usan API).
         if ahora < pausa_api_hasta:
             continue
-        # ¿Hay pregunta del chat esperando? Se responde cuando no hay
-        # eventos frescos de carrera (la acción en pista manda). Funciona
-        # en cualquier estado del canal (incluso en espera/interludio: un
-        # espectador preguntó, se le contesta). Máx. una cada
-        # CHAT_RESPUESTA_CADA para controlar el gasto.
-        hay_eventos = estado.tele is not None and bool(estado.eventos)
-        chat_listo = (estado.chat_pendientes and not hay_eventos
+        # ¿Hay pregunta del chat esperando? Se responde en su cadencia
+        # (cada CHAT_RESPUESTA_CADA) INCLUSO durante la carrera — antes solo
+        # se contestaba si no había eventos, y en vivo siempre hay eventos,
+        # así que los espectadores quedaban sin respuesta. Ahora el chat
+        # tiene su turno intercalado con la narración de la pista.
+        chat_listo = (estado.chat_pendientes
                       and ahora - estado.chat_ultima >= CHAT_RESPUESTA_CADA)
         try:
             if (estado.apertura_pendiente
