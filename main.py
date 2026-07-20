@@ -2808,6 +2808,47 @@ async def imagenes_wikimedia(query, n=4):
     return fotos[:n]
 
 
+PEXELS_API_KEY = os.environ.get("PEXELS_API_KEY", "")
+# Palabras que delatan una imagen mala (gente en oficina, simuladores,
+# capturas de pantalla) para filtrarlas por el nombre del archivo.
+_FOTO_MALA = ("simulator", "sim rig", "office", "computer", "keyboard",
+              "screenshot", "logo", "diagram", "map of", "chart",
+              "presentation", "conference", "person using", "laptop",
+              "gamer", "esport", "e-sport", "iracing", "video game")
+
+
+def _foto_sospechosa(url):
+    u = (url or "").lower()
+    return any(x in u for x in _FOTO_MALA)
+
+
+async def imagenes_pexels(query, n=6):
+    """Fotos de stock de alta calidad y libres de Pexels (crédito al autor
+    recomendado). Necesita PEXELS_API_KEY. Devuelve [] si no hay clave."""
+    if not PEXELS_API_KEY:
+        return []
+    try:
+        async with httpx.AsyncClient() as c:
+            r = await c.get("https://api.pexels.com/v1/search",
+                            params={"query": query, "per_page": n * 2,
+                                    "orientation": "landscape"},
+                            headers={"Authorization": PEXELS_API_KEY},
+                            timeout=20)
+            r.raise_for_status()
+            fotos = []
+            for p in r.json().get("photos", []):
+                url = (p.get("src") or {}).get("large2x") \
+                    or (p.get("src") or {}).get("large")
+                if url and not _foto_sospechosa(p.get("alt", "")):
+                    fotos.append(url)
+                if len(fotos) >= n:
+                    break
+            return fotos
+    except Exception as e:
+        log.info("Pexels sin fotos para '%s' (%s)", query, e)
+        return []
+
+
 def _nuevo_episodio_pedido(tipo, prog):
     """Arma el pedido del capítulo uno de un episodio nuevo (con época
     fija para Historia, para cubrir épocas distintas en orden)."""
@@ -3216,20 +3257,30 @@ def _shorts_sin_subir():
     return pendientes
 
 
-# Temas para buscar fotos VARIADAS de libre uso (Wikimedia Commons) — se
-# rotan para que cada short use imágenes distintas y no las mismas 5.
+# Temas para buscar fotos VARIADAS de libre uso. Nombres DESAMBIGUADOS
+# (p.ej. "Carlos Sainz Jr" para no traer al padre rallista) y con contexto
+# de F1 para evitar fotos genéricas.
 _TEMAS_FOTOS = [
-    "Max Verstappen", "Lewis Hamilton", "Charles Leclerc", "Lando Norris",
-    "Oscar Piastri", "George Russell", "Fernando Alonso", "Carlos Sainz",
-    "Sergio Perez", "Yuki Tsunoda", "Red Bull Racing Formula One",
-    "Scuderia Ferrari Formula One", "McLaren Formula One car",
-    "Mercedes Formula One car", "Aston Martin Formula One",
-    "Williams Formula One", "Formula 1 pit stop", "Formula 1 race start",
-    "Formula 1 podium", "Formula 1 starting grid", "Formula 1 wet race",
-    "Spa-Francorchamps", "Circuit de Monaco", "Silverstone Circuit",
-    "Autodromo Nazionale Monza", "Suzuka Circuit", "Red Bull Ring",
-    "Formula One steering wheel", "Formula One front wing",
-    "Formula One tyres Pirelli",
+    "Max Verstappen 2024", "Lewis Hamilton Formula One",
+    "Charles Leclerc Ferrari", "Lando Norris McLaren",
+    "Oscar Piastri McLaren", "George Russell Mercedes",
+    "Fernando Alonso Aston Martin", "Carlos Sainz Jr Formula One",
+    "Sergio Perez Red Bull", "Yuki Tsunoda Formula One",
+    "Red Bull Racing Formula One car", "Scuderia Ferrari Formula One car",
+    "McLaren Formula One car 2024", "Mercedes Formula One W15",
+    "Aston Martin Formula One car", "Williams Formula One car",
+    "Formula 1 pit stop", "Formula 1 race start", "Formula 1 podium",
+    "Formula 1 starting grid", "Formula 1 wet race Spa",
+    "Spa-Francorchamps circuit", "Circuit de Monaco Formula One",
+    "Silverstone Circuit Formula One", "Autodromo Nazionale Monza",
+    "Suzuka Circuit Formula One", "Red Bull Ring Formula One",
+    "Formula One front wing detail", "Pirelli Formula One tyres",
+]
+# Temas genéricos de carreras para Pexels (stock limpio de alta calidad)
+_TEMAS_PEXELS = [
+    "formula 1 car", "formula 1 race", "race car speed", "grand prix",
+    "motorsport racing", "race track", "formula car cornering",
+    "racing pit lane",
 ]
 _FOTOS_USADAS = "fotos_usadas.json"
 
@@ -3251,28 +3302,44 @@ def _guardar_fotos_usadas(usadas):
 
 
 async def _fotos_variadas(short, n=6):
-    """Fotos de libre uso VARIADAS para un short, evitando las ya usadas
-    en shorts anteriores. Combina temas que aparecen en el guion con otros
-    al azar de la lista, para no repetir siempre las mismas imágenes."""
+    """Fotos de libre uso VARIADAS y de buena calidad para un short: mezcla
+    Pexels (stock limpio) + Wikimedia (pilotos/equipos reales), evitando
+    las ya usadas, las sospechosas (oficina, simuladores) y repetir."""
     usadas = _cargar_fotos_usadas()
     guion = (short.get("guion", "") + " " + (short.get("tema") or "")).lower()
-    presentes = [t for t in _TEMAS_FOTOS
-                 if t.split()[0].lower() in guion]
-    otros = random.sample(_TEMAS_FOTOS, k=min(5, len(_TEMAS_FOTOS)))
-    temas = list(dict.fromkeys(presentes + otros))
     fotos = []
-    for t in temas:
+
+    def agregar(urls):
+        for url in urls:
+            if (url and url not in usadas and url not in fotos
+                    and not _foto_sospechosa(url)):
+                fotos.append(url)
+
+    # 1) Pexels: 2-3 fotos genéricas de carreras, limpias y de calidad
+    if PEXELS_API_KEY:
+        for t in random.sample(_TEMAS_PEXELS, k=2):
+            try:
+                agregar(await imagenes_pexels(t, n=3))
+            except Exception:
+                pass
+            if len(fotos) >= 3:
+                break
+
+    # 2) Wikimedia: pilotos/equipos que aparezcan en el guion + otros al azar
+    presentes = [t for t in _TEMAS_FOTOS if t.split()[0].lower() in guion]
+    otros = random.sample(_TEMAS_FOTOS, k=min(5, len(_TEMAS_FOTOS)))
+    for t in list(dict.fromkeys(presentes + otros)):
         try:
-            for url in await imagenes_wikimedia(t, n=4):
-                if url not in usadas and url not in fotos:
-                    fotos.append(url)
+            agregar(await imagenes_wikimedia(t, n=4))
         except Exception:
             pass
         if len(fotos) >= n:
             break
-    # Si casi todo estaba usado, permitir repetir para no quedar sin imagen
+
+    # Respaldo si casi todo estaba usado
     if len(fotos) < 2:
-        fotos = await imagenes_wikimedia(short.get("tema") or "Formula 1", n=n)
+        agregar(await imagenes_wikimedia(
+            short.get("tema") or "Formula 1 car", n=n))
     fotos = fotos[:n]
     usadas.update(fotos)
     if len(usadas) > 500:
