@@ -271,6 +271,22 @@ def _preparar_imagen(ruta, texto, w, h):
         log.info("No se pudo rotular la imagen (%s)", e)
 
 
+def _preparar_chart(ruta, w, h):
+    """Encaja un gráfico (ya diseñado) COMPLETO en el lienzo w×h con fondo
+    oscuro, sin recorte ni rótulo — para no tapar ejes ni etiquetas."""
+    try:
+        from PIL import Image
+        im = Image.open(ruta).convert("RGB")
+        esc = min(w / im.width, h / im.height)
+        nw, nh = max(1, round(im.width * esc)), max(1, round(im.height * esc))
+        im = im.resize((nw, nh))
+        lienzo = Image.new("RGB", (w, h), (10, 12, 18))
+        lienzo.paste(im, ((w - nw) // 2, (h - nh) // 2))
+        lienzo.save(ruta, quality=90)
+    except Exception as e:
+        log.info("No se pudo encajar el gráfico (%s)", e)
+
+
 def concat_audios(rutas, salida):
     """Une varios MP3 en un solo archivo (para el VOD de una sesión)."""
     if not rutas:
@@ -308,15 +324,27 @@ async def armar_video(audio_path, fotos_urls, titulo, salida_mp4,
     dur = _duracion_audio(audio_path) or 25.0
     tmp = tempfile.mkdtemp(prefix="video_")
     try:
-        # Descargar fotos de libre uso (con pausa: Wikimedia devuelve 429
-        # si se piden muy seguidas)
-        imgs = []
-        for i, url in enumerate((fotos_urls or [])[:6]):
-            if i:
-                await asyncio.sleep(2)
+        # Cada elemento puede ser una URL (foto a descargar) o una RUTA
+        # LOCAL ya lista (un gráfico). Los gráficos se encajan completos y
+        # sin rótulo; las fotos se recortan y llevan el título.
+        imgs = []          # rutas listas
+        es_chart = []      # marca por imagen
+        for i, src in enumerate((fotos_urls or [])[:8]):
+            if src and os.path.exists(str(src)):   # gráfico local
+                destino = os.path.join(tmp, f"g_{i}.png")
+                try:
+                    shutil.copy(src, destino)
+                    imgs.append(destino)
+                    es_chart.append(True)
+                except Exception:
+                    pass
+                continue
+            if len(imgs) - sum(es_chart) > 0:
+                await asyncio.sleep(2)  # pausa entre descargas Wikimedia
             destino = os.path.join(tmp, f"img_{i}.jpg")
-            if await _descargar(url, destino):
+            if await _descargar(src, destino):
                 imgs.append(destino)
+                es_chart.append(False)
 
         # Sin fotos: un fondo oscuro sólido como respaldo. Pillow primero
         # (siempre disponible); ffmpeg lavfi como plan B con su error real
@@ -339,14 +367,19 @@ async def armar_video(audio_path, fotos_urls, titulo, salida_mp4,
                                     "utf-8", "ignore"))
             if os.path.exists(fondo):
                 imgs = [fondo]
+                es_chart = [False]
             else:
                 return False
 
         per = max(2.0, dur / len(imgs))
 
-        # Rótulo del título pintado sobre cada imagen (Pillow, infalible)
-        for img in imgs:
-            _preparar_imagen(img, titulo, w, h)
+        # Preparar cada imagen: gráficos encajados (sin rótulo), fotos
+        # recortadas con el título
+        for img, chart in zip(imgs, es_chart):
+            if chart:
+                _preparar_chart(img, w, h)
+            else:
+                _preparar_imagen(img, titulo, w, h)
 
         limite = 1800 if horizontal else 300  # un VOD largo tarda en codificar
         args = _construir_ffmpeg(imgs, audio_path, salida_mp4, per, w, h, fps)

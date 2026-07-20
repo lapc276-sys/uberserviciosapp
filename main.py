@@ -41,6 +41,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 import telemetria
 import youtube_subir
+import graficos_f1
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 log = logging.getLogger("f1tv-backend")
@@ -3792,6 +3793,20 @@ async def _procesar_recap(ruta):
             json.dump(resumen, f, ensure_ascii=False)
         return False
 
+    # Gráficos propios de telemetría (FastF1) — el diferenciador técnico.
+    # Aislado: si FastF1 no está o falla, la lista queda vacía y seguimos
+    # solo con fotos.
+    graficos = []
+    try:
+        if graficos_f1.disponible():
+            año = dt.datetime.now(dt.timezone.utc).year
+            acr = [p["acr"] for p in resumen.get("top", [])[:5]]
+            graficos = await asyncio.to_thread(
+                graficos_f1.graficos_sesion, año, resumen.get("pais"),
+                resumen.get("sesion"), acr, tmp)
+    except Exception as e:
+        log.info("Gráficos FastF1 no disponibles (%s)", e)
+
     # Fotos variadas (circuito + pilotos del podio)
     temas = [f"{resumen.get('circuito') or resumen.get('pais')} "
              "Formula 1 circuit"]
@@ -3804,11 +3819,13 @@ async def _procesar_recap(ruta):
                     fotos.append(url)
         except Exception:
             pass
+    # Los gráficos primero (arrancar el video con datos), luego las fotos
+    imagenes = graficos + fotos
 
     titulo = (f"F1 {resumen.get('pais', '')} — {resumen.get('sesion', 'Race')} "
               f"Review: What We Loved & Hated")[:100]
     video = os.path.join(tmp, "recap.mp4")
-    ok = await youtube_subir.armar_video(audio_total, fotos, titulo, video,
+    ok = await youtube_subir.armar_video(audio_total, imagenes, titulo, video,
                                          horizontal=True)
     if not ok:
         resumen["intentos"] = resumen.get("intentos", 0) + 1

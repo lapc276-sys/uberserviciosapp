@@ -9,6 +9,12 @@ google-api-python-client
 google-auth-oauthlib
 google-auth-httplib2
 
+# Gráficos de telemetría propios (opcional; solo para los videos-reseña y
+# shorts técnicos post-sesión). Pesados — si no se instalan, el canal
+# sigue igual, solo sin gráficos.
+fastf1
+matplotlib
+
 # Script de captura en la Mac (captura_mac.py)
 mss
 pillow
