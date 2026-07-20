@@ -239,16 +239,21 @@ ELEVENLABS_VOCES = {
 # Expresividad por personaje: el narrador más variable/emocional, el
 # analista más estable y pausado (pero no plano).
 ELEVENLABS_AJUSTES = {
-    "narrador": {"stability": 0.35, "similarity_boost": 0.75, "style": 0.65},
+    "narrador": {"stability": 0.42, "similarity_boost": 0.75, "style": 0.6},
     "analista": {"stability": 0.55, "similarity_boost": 0.75, "style": 0.45},
     "historiador": {"stability": 0.55, "similarity_boost": 0.8, "style": 0.35},
     "tecnico": {"stability": 0.5, "similarity_boost": 0.8, "style": 0.4},
 }
+# Velocidad de la voz (0.7 lento – 1.2 rápido). Más pausado = suena que
+# respira. Ajustable por Secret VOZ_VELOCIDAD.
+VOZ_VELOCIDAD = max(0.7, min(1.2, float(os.environ.get("VOZ_VELOCIDAD",
+                                                       "0.9"))))
 
 
 async def _tts_elevenlabs(quien, texto):
     voz = ELEVENLABS_VOCES.get(quien, ELEVENLABS_VOCES["narrador"])
-    ajustes = ELEVENLABS_AJUSTES.get(quien, ELEVENLABS_AJUSTES["narrador"])
+    ajustes = {**ELEVENLABS_AJUSTES.get(quien, ELEVENLABS_AJUSTES["narrador"]),
+               "speed": VOZ_VELOCIDAD}
     async with httpx.AsyncClient() as cliente:
         r = await cliente.post(
             f"https://api.elevenlabs.io/v1/text-to-speech/{voz}",
