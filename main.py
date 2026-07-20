@@ -455,6 +455,7 @@ class Estado:
         self.carrera_en_vivo: bool = False # True solo en carrera real (parrilla)
         self.apertura_pendiente: bool = False  # saludo de bienvenida al abrir
         self.cierre_pendiente: bool = False    # despedida al terminar (post-show)
+        self.postsesion: bool = False          # la sesión ya terminó (post-show)
         self.ultimo_cta: float = 0.0     # última invitación a suscribirse
         self.sesion_meta: dict = {}      # sesión al aire (nombre/país) aunque
                                          # la telemetría no esté disponible
@@ -2303,9 +2304,32 @@ async def narrar_datos(client: anthropic.AsyncAnthropic, eventos):
     situacion = _situacion(eventos)
     # Memoria amplia para NO repetir: si un tema ya salió, se descarta
     memoria = "\n".join(estado.diario[-18:]) or "(nothing said yet)"
-    prerace = bool(estado.tele) and estado.tele.vuelta < 1
+    t = estado.tele
+    prerace = bool(t) and t.vuelta < 1
+    # Post-sesión: por el reloj (ventana post-show) O porque la carrera ya
+    # completó todas sus vueltas (el estimado de fin suele llegar después)
+    carrera_terminada = bool(t and t.total_vueltas
+                             and t.vuelta >= t.total_vueltas)
+    postsesion = estado.postsesion or carrera_terminada
     if eventos:
         pedido = "NEW EVENTS (from live telemetry):\n" + "\n".join(eventos)
+    elif postsesion:
+        # POST-SESIÓN: la carrera terminó, la tabla ya no cambia. NO repetir
+        # el resultado en bucle — análisis variado y ritmo calmado, se puede
+        # callar. Cada intervención UN ángulo nuevo distinto a la memoria.
+        pedido = (
+            "THE SESSION IS OVER — the result is final and won't change. "
+            "This is calm post-race analysis, NOT live action. Do NOT keep "
+            "repeating the result or the top three — say it once, then move "
+            "on. Each time pick ONE FRESH angle NOT already in the memory:\n"
+            "  • driver of the day and why (from the data);\n"
+            "  • what this result means for the championship fight;\n"
+            "  • a strategy call that decided it, a tyre or pace read;\n"
+            "  • a disappointment or a surprise, someone who recovered;\n"
+            "  • a look ahead to the next round.\n"
+            "One to three short lines. If you've already covered the "
+            "interesting angles, return an EMPTY lineas array and let it "
+            "breathe — do NOT loop. Silence is fine here.")
     elif prerace:
         # PRE-CARRERA: los coches aún no salen. Hay que ANIMAR el ambiente
         # como una previa de TV, sin quedarse callados y sin repetir.
@@ -4116,6 +4140,7 @@ async def bucle_programacion():
                 estado.show_manual = None   # la carrera real toma el control
                 en_standby = False
                 cierre_hecho_para = None
+                estado.postsesion = False
                 estado.sesion_meta = {"sesion": s["sesion"],
                                       "pais": s["pais"],
                                       "circuito": s.get("circuito", "")}
@@ -4124,11 +4149,12 @@ async def bucle_programacion():
                 tarea_carrera = asyncio.create_task(
                     _correr_sesion(s["session_key"]))
             # Post-show: la sesión ya terminó pero seguimos en la ventana
-            # de cortesía (POSTSHOW_MINUTOS) — disparar la despedida UNA vez
-            elif (ahora >= s["fin"]
-                    and cierre_hecho_para != s["session_key"]):
-                cierre_hecho_para = s["session_key"]
-                estado.cierre_pendiente = True
+            # de cortesía (POSTSHOW_MINUTOS) — análisis post + despedida
+            elif ahora >= s["fin"]:
+                estado.postsesion = True   # análisis calmado, sin bucle
+                if cierre_hecho_para != s["session_key"]:
+                    cierre_hecho_para = s["session_key"]
+                    estado.cierre_pendiente = True
         else:
             # Fuera de sesión: cerrar cualquier sesión en curso
             if estado.sesion_actual is not None:
@@ -4137,6 +4163,7 @@ async def bucle_programacion():
                     tarea_carrera = None
                 estado.tele = None
                 estado.sesion_actual = None
+                estado.postsesion = False
                 # La sesión terminó: borrar la posición para no retomarla
                 with contextlib.suppress(OSError):
                     os.remove(REPLAY_ESTADO)
