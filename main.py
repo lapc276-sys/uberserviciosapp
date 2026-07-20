@@ -398,6 +398,7 @@ async def lifespan(app: FastAPI):
               asyncio.create_task(bucle_shorts()),
               asyncio.create_task(bucle_youtube()),
               asyncio.create_task(bucle_vod()),
+              asyncio.create_task(bucle_resumen()),
               asyncio.create_task(bucle_mapa()),
               asyncio.create_task(bucle_chat())]
     yield
@@ -3577,6 +3578,224 @@ async def bucle_vod():
             log.warning("VOD de sesiones: %s", e)
 
 
+# ---------- Video-reseña de la carrera (dúo debatiendo lo bueno/lo malo) ----
+
+RESUMEN_DIR = "resumenes"
+# Sesiones que merecen video-reseña (las que la gente comenta). Controla el
+# gasto: no genera reseña de cada libre. Ajustable con RESUMEN_SESIONES.
+_RESUMEN_SESIONES = os.environ.get(
+    "RESUMEN_SESIONES", "Race,Sprint,Qualifying").split(",")
+
+
+def _guardar_resumen_sesion(s):
+    """Guarda una foto de la sesión (resultado, incidentes, clima) al
+    terminar, para luego generar el video-reseña. tele aún está viva."""
+    if os.environ.get("RESUMEN_AUTO", "on").lower() in ("off", "0", ""):
+        return
+    if s.get("sesion") not in _RESUMEN_SESIONES:
+        return
+    t = estado.tele
+    if t is None:
+        return
+    try:
+        tabla = t.tabla()
+        mejor = ""
+        if t.mejor_vuelta:
+            dur, num = t.mejor_vuelta
+            mejor = (f"{t._nombre(num)} — "
+                     f"{int(dur // 60)}:{dur % 60:06.3f}")
+        resumen = {
+            "sesion": s.get("sesion"), "pais": s.get("pais"),
+            "circuito": s.get("circuito"),
+            "top": [{"pos": f["pos"], "nombre": f["nombre"],
+                     "acr": f["acr"]} for f in tabla[:10]],
+            "mejor_vuelta": mejor,
+            "incidentes": [i["texto"] for i in t.incidentes][-8:],
+            "clima": t.clima,
+            "id": dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d_%H%M%S"),
+        }
+        os.makedirs(RESUMEN_DIR, exist_ok=True)
+        ruta = os.path.join(RESUMEN_DIR, f"pendiente_{resumen['id']}.json")
+        with open(ruta, "w") as f:
+            json.dump(resumen, f, ensure_ascii=False, indent=2)
+        log.info("📝 Resumen de %s guardado — video-reseña en cola",
+                 s.get("sesion"))
+    except Exception as e:
+        log.warning("No se pudo guardar el resumen de sesión (%s)", e)
+
+
+# Los tres capítulos del debate (lo bueno → lo polémico → veredictos)
+_RECAP_CAPS = [
+    ("THE GOOD — what you LOVED about this session. Open with a quick, warm "
+     "'welcome back' and set the scene, then debate the highlights: the "
+     "racing, a standout drive, a brilliant overtake, the circuit itself "
+     "(Eau Rouge, the flow). Alex and Sam should AGREE and DISAGREE, share "
+     "genuine opinions, not just facts."),
+    ("THE CONTROVERSY — what you DIDN'T like or found debatable: the "
+     "stewards' decisions and penalties, a questionable strategy call, a "
+     "clumsy move, track limits, safety. Have a real (friendly) argument "
+     "about whether the stewards got it right. This is the spicy chapter."),
+    ("THE VERDICTS — driver ratings and takeaways: driver of the day and "
+     "why, the biggest disappointment, the winner's performance, what it "
+     "means for the championship, and a look ahead to the next round. End "
+     "with a warm goodbye, thank the viewers, and invite them to comment "
+     "who THEY think was driver of the day, and to subscribe."),
+]
+
+
+async def _generar_recap(client, resumen):
+    """Genera el guion del video-reseña: el dúo debate en 3 capítulos.
+    Devuelve [{quien, texto}] (10-15 min hablados)."""
+    top = ", ".join(f"{p['pos']}. {p['nombre']}" for p in resumen["top"][:5])
+    datos = (
+        f"SESSION: {resumen['sesion']} — {resumen['pais']} "
+        f"({resumen['circuito']}).\n"
+        f"FINAL TOP: {top or 'n/a'}.\n"
+        f"FASTEST LAP: {resumen.get('mejor_vuelta') or 'n/a'}.\n"
+        f"RACE CONTROL / INCIDENTS: "
+        f"{'; '.join(resumen.get('incidentes') or []) or 'none noted'}.\n"
+        f"WEATHER: {'wet' if resumen.get('clima', {}).get('lluvia') else 'dry'}.")
+    lineas = []
+    dicho = []
+    for i, brief in enumerate(_RECAP_CAPS, 1):
+        memoria = "\n".join(dicho[-16:]) or "(start of the show)"
+        pedido = (
+            f"You are writing a 10-15 minute POST-RACE REVIEW show — two "
+            f"hosts, {NARRADOR} and {ANALISTA}, debating the race with real "
+            f"opinions. This is CHAPTER {i} of 3.\n\n"
+            f"REAL DATA (never contradict it, never invent results):\n{datos}\n\n"
+            f"CHAPTER {i} FOCUS: {brief}\n\n"
+            f"ALREADY SAID (do NOT repeat):\n{memoria}\n\n"
+            "Write 14 to 22 short spoken lines for this chapter, alternating "
+            "voices, a REAL back-and-forth with opinions, agreement and "
+            "disagreement. Reflective and paced (this is not live "
+            "commentary), warm and human. Ground facts in the data; "
+            "opinions are welcome. No names as vocatives.")
+        try:
+            resp = await client.messages.create(
+                model=MODELO_AHORRO, max_tokens=1800, system=SYSTEM_DUO,
+                output_config={"format": {"type": "json_schema",
+                                          "schema": DUO_SCHEMA}},
+                messages=[{"role": "user", "content": pedido}])
+            if resp.stop_reason == "refusal":
+                continue
+            txt = next((b.text for b in resp.content if b.type == "text"), "")
+            caps = json.loads(txt).get("lineas", [])
+        except Exception as e:
+            log.warning("Recap capítulo %d falló (%s)", i, e)
+            caps = []
+        for l in caps:
+            if l.get("texto"):
+                lineas.append(l)
+                dicho.append(f"{_nombre_de(l['quien'])}: {l['texto']}")
+    return lineas
+
+
+async def _procesar_recap(ruta):
+    """Genera el video-reseña de un resumen pendiente y lo sube. True si ok."""
+    with open(ruta) as f:
+        resumen = json.load(f)
+    if resumen.get("intentos", 0) >= 3:
+        return False
+    client = anthropic.AsyncAnthropic()
+    lineas = await _generar_recap(client, resumen)
+    if len(lineas) < 12:
+        resumen["intentos"] = resumen.get("intentos", 0) + 1
+        with open(ruta, "w") as f:
+            json.dump(resumen, f, ensure_ascii=False)
+        log.info("📝 Recap con muy pocas líneas (%d) — reintento luego",
+                 len(lineas))
+        return False
+
+    # Sintetizar todas las líneas y unir el audio
+    tmp = os.path.join(RESUMEN_DIR, resumen["id"])
+    os.makedirs(tmp, exist_ok=True)
+    audios = []
+    for i, l in enumerate(lineas):
+        audio = await sintetizar(l["quien"], l["texto"])
+        if audio:
+            a = os.path.join(tmp, f"l_{i:03d}.mp3")
+            with open(a, "wb") as f:
+                f.write(audio)
+            audios.append(a)
+    audio_total = os.path.join(tmp, "audio.mp3")
+    if not youtube_subir.concat_audios(audios, audio_total):
+        resumen["intentos"] = resumen.get("intentos", 0) + 1
+        with open(ruta, "w") as f:
+            json.dump(resumen, f, ensure_ascii=False)
+        return False
+
+    # Fotos variadas (circuito + pilotos del podio)
+    temas = [f"{resumen.get('circuito') or resumen.get('pais')} "
+             "Formula 1 circuit"]
+    temas += [p["nombre"] for p in resumen["top"][:3]]
+    fotos = []
+    for t in temas:
+        try:
+            for url in await imagenes_wikimedia(t, n=3):
+                if url not in fotos:
+                    fotos.append(url)
+        except Exception:
+            pass
+
+    titulo = (f"F1 {resumen.get('pais', '')} — {resumen.get('sesion', 'Race')} "
+              f"Review: What We Loved & Hated")[:100]
+    video = os.path.join(tmp, "recap.mp4")
+    ok = await youtube_subir.armar_video(audio_total, fotos, titulo, video,
+                                         horizontal=True)
+    if not ok:
+        resumen["intentos"] = resumen.get("intentos", 0) + 1
+        with open(ruta, "w") as f:
+            json.dump(resumen, f, ensure_ascii=False)
+        return False
+
+    ganador = resumen["top"][0]["nombre"] if resumen.get("top") else ""
+    descripcion = (
+        f"Our full review of the {resumen.get('sesion','session')} at "
+        f"{resumen.get('pais','')} — the good, the controversial, and our "
+        f"driver verdicts. {('Winner: ' + ganador + '. ') if ganador else ''}"
+        "Who was YOUR driver of the day? Tell us in the comments!\n\n"
+        "AI-powered analysis show — commentary, opinion and free-licensed "
+        "images only, no race footage. Not affiliated with Formula 1.\n\n"
+        "#F1 #Formula1 #RaceReview #Motorsport")
+    res = await youtube_subir.subir_video(
+        video, titulo, descripcion,
+        ["F1", "Formula1", "RaceReview", "Analysis",
+         resumen.get("pais", ""), resumen.get("sesion", "")])
+    if res:
+        log.info("🎬 Video-reseña subido: %s", res["url"])
+        shutil.rmtree(tmp, ignore_errors=True)
+        with contextlib.suppress(OSError):
+            os.remove(ruta)
+        return True
+    resumen["intentos"] = resumen.get("intentos", 0) + 1
+    with open(ruta, "w") as f:
+        json.dump(resumen, f, ensure_ascii=False)
+    return False
+
+
+async def bucle_resumen():
+    """Genera el video-reseña (dúo debatiendo lo bueno/lo malo de la
+    carrera) para cada sesión terminada y lo sube a YouTube."""
+    if os.environ.get("RESUMEN_AUTO", "on").lower() in ("off", "0", ""):
+        return
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        return
+    os.makedirs(RESUMEN_DIR, exist_ok=True)
+    await asyncio.sleep(45)
+    while True:
+        try:
+            if (youtube_subir.oauth_configurado()
+                    and await youtube_subir.asegurar_ffmpeg()):
+                for a in sorted(os.listdir(RESUMEN_DIR)):
+                    if a.startswith("pendiente_") and a.endswith(".json"):
+                        log.info("🎬 Generando video-reseña de la carrera…")
+                        await _procesar_recap(os.path.join(RESUMEN_DIR, a))
+        except Exception as e:
+            log.warning("Video-reseña: %s", e)
+        await asyncio.sleep(120)
+
+
 async def _generar_todos_episodios():
     """Pre-genera todos los episodios documentales para cachearlos."""
     if not os.environ.get("ANTHROPIC_API_KEY"):
@@ -4160,6 +4379,9 @@ async def bucle_programacion():
                 if cierre_hecho_para != s["session_key"]:
                     cierre_hecho_para = s["session_key"]
                     estado.cierre_pendiente = True
+                    # Guardar el resumen de la sesión (tele aún vive) para
+                    # que se genere el video-reseña con el dúo debatiendo
+                    _guardar_resumen_sesion(s)
         else:
             # Fuera de sesión: cerrar cualquier sesión en curso
             if estado.sesion_actual is not None:
