@@ -2866,6 +2866,75 @@ def _foto_sospechosa(url):
     return any(x in u for x in _FOTO_MALA)
 
 
+async def imagenes_openverse(query, n=6):
+    """Fotos con licencia libre desde Openverse (agregador de WordPress,
+    ~800M imágenes CC de Flickr, museos, etc.). SIN clave — API abierta.
+    Filtra a licencias de uso COMERCIAL y permite modificación, para que
+    se puedan usar en un canal monetizado. Devuelve URLs (o [])."""
+    if not query:
+        return []
+    try:
+        async with httpx.AsyncClient(follow_redirects=True) as c:
+            r = await c.get("https://api.openverse.org/v1/images/",
+                            params={"q": query, "page_size": n * 2,
+                                    "license_type": "commercial,modification",
+                                    "mature": "false"},
+                            timeout=20, headers=_UA_WIKI)
+            r.raise_for_status()
+            fotos = []
+            for it in r.json().get("results", []):
+                url = it.get("url")
+                titulo = (it.get("title") or "")
+                if url and url not in fotos and not _foto_sospechosa(
+                        url + " " + titulo):
+                    fotos.append(url)
+                if len(fotos) >= n:
+                    break
+            return fotos
+    except Exception as e:
+        log.info("Openverse sin fotos para '%s' (%s)", query, e)
+        return []
+
+
+FLICKR_API_KEY = os.environ.get("FLICKR_API_KEY", "")
+# Licencias Flickr aptas para uso comercial + modificación (CC-BY, CC-BY-SA,
+# CC0, PDM, U.S. Government). Se muestra crédito en la descripción del video.
+_FLICKR_LICENCIAS = "4,5,7,9,10"
+
+
+async def imagenes_flickr(query, n=6):
+    """Fotos con licencia libre (uso comercial) desde Flickr. Necesita
+    FLICKR_API_KEY (gratis en flickr.com/services/apps/create). [] si no
+    hay clave o falla."""
+    if not (FLICKR_API_KEY and query):
+        return []
+    try:
+        async with httpx.AsyncClient(follow_redirects=True) as c:
+            r = await c.get("https://api.flickr.com/services/rest/",
+                            params={
+                                "method": "flickr.photos.search",
+                                "api_key": FLICKR_API_KEY, "text": query,
+                                "license": _FLICKR_LICENCIAS,
+                                "content_type": 1, "media": "photos",
+                                "sort": "relevance", "safe_search": 1,
+                                "per_page": n * 2, "extras": "url_l,url_c",
+                                "format": "json", "nojsoncallback": 1},
+                            timeout=20, headers=_UA_WIKI)
+            r.raise_for_status()
+            fotos = []
+            for p in r.json().get("photos", {}).get("photo", []):
+                url = p.get("url_l") or p.get("url_c")
+                if url and url not in fotos and not _foto_sospechosa(
+                        url + " " + (p.get("title") or "")):
+                    fotos.append(url)
+                if len(fotos) >= n:
+                    break
+            return fotos
+    except Exception as e:
+        log.info("Flickr sin fotos para '%s' (%s)", query, e)
+        return []
+
+
 # ── Validación de fotos CON VISIÓN (los ojos del editor) ─────────────────
 # El filtro de texto no ve la imagen; esta capa sí: antes de meter una foto
 # a un video, Claude (modelo barato) la MIRA y descarta collages, páginas
@@ -3102,28 +3171,31 @@ def fotos_biblioteca(consulta, n=6):
 
 async def fotos_para_tema(consulta, n=10):
     """Imágenes para un tema con la prioridad del canal: 1) biblioteca
-    curada (aprobadas a mano — no se revalidan), 2) Pexels, 3) Wikimedia
-    filtrado. Las candidatas de búsqueda pasan por el editor con VISIÓN
-    antes de entrar al video."""
+    curada (aprobadas a mano — no se revalidan), 2) Pexels, 3) Openverse,
+    4) Flickr, 5) Wikimedia — todas de licencia libre y uso comercial. Las
+    candidatas de búsqueda pasan por el editor con VISIÓN antes de entrar
+    al video."""
     fotos = list(fotos_biblioteca(consulta, n))
     faltan = n - len(fotos)
     if faltan <= 0:
         return fotos[:n]
-    # Juntar más candidatas de las necesarias: la visión descartará algunas
+    # Juntar candidatas de varias fuentes (más de las necesarias: la visión
+    # descartará algunas y así hay de dónde elegir)
     candidatas = []
-    try:
-        for url in await imagenes_pexels(consulta, n=faltan * 2):
-            if url not in fotos and url not in candidatas:
-                candidatas.append(url)
-    except Exception:
-        pass
-    try:
-        for url in await imagenes_wikimedia(consulta, n=faltan * 2):
-            if (url not in fotos and url not in candidatas
-                    and not _foto_sospechosa(url)):
-                candidatas.append(url)
-    except Exception:
-        pass
+
+    async def sumar(fuente):
+        try:
+            for url in await fuente:
+                if (url and url not in fotos and url not in candidatas
+                        and not _foto_sospechosa(url)):
+                    candidatas.append(url)
+        except Exception:
+            pass
+
+    await sumar(imagenes_pexels(consulta, n=faltan * 2))
+    await sumar(imagenes_openverse(consulta, n=faltan * 2))
+    await sumar(imagenes_flickr(consulta, n=faltan * 2))
+    await sumar(imagenes_wikimedia(consulta, n=faltan * 2))
     fotos += await _filtrar_con_vision(candidatas, consulta, faltan)
     return fotos[:n]
 
@@ -3634,15 +3706,16 @@ async def _fotos_variadas(short, n=6):
                     and not _foto_sospechosa(url)):
                 fotos.append(url)
 
-    # 1) Pexels: 2-3 fotos genéricas de carreras, limpias y de calidad
-    if PEXELS_API_KEY:
-        for t in random.sample(_TEMAS_PEXELS, k=2):
-            try:
-                agregar(await imagenes_pexels(t, n=3))
-            except Exception:
-                pass
-            if len(fotos) >= 3:
-                break
+    # 1) Stock genérico limpio: Pexels + Openverse (2-3 fotos de carreras)
+    for t in random.sample(_TEMAS_PEXELS, k=2):
+        try:
+            agregar(await imagenes_pexels(t, n=3))
+            if len(fotos) < 3:
+                agregar(await imagenes_openverse(t, n=3))
+        except Exception:
+            pass
+        if len(fotos) >= 3:
+            break
 
     # 2) Wikimedia: pilotos/equipos que aparezcan en el guion + otros al azar
     # (juntar algunas de MÁS: el editor con visión descartará las malas)

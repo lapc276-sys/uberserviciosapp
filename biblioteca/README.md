@@ -57,3 +57,15 @@ nombre de archivo:
 (era FOM, ~1981 en adelante) es propiedad de Formula One Management y
 NUNCA se debe usar. Quédate con noticiarios y carreras antiguas marcadas
 como dominio público: para documentales de historia son oro puro.
+
+## Fuentes de imágenes automáticas (además de la biblioteca)
+
+El canal completa lo que falte buscando en fuentes de licencia libre y
+uso comercial, en este orden: **biblioteca → Pexels → Openverse →
+Flickr → Wikimedia**, y cada candidata pasa por el editor con visión.
+
+- **Openverse**: gratis, sin configurar nada (ya activo).
+- **Pexels**: opcional, Secret `PEXELS_API_KEY` (gratis en pexels.com/api).
+- **Flickr**: opcional, Secret `FLICKR_API_KEY` (gratis en
+  flickr.com/services/apps/create). Solo trae fotos con licencia
+  Creative Commons de uso comercial.
