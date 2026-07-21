@@ -436,6 +436,7 @@ async def lifespan(app: FastAPI):
               asyncio.create_task(bucle_vod()),
               asyncio.create_task(bucle_resumen()),
               asyncio.create_task(bucle_programas_video()),
+              asyncio.create_task(bucle_temas()),
               asyncio.create_task(bucle_mapa()),
               asyncio.create_task(bucle_chat())]
     yield
@@ -2851,7 +2852,13 @@ PEXELS_API_KEY = os.environ.get("PEXELS_API_KEY", "")
 _FOTO_MALA = ("simulator", "sim rig", "office", "computer", "keyboard",
               "screenshot", "logo", "diagram", "map of", "chart",
               "presentation", "conference", "person using", "laptop",
-              "gamer", "esport", "e-sport", "iracing", "video game")
+              "gamer", "esport", "e-sport", "iracing", "video game",
+              # Imágenes que traen varias fotos apiladas dentro (collages,
+              # montajes, páginas escaneadas): se ven como "una imagen
+              # sobre otra" en el video — fuera.
+              "collage", "montage", "mosaic", "composite", "poster",
+              "scanned", "magazine", "newspaper", "infographic",
+              "screen shot", "banner", "wallpaper")
 
 
 def _foto_sospechosa(url):
@@ -2884,6 +2891,72 @@ async def imagenes_pexels(query, n=6):
     except Exception as e:
         log.info("Pexels sin fotos para '%s' (%s)", query, e)
         return []
+
+
+# ── Biblioteca multimedia curada ─────────────────────────────────────────
+# Regla de oro: los recursos APROBADOS por el dueño mandan. La carpeta
+# biblioteca/ guarda imágenes/diagramas revisados a mano; biblioteca.json
+# (opcional) les pone etiquetas:  {"alerón_delantero.jpg": ["front wing",
+# "aerodynamics", "downforce"]}. Sin manifiesto, las etiquetas salen del
+# nombre del archivo (guiones y _ cuentan como espacios). Los videos usan
+# PRIMERO lo que haya aquí que encaje con el tema; solo lo que falte se
+# completa con las búsquedas filtradas (Pexels/Wikimedia). Cuantas más
+# imágenes apruebes, menos decide la búsqueda automática.
+BIBLIOTECA_DIR = "biblioteca"
+BIBLIOTECA_MANIFIESTO = os.path.join(BIBLIOTECA_DIR, "biblioteca.json")
+_EXT_IMG = (".jpg", ".jpeg", ".png", ".webp")
+
+
+def fotos_biblioteca(consulta, n=6):
+    """Rutas locales de la biblioteca curada que mejor encajan con la
+    consulta (por etiquetas del manifiesto o por nombre de archivo),
+    ordenadas por cuántas palabras coinciden. [] si no hay biblioteca."""
+    try:
+        if not os.path.isdir(BIBLIOTECA_DIR):
+            return []
+        etiquetas = {}
+        with contextlib.suppress(Exception):
+            with open(BIBLIOTECA_MANIFIESTO) as f:
+                etiquetas = json.load(f)
+        palabras = {w for w in (consulta or "").lower().split() if len(w) > 2}
+        if not palabras:
+            return []
+        puntuadas = []
+        for a in os.listdir(BIBLIOTECA_DIR):
+            if not a.lower().endswith(_EXT_IMG):
+                continue
+            texto = " ".join(str(t) for t in etiquetas.get(a, [])) + " " + a
+            texto = texto.lower().replace("-", " ").replace("_", " ")
+            pts = sum(1 for w in palabras if w in texto)
+            if pts > 0:
+                puntuadas.append((pts, os.path.join(BIBLIOTECA_DIR, a)))
+        puntuadas.sort(key=lambda x: -x[0])
+        return [r for _, r in puntuadas[:n]]
+    except Exception as e:
+        log.info("Biblioteca no disponible (%s)", e)
+        return []
+
+
+async def fotos_para_tema(consulta, n=10):
+    """Imágenes para un tema con la prioridad del canal: 1) biblioteca
+    curada (aprobadas a mano), 2) Pexels (stock de calidad), 3) Wikimedia
+    (filtrado anti-collage). Mezcla hasta n sin repetir."""
+    fotos = list(fotos_biblioteca(consulta, n))
+    if len(fotos) < n:
+        try:
+            for url in await imagenes_pexels(consulta, n=n - len(fotos)):
+                if url not in fotos:
+                    fotos.append(url)
+        except Exception:
+            pass
+    if len(fotos) < n:
+        try:
+            for url in await imagenes_wikimedia(consulta, n=n - len(fotos)):
+                if url not in fotos and not _foto_sospechosa(url):
+                    fotos.append(url)
+        except Exception:
+            pass
+    return fotos[:n]
 
 
 def _nuevo_episodio_pedido(tipo, prog):
@@ -3850,9 +3923,9 @@ async def _procesar_recap(ruta):
     fotos = []
     for t in temas:
         try:
-            for url in await imagenes_wikimedia(t, n=3):
-                if url not in fotos:
-                    fotos.append(url)
+            for f_ in await fotos_para_tema(t, n=5):
+                if f_ not in fotos:
+                    fotos.append(f_)
         except Exception:
             pass
     # Los gráficos primero (arrancar el video con datos), luego las fotos
@@ -3951,14 +4024,16 @@ async def _subir_programa_video(ruta_ep):
         with open(ruta_ep, "w") as f:
             json.dump(ep, f)
         return
-    # Fotos por el tema de cada capítulo
+    # Fotos por el tema de cada capítulo: biblioteca curada primero,
+    # luego Pexels, luego Wikimedia filtrado. Muchas más que antes para
+    # que un video de 10 min no repita 8 fotos eternas.
     fotos = []
-    for cap in ep["capitulos"][:4]:
+    for cap in ep["capitulos"][:5]:
         try:
-            for url in await imagenes_wikimedia(
-                    cap.get("tema") or ep.get("titulo") or "motorsport", n=3):
-                if url not in fotos and not _foto_sospechosa(url):
-                    fotos.append(url)
+            for f_ in await fotos_para_tema(
+                    cap.get("tema") or ep.get("titulo") or "motorsport", n=5):
+                if f_ not in fotos:
+                    fotos.append(f_)
         except Exception:
             pass
     titulo = f"{ep.get('titulo')} | {prog['titulo'].title()}"[:100]
@@ -4021,6 +4096,298 @@ async def bucle_programas_video():
         except Exception as e:
             log.warning("Videos de programas: %s", e)
         await asyncio.sleep(1800)  # revisar de nuevo en 30 min
+
+
+# ── Cola de temas (Temporada 1) ──────────────────────────────────────────
+# El dueño del canal aporta TÍTULO + INTRODUCCIÓN de cada episodio (humano
+# elige el tema, la IA lo produce). La cola vive en temas_cola.json — para
+# encargar más episodios basta añadir entradas ahí con "titulo", "intro" y
+# "consulta" (términos de búsqueda de imágenes) y estado "pendiente".
+# Cada episodio sale con la estructura fija del canal:
+#   hook → contexto → explicación → casos reales → ¿y si...? → resumen
+TEMAS_COLA = "temas_cola.json"
+TEMAS_CADA_MIN = float(os.environ.get("TEMAS_CADA_MIN", "360"))
+
+_TEMAS_SEMILLA = [
+    ("¿Por qué un F1 puede tomar una curva a más de 250 km/h?",
+     "Todos vemos un Fórmula 1 doblar a velocidades imposibles. Pero ¿qué "
+     "mantiene el coche pegado al asfalto? Hoy vamos a descubrir cómo la "
+     "aerodinámica convierte un monoplaza en una máquina capaz de generar "
+     "toneladas de carga sin despegar del suelo.",
+     "formula 1 car cornering aerodynamics downforce"),
+    ("El secreto del DRS: ¿realmente hace tan fácil adelantar?",
+     "El DRS parece un simple alerón que se abre. Pero detrás de ese botón "
+     "hay años de ingeniería, física y estrategia. Hoy veremos cuándo ayuda "
+     "realmente y cuándo incluso puede convertirse en una desventaja.",
+     "formula 1 rear wing DRS overtake"),
+    ("¿Qué ocurre dentro de un neumático de Fórmula 1?",
+     "Un neumático de F1 puede parecer una simple pieza de goma, pero es "
+     "uno de los componentes más complejos del deporte. Descubre cómo "
+     "cambia su comportamiento vuelta tras vuelta y por qué una diferencia "
+     "de pocos grados puede decidir una carrera.",
+     "formula 1 pirelli tyre closeup"),
+    ("El arte de cuidar neumáticos",
+     "Algunos pilotos destruyen los neumáticos en pocas vueltas. Otros "
+     "consiguen hacerlos durar mucho más sin perder velocidad. Hoy "
+     "analizamos las técnicas que separan a los mejores gestores de "
+     "neumáticos del resto.",
+     "formula 1 tyre wear pit stop"),
+    ("El efecto suelo explicado desde cero",
+     "El efecto suelo regresó para revolucionar la Fórmula 1 moderna. Pero "
+     "¿cómo funciona realmente? Hoy veremos por qué el aire que pasa por "
+     "debajo del coche puede generar un agarre extraordinario.",
+     "formula 1 car floor ground effect underbody"),
+    ("¿Qué hace exactamente un ingeniero de carrera?",
+     "Durante una carrera escuchamos constantemente la radio entre piloto "
+     "e ingeniero. Pero, ¿qué decisiones toma realmente esa persona? Hoy "
+     "exploramos uno de los trabajos más importantes dentro de un equipo "
+     "de Fórmula 1.",
+     "formula 1 race engineer pit wall garage"),
+    ("Cómo decide un equipo cuándo entrar a boxes",
+     "Un pit stop dura apenas unos segundos, pero decidir cuándo hacerlo "
+     "puede requerir millones de simulaciones. Descubre cómo los "
+     "estrategas calculan la vuelta perfecta para cambiar neumáticos.",
+     "formula 1 pit stop crew"),
+    ("El undercut y el overcut: las armas invisibles",
+     "Muchas carreras se ganan sin adelantar en pista. Hoy explicamos dos "
+     "de las estrategias más famosas de la Fórmula 1 y por qué una simple "
+     "parada puede cambiar completamente el resultado.",
+     "formula 1 pit lane strategy race"),
+    ("¿Por qué un coche pierde rendimiento detrás de otro?",
+     "A veces parece que un piloto es mucho más rápido, pero no consigue "
+     "adelantar. La culpa suele tener un nombre: aire sucio. Hoy veremos "
+     "cómo la turbulencia afecta la aerodinámica y el rendimiento.",
+     "formula 1 cars battle slipstream close racing"),
+    ("El sistema híbrido explicado para cualquier aficionado",
+     "Los motores actuales son mucho más que un V6 turbo. Hoy "
+     "descubriremos cómo funcionan el ERS, la batería y los motores "
+     "eléctricos que convierten a un Fórmula 1 moderno en una obra "
+     "maestra de la ingeniería.",
+     "formula 1 power unit engine hybrid"),
+    ("¿Por qué cada circuito exige un coche diferente?",
+     "Mónaco, Monza y Suzuka parecen deportes distintos. Hoy veremos cómo "
+     "los equipos adaptan el coche a cada trazado y por qué no existe una "
+     "configuración perfecta para todas las carreras.",
+     "Monaco Monza Suzuka circuit aerial"),
+    ("El trabajo oculto de la suspensión",
+     "La suspensión no solo hace el coche más cómodo. En Fórmula 1 influye "
+     "directamente en la aerodinámica, el agarre y el desgaste de los "
+     "neumáticos. Hoy analizamos uno de los sistemas más importantes del "
+     "monoplaza.",
+     "formula 1 suspension front wheel detail"),
+    ("¿Cómo se diseña un alerón delantero?",
+     "El alerón delantero es mucho más que una pieza para generar carga. "
+     "Es el primer elemento que controla el flujo de aire hacia todo el "
+     "coche. Descubre por qué unos pocos milímetros pueden cambiar el "
+     "rendimiento de toda la temporada.",
+     "formula 1 front wing detail"),
+    ("¿Qué pasa realmente durante un Safety Car?",
+     "Cuando aparece el Safety Car, la carrera cambia por completo. Hoy "
+     "veremos cómo los estrategas recalculan en segundos cientos de "
+     "escenarios y por qué algunos pilotos ganan posiciones sin adelantar "
+     "a nadie.",
+     "formula 1 safety car"),
+    ("Cómo piensa un estratega de Fórmula 1",
+     "Mientras los pilotos luchan en pista, otro equipo libra una batalla "
+     "silenciosa desde el muro. Hoy entraremos en la mente de un "
+     "estratega para descubrir cómo analiza datos, predice escenarios y "
+     "toma decisiones que pueden definir un Gran Premio.",
+     "formula 1 pit wall team strategy"),
+]
+
+# Estructura fija de cada episodio (nombre, indicación, palabras objetivo).
+# La reconoce la audiencia y hace los episodios consistentes.
+_SECCIONES_TEMA = [
+    ("hook", "THE HOOK (20-30 seconds): open with a surprising question or "
+     "scene that makes it impossible to stop watching. Adapt the provided "
+     "intro — keep its spirit, sharpen it for spoken delivery.", 70),
+    ("contexto", "CONTEXT (1 minute): why this topic matters in Formula 1 "
+     "— what's at stake, who wins or loses because of it.", 150),
+    ("explicacion", "VISUAL EXPLANATION (3-4 minutes): explain the concept "
+     "step by step for a curious fan, using vivid concrete imagery "
+     "(airflow, rubber, temperatures, forces) a viewer can picture. No "
+     "jargon without explaining it.", 520),
+    ("casos", "REAL CASES (3 minutes): 2-3 real, verifiable moments in F1 "
+     "history where this concept decided a race or a season. Use only "
+     "well-known real events — NEVER invent results or quotes.", 430),
+    ("y_si", "WHAT IF...? (1-2 minutes): one thought experiment or "
+     "alternative scenario that makes the viewer think (clearly framed "
+     "as hypothetical).", 220),
+    ("resumen", "FINAL SUMMARY (30-60 seconds): the three key ideas to "
+     "remember, then invite viewers to comment which topic we should "
+     "cover next and to subscribe.", 120),
+]
+
+SYSTEM_TEMA = f"""You are the writer-presenter of an educational \
+motorsport documentary channel. Write the narration for ONE section of an \
+8-12 minute episode, in {IDIOMA_NOMBRE}, as flowing spoken lines (each \
+line 1-3 sentences, natural to read aloud with pauses). Educational but \
+warm and passionate — think National Geographic meets a paddock insider. \
+Facts must be real and verifiable; never invent statistics, results or \
+quotes. Return the lines in order; no headings, no stage directions."""
+
+TEMA_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "titulo": {"type": "string"},
+        "lineas": {"type": "array", "items": {
+            "type": "object",
+            "properties": {"texto": {"type": "string"}},
+            "required": ["texto"], "additionalProperties": False}},
+    },
+    "required": ["titulo", "lineas"],
+    "additionalProperties": False,
+}
+
+
+def _cargar_cola_temas():
+    """Lee la cola; si no existe, la crea con la Temporada 1 del dueño."""
+    try:
+        with open(TEMAS_COLA) as f:
+            return json.load(f)
+    except Exception:
+        cola = {"_ayuda": ("Añade episodios con titulo, intro y consulta "
+                           "(términos de búsqueda de imágenes en inglés); "
+                           "estado pendiente. El canal los produce solo."),
+                "temas": [
+                    {"id": f"t{i + 1:02d}", "titulo": t, "intro": intro,
+                     "consulta": consulta, "estado": "pendiente"}
+                    for i, (t, intro, consulta) in enumerate(_TEMAS_SEMILLA)]}
+        _guardar_cola_temas(cola)
+        return cola
+
+
+def _guardar_cola_temas(cola):
+    try:
+        with open(TEMAS_COLA, "w") as f:
+            json.dump(cola, f, ensure_ascii=False, indent=1)
+    except Exception as e:
+        log.warning("No se pudo guardar la cola de temas (%s)", e)
+
+
+async def _guion_tema(client, tema):
+    """Genera el guion completo de un episodio con la estructura fija.
+    Devuelve (titulo_final, lineas) o (None, [])."""
+    titulo_final = None
+    lineas = []
+    for nombre, indicacion, palabras in _SECCIONES_TEMA:
+        contexto = "\n".join(l for l in lineas[-6:]) or "(episode start)"
+        pedido = (
+            f"EPISODE TOPIC (may be in Spanish — translate/adapt "
+            f"faithfully into {IDIOMA_NOMBRE}): {tema['titulo']}\n"
+            f"OWNER'S INTRO (the angle to honor): {tema['intro']}\n\n"
+            f"SECTION TO WRITE NOW — {indicacion}\n"
+            f"Target length: about {palabras} words.\n"
+            f"Last lines already narrated (continue naturally, never "
+            f"restart the episode):\n{contexto}\n\n"
+            "In 'titulo' give the final YouTube title for the WHOLE "
+            f"episode in {IDIOMA_NOMBRE} (catchy, honest, max 90 chars).")
+        try:
+            r = await client.messages.create(
+                model=MODELO_AHORRO, max_tokens=1400, system=SYSTEM_TEMA,
+                output_config={"format": {"type": "json_schema",
+                                          "schema": TEMA_SCHEMA}},
+                messages=[{"role": "user", "content": pedido}],
+            )
+        except Exception as e:
+            log.warning("Guion del tema '%s' falló en %s (%s)",
+                        tema["titulo"][:40], nombre, e)
+            return None, []
+        if r.stop_reason == "refusal":
+            return None, []
+        try:
+            data = json.loads(next(
+                (b.text for b in r.content if b.type == "text"), ""))
+        except json.JSONDecodeError:
+            return None, []
+        nuevas = [l["texto"] for l in data.get("lineas", []) if l.get("texto")]
+        if not nuevas:
+            return None, []
+        if titulo_final is None:
+            titulo_final = (data.get("titulo") or tema["titulo"])[:95]
+        lineas.extend(nuevas)
+    return titulo_final, lineas
+
+
+async def _producir_tema(tema):
+    """Produce y sube UN episodio de la cola: guion → voz → fotos (bibliote-
+    ca primero) → video 16:9 con música y Ken Burns → YouTube. Devuelve
+    True si quedó subido."""
+    client = anthropic.AsyncAnthropic()
+    titulo, lineas = await _guion_tema(client, tema)
+    if not titulo or len(lineas) < 12:
+        return False
+    log.info("🎓 Produciendo episodio de la cola: %s (%d líneas)",
+             titulo, len(lineas))
+    tmp = os.path.join("temas_video", tema["id"])
+    os.makedirs(tmp, exist_ok=True)
+    audios = []
+    for i, ln in enumerate(lineas):
+        a = await sintetizar("historiador", ln)
+        if a:
+            p = os.path.join(tmp, f"l_{i:03d}.mp3")
+            with open(p, "wb") as f:
+                f.write(a)
+            audios.append(p)
+    audio_total = os.path.join(tmp, "audio.mp3")
+    if not youtube_subir.concat_audios(audios, audio_total):
+        return False
+    fotos = await fotos_para_tema(tema.get("consulta") or titulo, n=20)
+    video = os.path.join(tmp, "video.mp4")
+    if not await youtube_subir.armar_video(audio_total, fotos, titulo, video,
+                                           horizontal=True, con_musica=True):
+        return False
+    descripcion = (
+        f"{tema['intro']}\n\n"
+        "An AI-narrated motorsport explainer. Original narration + "
+        "free-licensed images, no broadcast footage.\n\n"
+        "Which topic should we cover next? Tell us in the comments — "
+        "and subscribe so you don't miss the next episode!\n\n"
+        "#F1 #Formula1 #Motorsport #Explained")
+    res = await youtube_subir.subir_video(
+        video, titulo, descripcion,
+        ["F1", "Formula1", "Motorsport", "Explained", "Educational"])
+    if not res:
+        return False
+    log.info("🎓 Episodio de la cola subido: %s", res["url"])
+    tema["youtube_id"] = res["id"]
+    tema["youtube_url"] = res["url"]
+    shutil.rmtree(tmp, ignore_errors=True)
+    return True
+
+
+async def bucle_temas():
+    """Produce la cola de temas del dueño: un episodio educativo completo
+    cada TEMAS_CADA_MIN minutos (defecto 6 h → ~4 al día como máximo).
+    Nunca produce durante una sesión en vivo (no compite por CPU/API).
+    TEMAS_VIDEO=off lo apaga."""
+    if os.environ.get("TEMAS_VIDEO", "on").lower() in ("off", "0", ""):
+        return
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        return
+    await asyncio.sleep(150)   # dejar arrancar el resto
+    while True:
+        try:
+            if (not estado.sesion_actual
+                    and youtube_subir.oauth_configurado()
+                    and await youtube_subir.asegurar_ffmpeg()):
+                cola = _cargar_cola_temas()
+                pend = next((t for t in cola.get("temas", [])
+                             if t.get("estado") == "pendiente"
+                             and t.get("intentos", 0) < 3), None)
+                if pend:
+                    ok = await _producir_tema(pend)
+                    if ok:
+                        pend["estado"] = "hecho"
+                    else:
+                        pend["intentos"] = pend.get("intentos", 0) + 1
+                    _guardar_cola_temas(cola)
+                    if ok:
+                        await asyncio.sleep(TEMAS_CADA_MIN * 60)
+                        continue
+        except Exception as e:
+            log.warning("Cola de temas: %s", e)
+        await asyncio.sleep(900)   # sin pendientes o falló: revisar en 15 min
 
 
 async def _generar_todos_episodios():

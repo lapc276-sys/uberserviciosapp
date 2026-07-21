@@ -585,17 +585,24 @@ async def armar_video(audio_path, fotos_urls, titulo, salida_mp4,
     tmp = tempfile.mkdtemp(prefix="video_")
     try:
         # Cada elemento puede ser una URL (foto a descargar) o una RUTA
-        # LOCAL ya lista (un gráfico). Los gráficos se encajan completos y
-        # sin rótulo; las fotos se recortan y llevan el título.
+        # LOCAL: los gráficos (archivos g_*.png de graficos_f1) se encajan
+        # completos y sin rótulo; las fotos locales de la biblioteca curada
+        # y las URLs se recortan, llevan título y Ken Burns. En un video
+        # largo (16:9) entran hasta 24 imágenes para que roten seguido; en
+        # un short vertical bastan 8.
+        tope = 24 if horizontal else 8
         imgs = []          # rutas listas
         es_chart = []      # marca por imagen
-        for i, src in enumerate((fotos_urls or [])[:8]):
-            if src and os.path.exists(str(src)):   # gráfico local
-                destino = os.path.join(tmp, f"g_{i}.png")
+        for i, src in enumerate((fotos_urls or [])[:tope]):
+            if src and os.path.exists(str(src)):   # archivo local
+                chart = os.path.basename(str(src)).startswith("g_")
+                ext = ".png" if chart else os.path.splitext(str(src))[1] or ".jpg"
+                destino = os.path.join(tmp,
+                                       f"{'g' if chart else 'lib'}_{i}{ext}")
                 try:
                     shutil.copy(src, destino)
                     imgs.append(destino)
-                    es_chart.append(True)
+                    es_chart.append(chart)
                 except Exception:
                     pass
                 continue
