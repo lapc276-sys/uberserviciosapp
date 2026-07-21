@@ -3125,6 +3125,46 @@ async def fotos_para_tema(consulta, n=10):
     return fotos[:n]
 
 
+def _tarjeta_texto(ruta, texto, subtitulo=""):
+    """Tarjeta 1280x720 con el estilo del canal (fondo oscuro, línea de
+    acento roja): títulos de capítulo y cierre con pregunta. El archivo
+    DEBE llamarse card_*.png para que el armador la muestre completa, sin
+    recorte ni rótulo ni movimiento. Devuelve la ruta o None."""
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+        W, H = 1280, 720
+        im = Image.new("RGB", (W, H), (11, 13, 18))
+        d = ImageDraw.Draw(im)
+        fnt_t = fnt_s = None
+        for f in youtube_subir._FUENTES:
+            if os.path.exists(f):
+                with contextlib.suppress(Exception):
+                    fnt_t = ImageFont.truetype(f, size=58)
+                    fnt_s = ImageFont.truetype(f, size=30)
+                    break
+        if fnt_t is None:
+            fnt_t = fnt_s = ImageFont.load_default()
+        lineas = youtube_subir._envolver(texto, ancho=30).split("\n")
+        alto = 76
+        y0 = (H - alto * len(lineas)) // 2 - (40 if subtitulo else 0)
+        d.rectangle([W // 2 - 70, y0 - 46, W // 2 + 70, y0 - 40],
+                    fill=(225, 6, 0))
+        for i, ln in enumerate(lineas):
+            caja = d.textbbox((0, 0), ln, font=fnt_t)
+            d.text(((W - (caja[2] - caja[0])) / 2, y0 + i * alto), ln,
+                   font=fnt_t, fill=(230, 236, 245))
+        if subtitulo:
+            y1 = y0 + alto * len(lineas) + 34
+            caja = d.textbbox((0, 0), subtitulo, font=fnt_s)
+            d.text(((W - (caja[2] - caja[0])) / 2, y1), subtitulo,
+                   font=fnt_s, fill=(150, 160, 175))
+        im.save(ruta)
+        return ruta
+    except Exception as e:
+        log.info("No se pudo crear la tarjeta (%s)", e)
+        return None
+
+
 def _nuevo_episodio_pedido(tipo, prog):
     """Arma el pedido del capítulo uno de un episodio nuevo (con época
     fija para Historia, para cubrir épocas distintas en orden)."""
@@ -4098,8 +4138,13 @@ async def _procesar_recap(ruta):
                     fotos.append(f_)
         except Exception:
             pass
-    # Los gráficos primero (arrancar el video con datos), luego las fotos
-    imagenes = graficos + fotos
+    # Los gráficos primero (arrancar el video con datos), luego las fotos,
+    # y de última la tarjeta que pide comentarios
+    cierre = _tarjeta_texto(
+        os.path.join(tmp, "card_cta.png"),
+        "What did YOU love or hate about this race?",
+        "Tell us in the comments — and subscribe")
+    imagenes = (graficos + fotos)[:23] + ([cierre] if cierre else [])
 
     titulo = (f"F1 {resumen.get('pais', '')} — {resumen.get('sesion', 'Race')} "
               f"Review: What We Loved & Hated")[:100]
@@ -4195,17 +4240,28 @@ async def _subir_programa_video(ruta_ep):
             json.dump(ep, f)
         return
     # Fotos por el tema de cada capítulo: biblioteca curada primero,
-    # luego Pexels, luego Wikimedia filtrado. Muchas más que antes para
-    # que un video de 10 min no repita 8 fotos eternas.
+    # luego Pexels, luego Wikimedia filtrado. Cada capítulo abre con una
+    # TARJETA con su título (transición clara, sin cortes bruscos) y el
+    # video cierra con una pregunta a la audiencia (comentarios).
     fotos = []
-    for cap in ep["capitulos"][:5]:
+    for j, cap in enumerate(ep["capitulos"][:5]):
+        tema_cap = cap.get("tema") or ep.get("titulo") or "motorsport"
+        if j > 0:   # el video ya abre con el título general — sin tarjeta 0
+            card = _tarjeta_texto(os.path.join(tmp, f"card_{j:02d}.png"),
+                                  tema_cap, prog["titulo"].title())
+            if card:
+                fotos.append(card)
         try:
-            for f_ in await fotos_para_tema(
-                    cap.get("tema") or ep.get("titulo") or "motorsport", n=5):
+            for f_ in await fotos_para_tema(tema_cap, n=5):
                 if f_ not in fotos:
                     fotos.append(f_)
         except Exception:
             pass
+    cierre = _tarjeta_texto(
+        os.path.join(tmp, "card_99.png"),
+        "Which story should we tell next?",
+        "Tell us in the comments — and subscribe")
+    fotos = fotos[:23] + ([cierre] if cierre else [])
     titulo = f"{ep.get('titulo')} | {prog['titulo'].title()}"[:100]
     video = os.path.join(tmp, "video.mp4")
     ok = await youtube_subir.armar_video(audio_total, fotos, titulo, video,
@@ -4503,6 +4559,11 @@ async def _producir_tema(tema):
     if not youtube_subir.concat_audios(audios, audio_total):
         return False
     fotos = await fotos_para_tema(tema.get("consulta") or titulo, n=20)
+    cierre = _tarjeta_texto(
+        os.path.join(tmp, "card_cta.png"),
+        "Which topic should we cover next?",
+        "Tell us in the comments — and subscribe")
+    fotos = fotos[:23] + ([cierre] if cierre else [])
     video = os.path.join(tmp, "video.mp4")
     if not await youtube_subir.armar_video(audio_total, fotos, titulo, video,
                                            horizontal=True, con_musica=True):

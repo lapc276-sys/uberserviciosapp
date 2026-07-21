@@ -595,7 +595,10 @@ async def armar_video(audio_path, fotos_urls, titulo, salida_mp4,
         es_chart = []      # marca por imagen
         for i, src in enumerate((fotos_urls or [])[:tope]):
             if src and os.path.exists(str(src)):   # archivo local
-                chart = os.path.basename(str(src)).startswith("g_")
+                base = os.path.basename(str(src))
+                # g_* = gráfico de datos; card_* = tarjeta de título/cierre.
+                # Ambos van completos, sin recorte ni rótulo ni movimiento.
+                chart = base.startswith("g_") or base.startswith("card_")
                 ext = ".png" if chart else os.path.splitext(str(src))[1] or ".jpg"
                 destino = os.path.join(tmp,
                                        f"{'g' if chart else 'lib'}_{i}{ext}")
@@ -639,19 +642,52 @@ async def armar_video(audio_path, fotos_urls, titulo, salida_mp4,
                 return False
 
         per = max(2.0, dur / len(imgs))
+
+        # Ritmo visual: ninguna imagen quieta más de ~18 s (el ojo se cansa
+        # y la gente se va). Si hay pocas fotos para el largo del video, se
+        # REPITEN en segunda pasada — con el Ken Burns alternando acercar/
+        # alejar, la foto repetida parece otra toma. Los gráficos y las
+        # tarjetas no se repiten.
+        if horizontal and per > 18.0:
+            # Si el video termina con una tarjeta de cierre (chart al
+            # final), mantenerla de ÚLTIMA: los repetidos van antes.
+            cola = []
+            if es_chart and es_chart[-1]:
+                cola = [(imgs.pop(), es_chart.pop())]
+            fotos_i = [i for i, ch in enumerate(es_chart) if not ch]
+            total = len(imgs) + len(cola)
+            while fotos_i and dur / total > 18.0 and total < 60:
+                j = fotos_i[(total - len(fotos_i)) % len(fotos_i)]
+                imgs.append(imgs[j])
+                es_chart.append(es_chart[j])
+                total += 1
+            for im_, ch_ in cola:
+                imgs.append(im_)
+                es_chart.append(ch_)
+            per = max(2.0, dur / len(imgs))
+
         musica = await _musica_docu() if con_musica else None
         limite = 1800 if horizontal else 300  # un VOD largo tarda en codificar
         # Ken Burns solo si está activo y hay al menos una FOTO (los gráficos
         # nunca se mueven — recortaría ejes/etiquetas).
         usar_kb = KEN_BURNS and not all(es_chart)
 
+        # (una foto repetida para el ritmo visual solo se procesa UNA vez —
+        # dos pasadas pintarían el rótulo doble)
+        def _prep(fn_foto, fn_chart=None):
+            vistos = set()
+            for img, chart in zip(imgs, es_chart):
+                if img in vistos:
+                    continue
+                vistos.add(img)
+                if chart:
+                    (fn_chart or _preparar_chart)(img, w, h)
+                else:
+                    fn_foto(img, w, h)
+
         # 1) Intento principal: con Ken Burns (título como overlay fijo)
         if usar_kb:
-            for img, chart in zip(imgs, es_chart):
-                if chart:
-                    _preparar_chart(img, w, h)
-                else:
-                    _cubrir_imagen(img, w, h)   # recorte SIN rótulo
+            _prep(_cubrir_imagen)               # recorte SIN rótulo
             titulo_png = _titulo_overlay(
                 titulo, w, h, os.path.join(tmp, "titulo.png"))
             args = _construir_ffmpeg_kb(imgs, es_chart, titulo_png, audio_path,
@@ -662,15 +698,10 @@ async def armar_video(audio_path, fotos_urls, titulo, salida_mp4,
                 return True
             log.warning("Ken Burns falló (%s) — armo el video clásico", err)
             # Para el plan clásico las fotos necesitan el título pintado
-            for img, chart in zip(imgs, es_chart):
-                if not chart:
-                    _preparar_imagen(img, titulo, w, h)
+            _prep(lambda img, w_, h_: _preparar_imagen(img, titulo, w_, h_),
+                  fn_chart=lambda img, w_, h_: None)
         else:
-            for img, chart in zip(imgs, es_chart):
-                if chart:
-                    _preparar_chart(img, w, h)
-                else:
-                    _preparar_imagen(img, titulo, w, h)
+            _prep(lambda img, w_, h_: _preparar_imagen(img, titulo, w_, h_))
 
         # 2) Plan clásico (concat sin movimiento), con música
         args = _construir_ffmpeg(imgs, audio_path, salida_mp4, per, w, h, fps,
