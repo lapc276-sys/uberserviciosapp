@@ -2874,9 +2874,12 @@ async def imagenes_openverse(query, n=6):
     if not query:
         return []
     try:
+        # Anónimo (sin API key): Openverse rechaza con 401 los page_size
+        # grandes (lo usan para frenar abuso) — tope seguro de 20.
+        tam_pagina = min(max(n * 2, 6), 20)
         async with httpx.AsyncClient(follow_redirects=True) as c:
             r = await c.get("https://api.openverse.org/v1/images/",
-                            params={"q": query, "page_size": n * 2,
+                            params={"q": query, "page_size": tam_pagina,
                                     "license_type": "commercial,modification",
                                     "mature": "false"},
                             timeout=20, headers=_UA_WIKI)
@@ -2997,15 +3000,18 @@ async def _jpeg_para_vision(src):
 
     Con Wikimedia: User-Agent conforme a su política + respeto del
     Retry-After en 429 (igual que youtube_subir._descargar — sin esto,
-    las IPs compartidas de Replit comen 429 seguidos). Además pide la
-    miniatura de 1024px en vez de la de 1920px: pesa un tercio."""
+    las IPs compartidas de Replit comen 429 seguidos). El achicado a
+    1024px se hace con Pillow YA DESCARGADA la imagen: Wikimedia solo
+    acepta ciertos anchos de miniatura fijos y reescribir la URL a mano
+    (p.ej. forzar '/1024px-') puede pedir un ancho no permitido y dar 400
+    — más simple y seguro bajar la que venga y reducirla localmente."""
     try:
         crudo = None
         if os.path.exists(str(src)):
             with open(src, "rb") as f:
                 crudo = f.read()
         else:
-            url = re.sub(r"/(\d{3,4})px-", "/1024px-", str(src))
+            url = str(src)
             for intento in range(3):
                 async with httpx.AsyncClient(follow_redirects=True,
                                              headers=youtube_subir._UA) as c:
