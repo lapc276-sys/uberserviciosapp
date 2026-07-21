@@ -57,6 +57,11 @@ try:
     MUSICA_VOLUMEN = float(os.environ.get("MUSICA_VOLUMEN", "0.12"))
 except ValueError:
     MUSICA_VOLUMEN = 0.12
+# Efecto Ken Burns (zoom/paneo lento sobre las fotos) para que no se vean
+# estáticas. Activado de fábrica; se apaga con KEN_BURNS=off. Los gráficos
+# de datos NUNCA llevan Ken Burns (recortaría ejes/etiquetas).
+KEN_BURNS = os.environ.get("KEN_BURNS", "on").strip().lower() not in (
+    "", "off", "no", "0", "false")
 _DIR_BASE = os.path.dirname(os.path.abspath(__file__))
 _MUSICA_CACHE = os.path.join(_DIR_BASE, "musica_docu.mp3")   # track del usuario
 _MUSICA_GEN = os.path.join(_DIR_BASE, "musica_ambiente.mp3")  # bed generado
@@ -343,12 +348,160 @@ def _construir_ffmpeg(imgs, audio, salida, per, w, h, fps, musica=None):
     return args
 
 
+def _par(x):
+    """Entero par (libx264 exige dimensiones pares)."""
+    x = int(round(x))
+    return x if x % 2 == 0 else x + 1
+
+
+def _construir_ffmpeg_kb(imgs, es_chart, titulo_png, audio, salida, per,
+                         w, h, fps, musica=None):
+    """Como _construir_ffmpeg pero con efecto Ken Burns (zoom lento) en las
+    FOTOS. Los gráficos (es_chart) quedan estáticos y encajados. El título
+    va como overlay FIJO encima (no se mueve ni se recorta con el zoom)."""
+    frames = max(2, int(round(per * fps)))
+    # zoom que sube 1.0→~1.18 (o baja, alternando) a lo largo de la foto
+    paso = 0.18 / frames
+    up = _par(w * 1.30)
+    hp = _par(h * 1.30)
+
+    args = [_ffmpeg(), "-y"]
+    for img in imgs:
+        args += ["-loop", "1", "-framerate", str(fps),
+                 "-t", f"{per:.2f}", "-i", img]
+    args += ["-i", audio]                       # entrada n = voz
+    n = len(imgs)
+    idx = n
+    idx_mus = None
+    if musica:
+        idx_mus = idx + 1
+        args += ["-stream_loop", "-1", "-i", musica]
+    idx_tit = None
+    if titulo_png:
+        idx_tit = (idx_mus if idx_mus is not None else idx) + 1
+        args += ["-loop", "1", "-framerate", str(fps), "-i", titulo_png]
+
+    partes = []
+    for i in range(n):
+        if es_chart[i]:
+            # Gráfico: estático, ya viene encajado a w×h
+            partes.append(f"[{i}:v]scale={w}:{h},setsar=1,fps={fps}[v{i}]")
+        else:
+            # Foto: sube de resolución y aplica zoom centrado. Alterna
+            # acercar/alejar para que no todas se muevan igual.
+            if i % 2 == 0:
+                z = f"min(1.0+{paso:.6f}*on,1.18)"
+            else:
+                z = f"max(1.18-{paso:.6f}*on,1.0)"
+            # d=1: la entrada ya trae per*fps fotogramas (por -loop/-t); con
+            # d=1 sale 1 por 1 y el zoom avanza con 'on' a lo largo del clip.
+            # (d={frames} multiplicaría los fotogramas y reventaría el encode.)
+            partes.append(
+                f"[{i}:v]scale={up}:{hp}:force_original_aspect_ratio="
+                f"increase,crop={up}:{hp},setsar=1,"
+                f"zoompan=z='{z}':x='iw/2-(iw/zoom/2)':"
+                f"y='ih/2-(ih/zoom/2)':d=1:s={w}x{h}:fps={fps}[v{i}]")
+    cadena = "".join(f"[v{i}]" for i in range(n))
+    partes.append(f"{cadena}concat=n={n}:v=1:a=0[vbg]")
+
+    if idx_tit is not None:
+        partes.append(f"[{idx_tit}:v]scale={w}:{h},setsar=1[tit]")
+        partes.append("[vbg][tit]overlay=0:0:shortest=0[vc]")
+    else:
+        partes.append("[vbg]null[vc]")
+
+    if musica:
+        vol = max(0.0, min(1.0, MUSICA_VOLUMEN))
+        partes.append(f"[{idx}:a]volume=1.0[voz]")
+        partes.append(f"[{idx_mus}:a]volume={vol:.3f}[bg]")
+        partes.append("[voz][bg]amix=inputs=2:duration=first:"
+                      "dropout_transition=0,dynaudnorm[aout]")
+        mapa_audio = "[aout]"
+    else:
+        mapa_audio = f"{idx}:a"
+
+    args += [
+        "-filter_complex", ";".join(partes),
+        "-map", "[vc]", "-map", mapa_audio,
+        "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "128k", "-shortest",
+        "-movflags", "+faststart", salida,
+    ]
+    return args
+
+
+def _dibujar_titulo(im, texto, w, h):
+    """Pinta la banda oscura + el título sobre una imagen PIL (RGB o RGBA).
+    Se usa tanto para rotular la foto directamente como para armar el
+    overlay transparente del efecto Ken Burns."""
+    from PIL import ImageDraw, ImageFont
+    d = ImageDraw.Draw(im, "RGBA")
+    tam = w // 18
+    fnt = None
+    for f in _FUENTES:
+        if os.path.exists(f):
+            try:
+                fnt = ImageFont.truetype(f, size=tam)
+                break
+            except Exception:
+                pass
+    if fnt is None:
+        try:
+            fnt = ImageFont.load_default(size=tam)
+        except TypeError:
+            fnt = ImageFont.load_default()
+    lineas = _envolver(texto, ancho=26 if h > w else 44).split("\n")
+    alto = round(tam * 1.35)
+    total = alto * len(lineas)
+    y0 = h - total - (190 if h > w else 64)
+    d.rectangle([0, y0 - 26, w, y0 + total + 26], fill=(0, 0, 0, 150))
+    for i, ln in enumerate(lineas):
+        caja = d.textbbox((0, 0), ln, font=fnt)
+        d.text(((w - (caja[2] - caja[0])) / 2, y0 + i * alto),
+               ln, font=fnt, fill=(255, 255, 255, 255))
+
+
+def _cubrir_imagen(ruta, w, h):
+    """Recorta la foto a w×h tipo 'cover' (sin rótulo). Nunca lanza."""
+    try:
+        from PIL import Image
+        im = Image.open(ruta).convert("RGB")
+        esc = max(w / im.width, h / im.height)
+        im = im.resize((max(1, round(im.width * esc)),
+                        max(1, round(im.height * esc))))
+        x = (im.width - w) // 2
+        y = (im.height - h) // 2
+        im = im.crop((x, y, x + w, y + h))
+        im.save(ruta, quality=88)
+        return True
+    except Exception as e:
+        log.info("No se pudo recortar la imagen (%s)", e)
+        return False
+
+
+def _titulo_overlay(texto, w, h, salida_png):
+    """Crea un PNG TRANSPARENTE w×h con solo la banda + el título, para
+    superponerlo FIJO encima de la foto que se mueve (Ken Burns). Devuelve
+    la ruta, o None si no hay texto o falla."""
+    if not texto:
+        return None
+    try:
+        from PIL import Image
+        capa = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        _dibujar_titulo(capa, texto, w, h)
+        capa.save(salida_png)
+        return salida_png
+    except Exception as e:
+        log.info("No se pudo crear el overlay del título (%s)", e)
+        return None
+
+
 def _preparar_imagen(ruta, texto, w, h):
     """Deja la imagen lista con Pillow: recorte a w×h (tipo cover) y el
     título pintado sobre una banda oscura. Nunca lanza — si algo falla,
-    la imagen queda como estaba."""
+    la imagen queda como estaba. (Ruta clásica sin Ken Burns.)"""
     try:
-        from PIL import Image, ImageDraw, ImageFont
+        from PIL import Image
         im = Image.open(ruta).convert("RGB")
         esc = max(w / im.width, h / im.height)
         im = im.resize((max(1, round(im.width * esc)),
@@ -357,30 +510,7 @@ def _preparar_imagen(ruta, texto, w, h):
         y = (im.height - h) // 2
         im = im.crop((x, y, x + w, y + h))
         if texto:
-            d = ImageDraw.Draw(im, "RGBA")
-            tam = w // 18
-            fnt = None
-            for f in _FUENTES:
-                if os.path.exists(f):
-                    try:
-                        fnt = ImageFont.truetype(f, size=tam)
-                        break
-                    except Exception:
-                        pass
-            if fnt is None:
-                try:
-                    fnt = ImageFont.load_default(size=tam)
-                except TypeError:
-                    fnt = ImageFont.load_default()
-            lineas = _envolver(texto, ancho=26 if h > w else 44).split("\n")
-            alto = round(tam * 1.35)
-            total = alto * len(lineas)
-            y0 = h - total - (190 if h > w else 64)
-            d.rectangle([0, y0 - 26, w, y0 + total + 26], fill=(0, 0, 0, 150))
-            for i, ln in enumerate(lineas):
-                caja = d.textbbox((0, 0), ln, font=fnt)
-                d.text(((w - (caja[2] - caja[0])) / 2, y0 + i * alto),
-                       ln, font=fnt, fill=(255, 255, 255, 255))
+            _dibujar_titulo(im, texto, w, h)
         im.save(ruta, quality=88)
     except Exception as e:
         log.info("No se pudo rotular la imagen (%s)", e)
@@ -400,6 +530,18 @@ def _preparar_chart(ruta, w, h):
         lienzo.save(ruta, quality=90)
     except Exception as e:
         log.info("No se pudo encajar el gráfico (%s)", e)
+
+
+def _correr_ffmpeg(args, salida, limite):
+    """Ejecuta ffmpeg; devuelve (ok, cola_de_stderr)."""
+    try:
+        r = subprocess.run(args, capture_output=True, timeout=limite)
+        if r.returncode == 0 and os.path.exists(salida) \
+                and os.path.getsize(salida) > 0:
+            return True, ""
+        return False, (r.stderr or b"")[-300:].decode("utf-8", "ignore")
+    except Exception as e:
+        return False, str(e)
 
 
 def concat_audios(rutas, salida):
@@ -490,34 +632,56 @@ async def armar_video(audio_path, fotos_urls, titulo, salida_mp4,
                 return False
 
         per = max(2.0, dur / len(imgs))
-
-        # Preparar cada imagen: gráficos encajados (sin rótulo), fotos
-        # recortadas con el título
-        for img, chart in zip(imgs, es_chart):
-            if chart:
-                _preparar_chart(img, w, h)
-            else:
-                _preparar_imagen(img, titulo, w, h)
-
         musica = await _musica_docu() if con_musica else None
         limite = 1800 if horizontal else 300  # un VOD largo tarda en codificar
+        # Ken Burns solo si está activo y hay al menos una FOTO (los gráficos
+        # nunca se mueven — recortaría ejes/etiquetas).
+        usar_kb = KEN_BURNS and not all(es_chart)
+
+        # 1) Intento principal: con Ken Burns (título como overlay fijo)
+        if usar_kb:
+            for img, chart in zip(imgs, es_chart):
+                if chart:
+                    _preparar_chart(img, w, h)
+                else:
+                    _cubrir_imagen(img, w, h)   # recorte SIN rótulo
+            titulo_png = _titulo_overlay(
+                titulo, w, h, os.path.join(tmp, "titulo.png"))
+            args = _construir_ffmpeg_kb(imgs, es_chart, titulo_png, audio_path,
+                                        salida_mp4, per, w, h, fps,
+                                        musica=musica)
+            ok, err = _correr_ffmpeg(args, salida_mp4, limite)
+            if ok:
+                return True
+            log.warning("Ken Burns falló (%s) — armo el video clásico", err)
+            # Para el plan clásico las fotos necesitan el título pintado
+            for img, chart in zip(imgs, es_chart):
+                if not chart:
+                    _preparar_imagen(img, titulo, w, h)
+        else:
+            for img, chart in zip(imgs, es_chart):
+                if chart:
+                    _preparar_chart(img, w, h)
+                else:
+                    _preparar_imagen(img, titulo, w, h)
+
+        # 2) Plan clásico (concat sin movimiento), con música
         args = _construir_ffmpeg(imgs, audio_path, salida_mp4, per, w, h, fps,
                                  musica=musica)
-        r = subprocess.run(args, capture_output=True, timeout=limite)
-        if r.returncode == 0 and os.path.exists(salida_mp4):
+        ok, err = _correr_ffmpeg(args, salida_mp4, limite)
+        if ok:
             return True
-        log.warning("ffmpeg falló al armar el video: %s",
-                    (r.stderr or b"")[-300:].decode("utf-8", "ignore"))
-        # Reintento sin música por si el mix de audio fue el problema
+        log.warning("ffmpeg falló al armar el video: %s", err)
+
+        # 3) Último recurso: sin música por si el mix de audio fue el problema
         if musica:
             log.info("Reintento el video sin música de fondo")
             args = _construir_ffmpeg(imgs, audio_path, salida_mp4, per, w, h,
                                      fps, musica=None)
-            r = subprocess.run(args, capture_output=True, timeout=limite)
-            if r.returncode == 0 and os.path.exists(salida_mp4):
+            ok, err = _correr_ffmpeg(args, salida_mp4, limite)
+            if ok:
                 return True
-            log.warning("ffmpeg falló (sin música también): %s",
-                        (r.stderr or b"")[-300:].decode("utf-8", "ignore"))
+            log.warning("ffmpeg falló (sin música también): %s", err)
         return False
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
