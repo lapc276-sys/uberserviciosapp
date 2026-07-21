@@ -2866,6 +2866,146 @@ def _foto_sospechosa(url):
     return any(x in u for x in _FOTO_MALA)
 
 
+# ── Validación de fotos CON VISIÓN (los ojos del editor) ─────────────────
+# El filtro de texto no ve la imagen; esta capa sí: antes de meter una foto
+# a un video, Claude (modelo barato) la MIRA y descarta collages, páginas
+# escaneadas, capturas, oficinas o fotos fuera de tema. Veredictos cacheados
+# por URL (una foto se valida UNA vez en la vida). Si falla la validación
+# (red, créditos), la foto pasa con el filtro de texto de siempre — la
+# producción nunca se detiene. VALIDAR_FOTOS=off lo apaga.
+VALIDAR_FOTOS = os.environ.get("VALIDAR_FOTOS", "on").lower() not in (
+    "off", "0", "", "no")
+FOTOS_VEREDICTOS = "fotos_veredictos.json"
+_veredictos: dict | None = None
+
+SYSTEM_VISION_FOTO = """You are the photo editor of a professional \
+motorsport TV channel. Decide if this image can air FULL-SCREEN in a \
+documentary about the given topic. REJECT (apta=false) if it is: a \
+collage/montage/photo grid (several images stacked together), a scanned \
+magazine or newspaper page, a screenshot, a diagram/map/logo, an image \
+with heavy text or watermarks, people at desks/computers/offices/sim \
+rigs, or clearly unrelated to motorsport and the topic. Otherwise ACCEPT \
+(apta=true) — a clean generic racing photo is fine even if not exactly \
+on-topic. Be strict about collages and text, lenient about relevance."""
+
+VISION_FOTO_SCHEMA = {
+    "type": "object",
+    "properties": {"apta": {"type": "boolean"},
+                   "motivo": {"type": "string"}},
+    "required": ["apta", "motivo"],
+    "additionalProperties": False,
+}
+
+
+def _cargar_veredictos():
+    global _veredictos
+    if _veredictos is None:
+        try:
+            with open(FOTOS_VEREDICTOS) as f:
+                _veredictos = json.load(f)
+        except Exception:
+            _veredictos = {}
+    return _veredictos
+
+
+def _guardar_veredictos():
+    if _veredictos is None:
+        return
+    try:
+        # Acotar el archivo: quedarse con los últimos ~800 veredictos
+        while len(_veredictos) > 800:
+            _veredictos.pop(next(iter(_veredictos)))
+        with open(FOTOS_VEREDICTOS, "w") as f:
+            json.dump(_veredictos, f)
+    except Exception:
+        pass
+
+
+async def _jpeg_para_vision(src):
+    """Bytes JPEG reducidos (~1024px) de una foto local o URL, en base64
+    — pequeño para que la validación cueste poquísimos tokens. None si no
+    se pudo (y entonces la foto pasa sin validar)."""
+    try:
+        if os.path.exists(str(src)):
+            with open(src, "rb") as f:
+                crudo = f.read()
+        else:
+            async with httpx.AsyncClient(follow_redirects=True,
+                                         headers=_UA_WIKI) as c:
+                r = await c.get(src, timeout=25)
+                r.raise_for_status()
+                crudo = r.content
+        import io
+        from PIL import Image
+        im = Image.open(io.BytesIO(crudo)).convert("RGB")
+        im.thumbnail((1024, 1024))
+        buf = io.BytesIO()
+        im.save(buf, format="JPEG", quality=80)
+        return base64.standard_b64encode(buf.getvalue()).decode("ascii")
+    except Exception as e:
+        log.info("No se pudo preparar la foto para visión (%s)", e)
+        return None
+
+
+async def _foto_aprobada_vision(client, src, tema):
+    """True si la foto pasa la mirada del editor (o si no se puede validar
+    — degradación al filtro de texto). Veredicto cacheado por URL/ruta."""
+    if not VALIDAR_FOTOS:
+        return True
+    veredictos = _cargar_veredictos()
+    clave = str(src)
+    if clave in veredictos:
+        return bool(veredictos[clave])
+    b64 = await _jpeg_para_vision(src)
+    if not b64:
+        return True
+    try:
+        r = await client.messages.create(
+            model=MODELO_AHORRO, max_tokens=150, system=SYSTEM_VISION_FOTO,
+            output_config={"format": {"type": "json_schema",
+                                      "schema": VISION_FOTO_SCHEMA}},
+            messages=[{"role": "user", "content": [
+                {"type": "image", "source": {"type": "base64",
+                                             "media_type": "image/jpeg",
+                                             "data": b64}},
+                {"type": "text",
+                 "text": f"TOPIC: {tema or 'motorsport'}"},
+            ]}],
+        )
+        data = json.loads(next(
+            (b.text for b in r.content if b.type == "text"), "{}"))
+        apta = bool(data.get("apta", True))
+        if not apta:
+            log.info("👁️  Foto descartada por visión (%s): %s",
+                     data.get("motivo", "?"), clave[-80:])
+        veredictos[clave] = apta
+        _guardar_veredictos()
+        return apta
+    except Exception as e:
+        log.info("Validación con visión no disponible (%s) — la foto pasa "
+                 "con el filtro de texto", e)
+        return True
+
+
+async def _filtrar_con_vision(candidatas, tema, n):
+    """Devuelve hasta n fotos aprobadas por el editor con visión, en orden.
+    Corta en cuanto junta n (no gasta validando de más)."""
+    if not candidatas:
+        return []
+    if not (VALIDAR_FOTOS and os.environ.get("ANTHROPIC_API_KEY")):
+        return list(candidatas)[:n]
+    client = anthropic.AsyncAnthropic()
+    aprobadas = []
+    for src in candidatas:
+        if await _foto_aprobada_vision(client, src, tema):
+            aprobadas.append(src)
+        if len(aprobadas) >= n:
+            break
+    # Si la visión tumbó casi todo, completar con las restantes sin validar
+    # es peor que quedarse corto: mejor pocas fotos buenas que collages.
+    return aprobadas
+
+
 async def imagenes_pexels(query, n=6):
     """Fotos de stock de alta calidad y libres de Pexels (crédito al autor
     recomendado). Necesita PEXELS_API_KEY. Devuelve [] si no hay clave."""
@@ -2939,23 +3079,29 @@ def fotos_biblioteca(consulta, n=6):
 
 async def fotos_para_tema(consulta, n=10):
     """Imágenes para un tema con la prioridad del canal: 1) biblioteca
-    curada (aprobadas a mano), 2) Pexels (stock de calidad), 3) Wikimedia
-    (filtrado anti-collage). Mezcla hasta n sin repetir."""
+    curada (aprobadas a mano — no se revalidan), 2) Pexels, 3) Wikimedia
+    filtrado. Las candidatas de búsqueda pasan por el editor con VISIÓN
+    antes de entrar al video."""
     fotos = list(fotos_biblioteca(consulta, n))
-    if len(fotos) < n:
-        try:
-            for url in await imagenes_pexels(consulta, n=n - len(fotos)):
-                if url not in fotos:
-                    fotos.append(url)
-        except Exception:
-            pass
-    if len(fotos) < n:
-        try:
-            for url in await imagenes_wikimedia(consulta, n=n - len(fotos)):
-                if url not in fotos and not _foto_sospechosa(url):
-                    fotos.append(url)
-        except Exception:
-            pass
+    faltan = n - len(fotos)
+    if faltan <= 0:
+        return fotos[:n]
+    # Juntar más candidatas de las necesarias: la visión descartará algunas
+    candidatas = []
+    try:
+        for url in await imagenes_pexels(consulta, n=faltan * 2):
+            if url not in fotos and url not in candidatas:
+                candidatas.append(url)
+    except Exception:
+        pass
+    try:
+        for url in await imagenes_wikimedia(consulta, n=faltan * 2):
+            if (url not in fotos and url not in candidatas
+                    and not _foto_sospechosa(url)):
+                candidatas.append(url)
+    except Exception:
+        pass
+    fotos += await _filtrar_con_vision(candidatas, consulta, faltan)
     return fotos[:n]
 
 
@@ -3436,6 +3582,7 @@ async def _fotos_variadas(short, n=6):
                 break
 
     # 2) Wikimedia: pilotos/equipos que aparezcan en el guion + otros al azar
+    # (juntar algunas de MÁS: el editor con visión descartará las malas)
     presentes = [t for t in _TEMAS_FOTOS if t.split()[0].lower() in guion]
     otros = random.sample(_TEMAS_FOTOS, k=min(5, len(_TEMAS_FOTOS)))
     for t in list(dict.fromkeys(presentes + otros)):
@@ -3443,14 +3590,17 @@ async def _fotos_variadas(short, n=6):
             agregar(await imagenes_wikimedia(t, n=4))
         except Exception:
             pass
-        if len(fotos) >= n:
+        if len(fotos) >= n + 4:
             break
 
     # Respaldo si casi todo estaba usado
     if len(fotos) < 2:
         agregar(await imagenes_wikimedia(
             short.get("tema") or "Formula 1 car", n=n))
-    fotos = fotos[:n]
+
+    # El editor con visión mira cada candidata y se queda con las n buenas
+    fotos = await _filtrar_con_vision(
+        fotos, short.get("tema") or "Formula 1 racing", n)
     usadas.update(fotos)
     if len(usadas) > 500:
         usadas = set(list(usadas)[-400:])
