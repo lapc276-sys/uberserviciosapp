@@ -400,6 +400,7 @@ async def lifespan(app: FastAPI):
               asyncio.create_task(bucle_youtube()),
               asyncio.create_task(bucle_vod()),
               asyncio.create_task(bucle_resumen()),
+              asyncio.create_task(bucle_programas_video()),
               asyncio.create_task(bucle_mapa()),
               asyncio.create_task(bucle_chat())]
     yield
@@ -3878,6 +3879,113 @@ async def bucle_resumen():
         except Exception as e:
             log.warning("Video-reseña: %s", e)
         await asyncio.sleep(120)
+
+
+async def _subir_programa_video(ruta_ep):
+    """Convierte un episodio cacheado (Historia, Tech...) en video 16:9 con
+    voz + fotos y lo sube a YouTube. Marca el episodio para no repetir."""
+    with open(ruta_ep) as f:
+        ep = json.load(f)
+    if ep.get("youtube_id") or ep.get("video_intentos", 0) >= 3:
+        return
+    tipo = ep.get("tipo")
+    prog = PROGRAMAS.get(tipo)
+    if not prog or not ep.get("capitulos"):
+        return
+    voz = prog.get("voz", "historiador")
+    lineas = [ln for cap in ep["capitulos"] for ln in cap.get("lineas", [])]
+    if len(lineas) < 4:
+        return
+    log.info("📼 Armando video del programa: %s — %s",
+             prog["titulo"], ep.get("titulo"))
+    tmp = os.path.join("programas_video", _id_episodio_completo(
+        tipo, ep.get("titulo") or ""))
+    os.makedirs(tmp, exist_ok=True)
+    # Audio (usa el caché de audio por línea → barato si ya se emitió)
+    audios = []
+    for i, ln in enumerate(lineas):
+        a = await sintetizar(voz, ln)
+        if a:
+            p = os.path.join(tmp, f"l_{i:03d}.mp3")
+            with open(p, "wb") as f:
+                f.write(a)
+            audios.append(p)
+    audio_total = os.path.join(tmp, "audio.mp3")
+    if not youtube_subir.concat_audios(audios, audio_total):
+        ep["video_intentos"] = ep.get("video_intentos", 0) + 1
+        with open(ruta_ep, "w") as f:
+            json.dump(ep, f)
+        return
+    # Fotos por el tema de cada capítulo
+    fotos = []
+    for cap in ep["capitulos"][:4]:
+        try:
+            for url in await imagenes_wikimedia(
+                    cap.get("tema") or ep.get("titulo") or "motorsport", n=3):
+                if url not in fotos and not _foto_sospechosa(url):
+                    fotos.append(url)
+        except Exception:
+            pass
+    titulo = f"{ep.get('titulo')} | {prog['titulo'].title()}"[:100]
+    video = os.path.join(tmp, "video.mp4")
+    ok = await youtube_subir.armar_video(audio_total, fotos, titulo, video,
+                                         horizontal=True)
+    if not ok:
+        ep["video_intentos"] = ep.get("video_intentos", 0) + 1
+        with open(ruta_ep, "w") as f:
+            json.dump(ep, f)
+        return
+    descripcion = (
+        f"{prog['titulo'].title()} — {ep.get('titulo')}.\n\n"
+        "An AI-narrated motorsport documentary. Original narration + "
+        "free-licensed images, no broadcast footage.\n\n"
+        "Subscribe for more, and tell us what you'd like us to cover next!\n\n"
+        "#F1 #Formula1 #Motorsport #Documentary")
+    res = await youtube_subir.subir_video(
+        video, titulo, descripcion,
+        ["F1", "Formula1", "Motorsport", "Documentary", prog["titulo"]])
+    if res:
+        log.info("📼 Video de programa subido: %s", res["url"])
+        ep["youtube_id"] = res["id"]
+        ep["youtube_url"] = res["url"]
+        with open(ruta_ep, "w") as f:
+            json.dump(ep, f)
+        shutil.rmtree(tmp, ignore_errors=True)
+    else:
+        ep["video_intentos"] = ep.get("video_intentos", 0) + 1
+        with open(ruta_ep, "w") as f:
+            json.dump(ep, f)
+
+
+async def bucle_programas_video():
+    """Sube los episodios cacheados (Historia, Tech, Dinero...) como videos
+    sueltos a YouTube — para la playlist tipo podcast. Uno a la vez, con
+    pausa entre subidas para respetar la cuota de la API."""
+    if os.environ.get("PROGRAMAS_VIDEO", "on").lower() in ("off", "0", ""):
+        return
+    os.makedirs("programas_video", exist_ok=True)
+    await asyncio.sleep(90)   # dejar que arranque todo lo demás
+    while True:
+        try:
+            if (youtube_subir.oauth_configurado()
+                    and await youtube_subir.asegurar_ffmpeg()
+                    and os.path.isdir("episodes")):
+                for a in sorted(os.listdir("episodes")):
+                    if not (a.startswith("ep_") and a.endswith(".json")):
+                        continue
+                    ruta = os.path.join("episodes", a)
+                    try:
+                        with open(ruta) as f:
+                            ep = json.load(f)
+                    except Exception:
+                        continue
+                    if ep.get("youtube_id") or ep.get("video_intentos", 0) >= 3:
+                        continue
+                    await _subir_programa_video(ruta)
+                    await asyncio.sleep(60)  # espaciar subidas (cuota)
+        except Exception as e:
+            log.warning("Videos de programas: %s", e)
+        await asyncio.sleep(1800)  # revisar de nuevo en 30 min
 
 
 async def _generar_todos_episodios():
