@@ -47,6 +47,20 @@ _FUENTES = [
     "/Library/Fonts/Arial.ttf",
 ]
 
+# Música de fondo para documentales/programas (estilo Nat Geo/Discovery):
+# instrumental suave, muy bajita, bajo la narración. El track lo aporta el
+# usuario vía el Secret MUSICA_DOCU (URL a un MP3 SIN copyright —
+# Pixabay Music / YouTube Audio Library CC0). Si no hay track o falla la
+# descarga, el video se arma igual, solo sin música.
+MUSICA_DOCU_URL = os.environ.get("MUSICA_DOCU", "").strip()
+try:
+    MUSICA_VOLUMEN = float(os.environ.get("MUSICA_VOLUMEN", "0.12"))
+except ValueError:
+    MUSICA_VOLUMEN = 0.12
+_MUSICA_CACHE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "musica_docu.mp3")
+_musica_estado = {"listo": False, "ruta": None}
+
 
 # ffmpeg propio: el de Replit (nix) puede estar roto en tiempo de
 # ejecución (symbol lookup error de harfbuzz/freetype) aunque exista en el
@@ -174,6 +188,37 @@ async def _descargar(url, destino):
     return False
 
 
+async def _musica_docu():
+    """Devuelve la ruta local a la música de fondo (la baja UNA vez y la
+    cachea). Si no hay MUSICA_DOCU configurada o falla la descarga,
+    devuelve None y el video se arma sin música."""
+    if not MUSICA_DOCU_URL:
+        return None
+    if _musica_estado["listo"]:
+        return _musica_estado["ruta"]
+    # Ya en disco de una corrida anterior
+    if os.path.exists(_MUSICA_CACHE) and os.path.getsize(_MUSICA_CACHE) > 0:
+        _musica_estado.update(listo=True, ruta=_MUSICA_CACHE)
+        return _MUSICA_CACHE
+    try:
+        async with httpx.AsyncClient(follow_redirects=True,
+                                     headers=_UA) as c:
+            r = await c.get(MUSICA_DOCU_URL, timeout=90)
+            r.raise_for_status()
+            with open(_MUSICA_CACHE, "wb") as f:
+                f.write(r.content)
+        if os.path.getsize(_MUSICA_CACHE) > 0:
+            _musica_estado.update(listo=True, ruta=_MUSICA_CACHE)
+            log.info("🎵 Música de fondo lista (%s)", _MUSICA_CACHE)
+            return _MUSICA_CACHE
+    except Exception as e:
+        log.info("No se pudo bajar la música de fondo (%s)", e)
+    # Marcar como intentado para no reintentar en cada video
+    _musica_estado["listo"] = True
+    _musica_estado["ruta"] = None
+    return None
+
+
 def _duracion_audio(path):
     try:
         out = subprocess.run(
@@ -200,15 +245,20 @@ def _envolver(texto, ancho=26):
     return "\n".join(lineas[:4])
 
 
-def _construir_ffmpeg(imgs, audio, salida, per, w, h, fps):
+def _construir_ffmpeg(imgs, audio, salida, per, w, h, fps, musica=None):
     """Arma la lista de argumentos de ffmpeg (el rótulo ya viene pintado
     en las imágenes con Pillow — el drawtext del build estático no está
-    disponible)."""
+    disponible).
+
+    Si `musica` es una ruta a un MP3, se mezcla en bucle MUY bajita bajo la
+    narración (estilo documental) y se corta con la voz (duration=first)."""
     args = [_ffmpeg(), "-y"]
     for img in imgs:
         args += ["-loop", "1", "-t", f"{per:.2f}", "-i", img]
-    args += ["-i", audio]
+    args += ["-i", audio]                       # entrada n = voz
     n = len(imgs)
+    if musica:
+        args += ["-stream_loop", "-1", "-i", musica]   # entrada n+1 = música
 
     partes = []
     for i in range(n):
@@ -218,9 +268,21 @@ def _construir_ffmpeg(imgs, audio, salida, per, w, h, fps):
     cadena = "".join(f"[v{i}]" for i in range(n))
     partes.append(f"{cadena}concat=n={n}:v=1:a=0[vc]")
 
+    if musica:
+        vol = max(0.0, min(1.0, MUSICA_VOLUMEN))
+        partes.append(f"[{n}:a]volume=1.0[voz]")
+        partes.append(f"[{n + 1}:a]volume={vol:.3f}[bg]")
+        # duration=first → la mezcla dura lo que la voz; dropout_transition=0
+        # evita que la música suba de volumen si la voz calla un instante.
+        partes.append("[voz][bg]amix=inputs=2:duration=first:"
+                      "dropout_transition=0,dynaudnorm[aout]")
+        mapa_audio = "[aout]"
+    else:
+        mapa_audio = f"{n}:a"
+
     args += [
         "-filter_complex", ";".join(partes),
-        "-map", "[vc]", "-map", f"{n}:a",
+        "-map", "[vc]", "-map", mapa_audio,
         "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-b:a", "128k", "-shortest",
         "-movflags", "+faststart", salida,
@@ -310,9 +372,12 @@ def concat_audios(rutas, salida):
 
 
 async def armar_video(audio_path, fotos_urls, titulo, salida_mp4,
-                      horizontal=False):
+                      horizontal=False, con_musica=False):
     """Construye el MP4 (vertical para shorts; 16:9 para VODs de sesión).
-    Devuelve True si se creó."""
+    Devuelve True si se creó.
+
+    con_musica=True mezcla música de fondo suave bajo la narración (solo si
+    hay MUSICA_DOCU configurada) — pensado para documentales/programas."""
     if not ffmpeg_disponible():
         log.warning("ffmpeg no disponible: no se puede armar el video")
         return False
@@ -381,13 +446,25 @@ async def armar_video(audio_path, fotos_urls, titulo, salida_mp4,
             else:
                 _preparar_imagen(img, titulo, w, h)
 
+        musica = await _musica_docu() if con_musica else None
         limite = 1800 if horizontal else 300  # un VOD largo tarda en codificar
-        args = _construir_ffmpeg(imgs, audio_path, salida_mp4, per, w, h, fps)
+        args = _construir_ffmpeg(imgs, audio_path, salida_mp4, per, w, h, fps,
+                                 musica=musica)
         r = subprocess.run(args, capture_output=True, timeout=limite)
         if r.returncode == 0 and os.path.exists(salida_mp4):
             return True
         log.warning("ffmpeg falló al armar el video: %s",
                     (r.stderr or b"")[-300:].decode("utf-8", "ignore"))
+        # Reintento sin música por si el mix de audio fue el problema
+        if musica:
+            log.info("Reintento el video sin música de fondo")
+            args = _construir_ffmpeg(imgs, audio_path, salida_mp4, per, w, h,
+                                     fps, musica=None)
+            r = subprocess.run(args, capture_output=True, timeout=limite)
+            if r.returncode == 0 and os.path.exists(salida_mp4):
+                return True
+            log.warning("ffmpeg falló (sin música también): %s",
+                        (r.stderr or b"")[-300:].decode("utf-8", "ignore"))
         return False
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

@@ -3827,7 +3827,7 @@ async def _procesar_recap(ruta):
               f"Review: What We Loved & Hated")[:100]
     video = os.path.join(tmp, "recap.mp4")
     ok = await youtube_subir.armar_video(audio_total, imagenes, titulo, video,
-                                         horizontal=True)
+                                         horizontal=True, con_musica=True)
     if not ok:
         resumen["intentos"] = resumen.get("intentos", 0) + 1
         with open(ruta, "w") as f:
@@ -3929,7 +3929,7 @@ async def _subir_programa_video(ruta_ep):
     titulo = f"{ep.get('titulo')} | {prog['titulo'].title()}"[:100]
     video = os.path.join(tmp, "video.mp4")
     ok = await youtube_subir.armar_video(audio_total, fotos, titulo, video,
-                                         horizontal=True)
+                                         horizontal=True, con_musica=True)
     if not ok:
         ep["video_intentos"] = ep.get("video_intentos", 0) + 1
         with open(ruta_ep, "w") as f:
