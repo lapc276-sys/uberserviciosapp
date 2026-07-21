@@ -3064,7 +3064,10 @@ async def imagenes_pexels(query, n=6):
 # imágenes apruebes, menos decide la búsqueda automática.
 BIBLIOTECA_DIR = "biblioteca"
 BIBLIOTECA_MANIFIESTO = os.path.join(BIBLIOTECA_DIR, "biblioteca.json")
-_EXT_IMG = (".jpg", ".jpeg", ".png", ".webp")
+# También acepta CLIPS de video (dominio público/CC0, p. ej. noticiarios
+# antiguos de archive.org): se intercalan como tomas en movimiento.
+_EXT_IMG = (".jpg", ".jpeg", ".png", ".webp",
+            ".mp4", ".mov", ".webm", ".m4v", ".mpg", ".mpeg", ".avi")
 
 
 def fotos_biblioteca(consulta, n=6):

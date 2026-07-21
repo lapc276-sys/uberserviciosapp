@@ -22,6 +22,7 @@ import asyncio
 import contextlib
 import logging
 import os
+import random
 import shutil
 import subprocess
 import tempfile
@@ -62,6 +63,10 @@ except ValueError:
 # de datos NUNCA llevan Ken Burns (recortaría ejes/etiquetas).
 KEN_BURNS = os.environ.get("KEN_BURNS", "on").strip().lower() not in (
     "", "off", "no", "0", "false")
+# Clips de VIDEO de la biblioteca curada (dominio público / CC0 — p. ej.
+# noticiarios antiguos de archive.org): se intercalan como tomas en
+# movimiento entre las fotos. Solo archivos locales aprobados por el dueño.
+_EXT_CLIP = (".mp4", ".mov", ".webm", ".m4v", ".mpg", ".mpeg", ".avi")
 _DIR_BASE = os.path.dirname(os.path.abspath(__file__))
 _MUSICA_CACHE = os.path.join(_DIR_BASE, "musica_docu.mp3")   # track del usuario
 _MUSICA_GEN = os.path.join(_DIR_BASE, "musica_ambiente.mp3")  # bed generado
@@ -303,16 +308,23 @@ def _envolver(texto, ancho=26):
     return "\n".join(lineas[:4])
 
 
-def _construir_ffmpeg(imgs, audio, salida, per, w, h, fps, musica=None):
+def _construir_ffmpeg(imgs, audio, salida, per, w, h, fps, musica=None,
+                      es_clip=None):
     """Arma la lista de argumentos de ffmpeg (el rótulo ya viene pintado
     en las imágenes con Pillow — el drawtext del build estático no está
     disponible).
 
     Si `musica` es una ruta a un MP3, se mezcla en bucle MUY bajita bajo la
-    narración (estilo documental) y se corta con la voz (duration=first)."""
+    narración (estilo documental) y se corta con la voz (duration=first).
+    Las entradas marcadas en `es_clip` son segmentos de video YA
+    normalizados (per s, w×h, mudos) — entran tal cual, sin -loop."""
+    es_clip = es_clip or [False] * len(imgs)
     args = [_ffmpeg(), "-y"]
-    for img in imgs:
-        args += ["-loop", "1", "-t", f"{per:.2f}", "-i", img]
+    for img, cl in zip(imgs, es_clip):
+        if cl:
+            args += ["-i", img]
+        else:
+            args += ["-loop", "1", "-t", f"{per:.2f}", "-i", img]
     args += ["-i", audio]                       # entrada n = voz
     n = len(imgs)
     if musica:
@@ -320,9 +332,12 @@ def _construir_ffmpeg(imgs, audio, salida, per, w, h, fps, musica=None):
 
     partes = []
     for i in range(n):
-        partes.append(
-            f"[{i}:v]scale={w}:{h}:force_original_aspect_ratio="
-            f"increase,crop={w}:{h},setsar=1,fps={fps}[v{i}]")
+        if es_clip[i]:
+            partes.append(f"[{i}:v]scale={w}:{h},setsar=1,fps={fps}[v{i}]")
+        else:
+            partes.append(
+                f"[{i}:v]scale={w}:{h}:force_original_aspect_ratio="
+                f"increase,crop={w}:{h},setsar=1,fps={fps}[v{i}]")
     cadena = "".join(f"[v{i}]" for i in range(n))
     partes.append(f"{cadena}concat=n={n}:v=1:a=0[vc]")
 
@@ -355,10 +370,12 @@ def _par(x):
 
 
 def _construir_ffmpeg_kb(imgs, es_chart, titulo_png, audio, salida, per,
-                         w, h, fps, musica=None):
+                         w, h, fps, musica=None, es_clip=None):
     """Como _construir_ffmpeg pero con efecto Ken Burns (zoom lento) en las
-    FOTOS. Los gráficos (es_chart) quedan estáticos y encajados. El título
-    va como overlay FIJO encima (no se mueve ni se recorta con el zoom)."""
+    FOTOS. Los gráficos (es_chart) quedan estáticos y encajados; los clips
+    (es_clip, ya normalizados) entran tal cual — traen movimiento propio.
+    El título va como overlay FIJO encima (no se mueve con el zoom)."""
+    es_clip = es_clip or [False] * len(imgs)
     frames = max(2, int(round(per * fps)))
     # zoom que sube 1.0→~1.18 (o baja, alternando) a lo largo de la foto
     paso = 0.18 / frames
@@ -366,9 +383,12 @@ def _construir_ffmpeg_kb(imgs, es_chart, titulo_png, audio, salida, per,
     hp = _par(h * 1.30)
 
     args = [_ffmpeg(), "-y"]
-    for img in imgs:
-        args += ["-loop", "1", "-framerate", str(fps),
-                 "-t", f"{per:.2f}", "-i", img]
+    for img, cl in zip(imgs, es_clip):
+        if cl:
+            args += ["-i", img]
+        else:
+            args += ["-loop", "1", "-framerate", str(fps),
+                     "-t", f"{per:.2f}", "-i", img]
     args += ["-i", audio]                       # entrada n = voz
     n = len(imgs)
     idx = n
@@ -383,8 +403,8 @@ def _construir_ffmpeg_kb(imgs, es_chart, titulo_png, audio, salida, per,
 
     partes = []
     for i in range(n):
-        if es_chart[i]:
-            # Gráfico: estático, ya viene encajado a w×h
+        if es_chart[i] or es_clip[i]:
+            # Gráfico (estático, encajado) o clip (movimiento propio)
             partes.append(f"[{i}:v]scale={w}:{h},setsar=1,fps={fps}[v{i}]")
         else:
             # Foto: sube de resolución y aplica zoom centrado. Alterna
@@ -532,6 +552,32 @@ def _preparar_chart(ruta, w, h):
         log.info("No se pudo encajar el gráfico (%s)", e)
 
 
+def _preparar_clip(src, destino, per, w, h, fps):
+    """Normaliza un clip de la biblioteca a EXACTAMENTE per segundos, w×h
+    y sin audio (la narración manda). Si el clip es más largo, arranca en
+    un punto al azar (variedad); si es más corto, se repite en bucle.
+    Devuelve True si quedó listo."""
+    try:
+        args = [_ffmpeg(), "-y"]
+        dur_clip = _duracion_audio(src)   # ffprobe: sirve para video también
+        if dur_clip > per + 2:
+            args += ["-ss", f"{random.uniform(0, dur_clip - per - 1):.1f}"]
+        args += ["-stream_loop", "-1", "-i", src, "-t", f"{per:.2f}",
+                 "-vf", (f"scale={w}:{h}:force_original_aspect_ratio="
+                         f"increase,crop={w}:{h},setsar=1,fps={fps}"),
+                 "-an", "-c:v", "libx264", "-preset", "veryfast",
+                 "-pix_fmt", "yuv420p", destino]
+        r = subprocess.run(args, capture_output=True, timeout=300)
+        if r.returncode == 0 and os.path.exists(destino) \
+                and os.path.getsize(destino) > 0:
+            return True
+        log.info("Clip no se pudo preparar: %s",
+                 (r.stderr or b"")[-200:].decode("utf-8", "ignore"))
+    except Exception as e:
+        log.info("Clip no se pudo preparar (%s)", e)
+    return False
+
+
 def _correr_ffmpeg(args, salida, limite):
     """Ejecuta ffmpeg; devuelve (ok, cola_de_stderr)."""
     try:
@@ -592,20 +638,24 @@ async def armar_video(audio_path, fotos_urls, titulo, salida_mp4,
         # un short vertical bastan 8.
         tope = 24 if horizontal else 8
         imgs = []          # rutas listas
-        es_chart = []      # marca por imagen
+        es_chart = []      # gráfico/tarjeta: completo, sin rótulo ni zoom
+        es_clip = []       # clip de video de la biblioteca (en movimiento)
         for i, src in enumerate((fotos_urls or [])[:tope]):
             if src and os.path.exists(str(src)):   # archivo local
                 base = os.path.basename(str(src))
                 # g_* = gráfico de datos; card_* = tarjeta de título/cierre.
                 # Ambos van completos, sin recorte ni rótulo ni movimiento.
                 chart = base.startswith("g_") or base.startswith("card_")
+                clip = (not chart
+                        and os.path.splitext(base)[1].lower() in _EXT_CLIP)
                 ext = ".png" if chart else os.path.splitext(str(src))[1] or ".jpg"
-                destino = os.path.join(tmp,
-                                       f"{'g' if chart else 'lib'}_{i}{ext}")
+                pref = "g" if chart else ("clip" if clip else "lib")
+                destino = os.path.join(tmp, f"{pref}_{i}{ext}")
                 try:
                     shutil.copy(src, destino)
                     imgs.append(destino)
                     es_chart.append(chart)
+                    es_clip.append(clip)
                 except Exception:
                     pass
                 continue
@@ -615,6 +665,7 @@ async def armar_video(audio_path, fotos_urls, titulo, salida_mp4,
             if await _descargar(src, destino):
                 imgs.append(destino)
                 es_chart.append(False)
+                es_clip.append(False)
 
         # Sin fotos: un fondo oscuro sólido como respaldo. Pillow primero
         # (siempre disponible); ffmpeg lavfi como plan B con su error real
@@ -638,6 +689,7 @@ async def armar_video(audio_path, fotos_urls, titulo, salida_mp4,
             if os.path.exists(fondo):
                 imgs = [fondo]
                 es_chart = [False]
+                es_clip = [False]
             else:
                 return False
 
@@ -653,31 +705,59 @@ async def armar_video(audio_path, fotos_urls, titulo, salida_mp4,
             # final), mantenerla de ÚLTIMA: los repetidos van antes.
             cola = []
             if es_chart and es_chart[-1]:
-                cola = [(imgs.pop(), es_chart.pop())]
-            fotos_i = [i for i, ch in enumerate(es_chart) if not ch]
+                cola = [(imgs.pop(), es_chart.pop(), es_clip.pop())]
+            fotos_i = [i for i, (ch, cl) in enumerate(zip(es_chart, es_clip))
+                       if not ch and not cl]
             total = len(imgs) + len(cola)
             while fotos_i and dur / total > 18.0 and total < 60:
                 j = fotos_i[(total - len(fotos_i)) % len(fotos_i)]
                 imgs.append(imgs[j])
                 es_chart.append(es_chart[j])
+                es_clip.append(False)
                 total += 1
-            for im_, ch_ in cola:
+            for im_, ch_, cl_ in cola:
                 imgs.append(im_)
                 es_chart.append(ch_)
+                es_clip.append(cl_)
             per = max(2.0, dur / len(imgs))
+
+        # Normalizar los clips de la biblioteca a per segundos, w×h, mudos.
+        # Un clip que falle se cae de la lista y el video sigue con el resto.
+        if any(es_clip):
+            listos = {}
+            for i, (img, cl) in enumerate(zip(imgs, es_clip)):
+                if not cl or img in listos:
+                    continue
+                destino = img + f".seg.mp4"
+                listos[img] = destino if await asyncio.to_thread(
+                    _preparar_clip, img, destino, per, w, h, fps) else None
+            filtrado = [(listos.get(im, im) if cl else im, ch, cl)
+                        for im, ch, cl in zip(imgs, es_chart, es_clip)
+                        if not (cl and listos.get(im) is None)]
+            if not filtrado:
+                return False
+            imgs, es_chart, es_clip = (list(x) for x in zip(*filtrado))
+            # Los clips ya quedaron recortados al per anterior; si alguno
+            # se cayó, las FOTOS absorben su tiempo para que el video no
+            # quede más corto que la narración.
+            n_cl = sum(es_clip)
+            n_resto = len(imgs) - n_cl
+            if n_resto > 0:
+                per = max(2.0, (dur - n_cl * per) / n_resto)
 
         musica = await _musica_docu() if con_musica else None
         limite = 1800 if horizontal else 300  # un VOD largo tarda en codificar
-        # Ken Burns solo si está activo y hay al menos una FOTO (los gráficos
-        # nunca se mueven — recortaría ejes/etiquetas).
-        usar_kb = KEN_BURNS and not all(es_chart)
+        # Ken Burns solo si está activo y hay al menos una FOTO (los
+        # gráficos nunca se mueven; los clips ya traen movimiento propio).
+        usar_kb = KEN_BURNS and any(
+            not (ch or cl) for ch, cl in zip(es_chart, es_clip))
 
         # (una foto repetida para el ritmo visual solo se procesa UNA vez —
-        # dos pasadas pintarían el rótulo doble)
+        # dos pasadas pintarían el rótulo doble; los clips no se tocan)
         def _prep(fn_foto, fn_chart=None):
             vistos = set()
-            for img, chart in zip(imgs, es_chart):
-                if img in vistos:
+            for img, chart, clip in zip(imgs, es_chart, es_clip):
+                if img in vistos or clip:
                     continue
                 vistos.add(img)
                 if chart:
@@ -692,7 +772,7 @@ async def armar_video(audio_path, fotos_urls, titulo, salida_mp4,
                 titulo, w, h, os.path.join(tmp, "titulo.png"))
             args = _construir_ffmpeg_kb(imgs, es_chart, titulo_png, audio_path,
                                         salida_mp4, per, w, h, fps,
-                                        musica=musica)
+                                        musica=musica, es_clip=es_clip)
             ok, err = _correr_ffmpeg(args, salida_mp4, limite)
             if ok:
                 return True
@@ -705,7 +785,7 @@ async def armar_video(audio_path, fotos_urls, titulo, salida_mp4,
 
         # 2) Plan clásico (concat sin movimiento), con música
         args = _construir_ffmpeg(imgs, audio_path, salida_mp4, per, w, h, fps,
-                                 musica=musica)
+                                 musica=musica, es_clip=es_clip)
         ok, err = _correr_ffmpeg(args, salida_mp4, limite)
         if ok:
             return True
@@ -715,7 +795,7 @@ async def armar_video(audio_path, fotos_urls, titulo, salida_mp4,
         if musica:
             log.info("Reintento el video sin música de fondo")
             args = _construir_ffmpeg(imgs, audio_path, salida_mp4, per, w, h,
-                                     fps, musica=None)
+                                     fps, musica=None, es_clip=es_clip)
             ok, err = _correr_ffmpeg(args, salida_mp4, limite)
             if ok:
                 return True
