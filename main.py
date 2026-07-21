@@ -114,6 +114,41 @@ SOLO_SESIONES = os.environ.get("SOLO_SESIONES", "")
 # ($0). Así hay contenido cerca de las carreras y ahorro el resto del
 # tiempo. DOCU_HORAS=0 vuelve al OFF AIR puro entre sesiones.
 DOCU_HORAS = float(os.environ.get("DOCU_HORAS", "4"))
+# Qué TIPOS de sesión se transmiten en vivo. Por análisis de audiencia las
+# carreras rinden poco frente a los shorts, así que vamos soltándolas de a
+# poco: de fábrica dejamos SOLO Clasificación, Sprint y Carrera (sin los
+# Libres, que casi nadie ve). Se ajusta con el Secret SESIONES_EN_VIVO, una
+# lista separada por comas. Valores admitidos (insensible a
+# mayúsculas/espacios): "race", "sprint", "sprint qualifying", "qualifying",
+# "practice" (cubre FP1/FP2/FP3). Ejemplos:
+#   SESIONES_EN_VIVO=race                 → solo la carrera
+#   SESIONES_EN_VIVO=race,qualifying      → carrera y clasificación
+#   SESIONES_EN_VIVO=all                  → todo, incluidos los libres
+_SES_DEF = "race,sprint,sprint qualifying,qualifying"
+_ses_cfg = os.environ.get("SESIONES_EN_VIVO", _SES_DEF).strip().lower()
+SESIONES_EN_VIVO = ("all" if _ses_cfg in ("all", "todo", "todas", "*")
+                    else {t.strip() for t in _ses_cfg.split(",") if t.strip()})
+
+
+def _sesion_transmitible(nombre):
+    """True si este tipo de sesión debe salir en vivo según SESIONES_EN_VIVO.
+    Los libres (Practice 1/2/3) se agrupan bajo la clave 'practice'."""
+    if SESIONES_EN_VIVO == "all":
+        return True
+    n = (nombre or "").strip().lower()
+    if n.startswith("practice"):
+        n = "practice"
+    return n in SESIONES_EN_VIVO
+
+
+def _horario_en_vivo():
+    """El calendario filtrado a solo los tipos de sesión que transmitimos.
+    El calendario COMPLETO (estado.horario) se sigue mostrando en pantalla;
+    esto solo decide para qué sesiones el canal se pone al aire."""
+    return [s for s in (estado.horario or [])
+            if _sesion_transmitible(s.get("sesion"))]
+
+
 # La parrilla se activa con cualquiera de las dos:
 GRID_ON = bool(PROGRAMACION_AUTO or SOLO_SESIONES)
 # Modo ahorro automático: el canal usa el modelo caro (máxima calidad)
@@ -4028,7 +4063,7 @@ async def bucle_pregen_carreras():
 
     while True:
         ahora = dt.datetime.now(dt.timezone.utc)
-        s = sesion_en_ventana(ahora, estado.horario,
+        s = sesion_en_ventana(ahora, _horario_en_vivo(),
                               antes_min=antes_min, despues_min=0)
 
         if s and not pregen_hecho:
@@ -4538,6 +4573,11 @@ async def bucle_programacion():
     else:
         log.info("🗓️  Parrilla automática activa 24/7 (pre-show %g min antes)",
                  PRESHOW_MINUTOS)
+    if SESIONES_EN_VIVO == "all":
+        log.info("🏁 Sesiones en vivo: TODAS (incluidos los libres)")
+    else:
+        log.info("🏁 Sesiones en vivo: %s (los demás tipos no salen al aire)",
+                 ", ".join(sorted(SESIONES_EN_VIVO)) or "(ninguna)")
     idx = 0
     prox_rotacion = 0.0
     en_standby = False
@@ -4545,7 +4585,7 @@ async def bucle_programacion():
     cierre_hecho_para = None  # session_key ya despedida (evita repetir)
     while True:
         ahora = dt.datetime.now(dt.timezone.utc)
-        s = sesion_en_ventana(ahora, estado.horario, PRESHOW_MINUTOS,
+        s = sesion_en_ventana(ahora, _horario_en_vivo(), PRESHOW_MINUTOS,
                               POSTSHOW_MINUTOS)
         if s:
             # Toca una sesión: ponerla al aire si no está ya
@@ -4592,7 +4632,7 @@ async def bucle_programacion():
             # (solo aplica en modo SOLO_SESIONES con DOCU_HORAS > 0)
             cerca_sesion = (SOLO_SESIONES and DOCU_HORAS > 0
                             and sesion_en_ventana(
-                                ahora, estado.horario,
+                                ahora, _horario_en_vivo(),
                                 antes_min=DOCU_HORAS * 60,
                                 despues_min=DOCU_HORAS * 60) is not None)
             if estado.show_manual:

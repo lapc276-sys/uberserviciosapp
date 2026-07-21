@@ -57,8 +57,9 @@ try:
     MUSICA_VOLUMEN = float(os.environ.get("MUSICA_VOLUMEN", "0.12"))
 except ValueError:
     MUSICA_VOLUMEN = 0.12
-_MUSICA_CACHE = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "musica_docu.mp3")
+_DIR_BASE = os.path.dirname(os.path.abspath(__file__))
+_MUSICA_CACHE = os.path.join(_DIR_BASE, "musica_docu.mp3")   # track del usuario
+_MUSICA_GEN = os.path.join(_DIR_BASE, "musica_ambiente.mp3")  # bed generado
 _musica_estado = {"listo": False, "ruta": None}
 
 
@@ -188,34 +189,86 @@ async def _descargar(url, destino):
     return False
 
 
+def _generar_musica_ambiente(destino):
+    """Sintetiza un lecho ambiental ORIGINAL con ffmpeg (acorde de quintas
+    abiertas + swell lento + eco/reverb + filtro cálido). 100% propio → sin
+    copyright ni Content ID, y siempre disponible aunque no haya red. ~90 s,
+    se reproduce en bucle bajo la narración. Devuelve True si lo creó."""
+    if not ffmpeg_disponible():
+        return False
+    # Quintas abiertas (A2–E3–A3–E4): sonido cinematográfico, ni alegre ni
+    # triste — encaja como fondo de documental.
+    frecs = [110.0, 164.81, 220.0, 329.63]
+    args = [_ffmpeg(), "-y"]
+    for f in frecs:
+        args += ["-f", "lavfi", "-i", f"sine=frequency={f}:duration=92"]
+    n = len(frecs)
+    mezcla = "".join(f"[{i}]" for i in range(n))
+    filtro = (
+        f"{mezcla}amix=inputs={n}:normalize=0,"
+        "volume=0.15,"                                # evita saturar la suma
+        "aformat=channel_layouts=stereo,"
+        "tremolo=f=0.12:d=0.5,"                       # swell lento (respira)
+        "aecho=0.8:0.85:70|130:0.35|0.28,"            # sensación de espacio
+        "lowpass=f=900,highpass=f=60,"                # cálido, sin agudos duros
+        "afade=t=in:st=0:d=6,afade=t=out:st=86:d=6"   # entra y sale suave
+    )
+    args += ["-filter_complex", filtro,
+             "-c:a", "libmp3lame", "-b:a", "128k", destino]
+    try:
+        r = subprocess.run(args, capture_output=True, timeout=120)
+        if r.returncode == 0 and os.path.exists(destino) \
+                and os.path.getsize(destino) > 0:
+            log.info("🎵 Lecho ambiental generado (%s)", destino)
+            return True
+        log.info("No se pudo generar el lecho ambiental: %s",
+                 (r.stderr or b"")[-200:].decode("utf-8", "ignore"))
+    except Exception as e:
+        log.info("Fallo generando el lecho ambiental (%s)", e)
+    return False
+
+
 async def _musica_docu():
-    """Devuelve la ruta local a la música de fondo (la baja UNA vez y la
-    cachea). Si no hay MUSICA_DOCU configurada o falla la descarga,
-    devuelve None y el video se arma sin música."""
-    if not MUSICA_DOCU_URL:
-        return None
+    """Devuelve la ruta local a la música de fondo (o None).
+
+    Prioridad:
+    1. Track del usuario (Secret MUSICA_DOCU con una URL a un MP3 sin
+       copyright — Pixabay/YouTube Audio Library). Se baja y cachea 1 vez.
+    2. Si no hay URL o la descarga falla → un lecho ambiental ORIGINAL
+       sintetizado con ffmpeg (sin copyright, siempre disponible).
+    Todo se resuelve una sola vez y se recuerda para no repetir trabajo."""
     if _musica_estado["listo"]:
         return _musica_estado["ruta"]
-    # Ya en disco de una corrida anterior
-    if os.path.exists(_MUSICA_CACHE) and os.path.getsize(_MUSICA_CACHE) > 0:
-        _musica_estado.update(listo=True, ruta=_MUSICA_CACHE)
-        return _MUSICA_CACHE
-    try:
-        async with httpx.AsyncClient(follow_redirects=True,
-                                     headers=_UA) as c:
-            r = await c.get(MUSICA_DOCU_URL, timeout=90)
-            r.raise_for_status()
-            with open(_MUSICA_CACHE, "wb") as f:
-                f.write(r.content)
-        if os.path.getsize(_MUSICA_CACHE) > 0:
+
+    # 1) Track del usuario por URL
+    if MUSICA_DOCU_URL:
+        if os.path.exists(_MUSICA_CACHE) and os.path.getsize(_MUSICA_CACHE) > 0:
             _musica_estado.update(listo=True, ruta=_MUSICA_CACHE)
-            log.info("🎵 Música de fondo lista (%s)", _MUSICA_CACHE)
             return _MUSICA_CACHE
-    except Exception as e:
-        log.info("No se pudo bajar la música de fondo (%s)", e)
-    # Marcar como intentado para no reintentar en cada video
-    _musica_estado["listo"] = True
-    _musica_estado["ruta"] = None
+        try:
+            async with httpx.AsyncClient(follow_redirects=True,
+                                         headers=_UA) as c:
+                r = await c.get(MUSICA_DOCU_URL, timeout=90)
+                r.raise_for_status()
+                with open(_MUSICA_CACHE, "wb") as f:
+                    f.write(r.content)
+            if os.path.getsize(_MUSICA_CACHE) > 0:
+                _musica_estado.update(listo=True, ruta=_MUSICA_CACHE)
+                log.info("🎵 Música de fondo lista (track del usuario)")
+                return _MUSICA_CACHE
+        except Exception as e:
+            log.info("No se pudo bajar MUSICA_DOCU (%s) — uso lecho propio", e)
+
+    # 2) Lecho ambiental original (generado o ya cacheado)
+    if os.path.exists(_MUSICA_GEN) and os.path.getsize(_MUSICA_GEN) > 0:
+        _musica_estado.update(listo=True, ruta=_MUSICA_GEN)
+        return _MUSICA_GEN
+    if await asyncio.to_thread(_generar_musica_ambiente, _MUSICA_GEN):
+        _musica_estado.update(listo=True, ruta=_MUSICA_GEN)
+        return _MUSICA_GEN
+
+    # Nada disponible: seguir sin música
+    _musica_estado.update(listo=True, ruta=None)
     return None
 
 
