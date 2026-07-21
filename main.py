@@ -2924,17 +2924,33 @@ def _guardar_veredictos():
 async def _jpeg_para_vision(src):
     """Bytes JPEG reducidos (~1024px) de una foto local o URL, en base64
     — pequeño para que la validación cueste poquísimos tokens. None si no
-    se pudo (y entonces la foto pasa sin validar)."""
+    se pudo (y entonces la foto pasa sin validar).
+
+    Con Wikimedia: User-Agent conforme a su política + respeto del
+    Retry-After en 429 (igual que youtube_subir._descargar — sin esto,
+    las IPs compartidas de Replit comen 429 seguidos). Además pide la
+    miniatura de 1024px en vez de la de 1920px: pesa un tercio."""
     try:
+        crudo = None
         if os.path.exists(str(src)):
             with open(src, "rb") as f:
                 crudo = f.read()
         else:
-            async with httpx.AsyncClient(follow_redirects=True,
-                                         headers=_UA_WIKI) as c:
-                r = await c.get(src, timeout=25)
+            url = re.sub(r"/(\d{3,4})px-", "/1024px-", str(src))
+            for intento in range(3):
+                async with httpx.AsyncClient(follow_redirects=True,
+                                             headers=youtube_subir._UA) as c:
+                    r = await c.get(url, timeout=25)
+                if r.status_code == 429:
+                    espera = (float(r.headers.get("retry-after", 0) or 0)
+                              or 4.0 * (intento + 1))
+                    await asyncio.sleep(min(espera, 30))
+                    continue
                 r.raise_for_status()
                 crudo = r.content
+                break
+            if crudo is None:
+                return None
         import io
         from PIL import Image
         im = Image.open(io.BytesIO(crudo)).convert("RGB")
@@ -2995,12 +3011,16 @@ async def _filtrar_con_vision(candidatas, tema, n):
     if not (VALIDAR_FOTOS and os.environ.get("ANTHROPIC_API_KEY")):
         return list(candidatas)[:n]
     client = anthropic.AsyncAnthropic()
+    veredictos = _cargar_veredictos()
     aprobadas = []
     for src in candidatas:
+        en_cache = str(src) in veredictos
         if await _foto_aprobada_vision(client, src, tema):
             aprobadas.append(src)
         if len(aprobadas) >= n:
             break
+        if not en_cache:
+            await asyncio.sleep(1.5)   # pacing: no ametrallar a Wikimedia
     # Si la visión tumbó casi todo, completar con las restantes sin validar
     # es peor que quedarse corto: mejor pocas fotos buenas que collages.
     return aprobadas
