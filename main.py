@@ -3620,7 +3620,8 @@ def _titulo_short(short):
     corte = guion[:70]
     if len(guion) > 70:
         corte = corte.rsplit(" ", 1)[0] + "…"
-    etiqueta = "F1 Drama" if short.get("tipo") == "drama" else "F1 News"
+    etiqueta = {"drama": "F1 Drama", "tecnico": "F1 Data"}.get(
+        short.get("tipo"), "F1 News")
     titulo = corte or f"{etiqueta} Short"
     return f"{titulo} #Shorts #F1"[:100]
 
@@ -4258,23 +4259,113 @@ async def _procesar_recap(ruta):
     return False
 
 
+# Shorts TÉCNICOS: shorts verticales de datos (telemetría propia FastF1)
+# tras cada sesión — el diferenciador que casi nadie hace en Shorts.
+SHORTS_TECNICOS = os.environ.get("SHORTS_TECNICOS", "on").lower() not in (
+    "off", "0", "", "no")
+
+SYSTEM_SHORT_TEC = ("You are a viral motorsport DATA analyst writing a "
+                    "20-30 second vertical Short that reveals ONE insight "
+                    "from real telemetry. Punchy, confident, factual. Write "
+                    "ONLY the script (max 45 words), one tight paragraph. "
+                    "Never invent specific numbers, gaps or lap times — the "
+                    "on-screen graph shows the exact data; you set it up and "
+                    "explain what it MEANS. End with a question to the viewer.")
+
+
+async def _generar_short_tecnico(client, resumen):
+    """Crea un short VERTICAL basado en los gráficos de telemetría propios
+    (FastF1) de la sesión: hook + 1-2 gráficos + narración de datos. Lo
+    guarda como short normal para que bucle_youtube lo suba. Devuelve True
+    si quedó en cola."""
+    if not (SHORTS_TECNICOS and graficos_f1.disponible()):
+        return False
+    sid = "tec_" + resumen["id"]
+    if os.path.exists(f"shorts/short_{sid}.json"):
+        return False   # ya generado
+    tmp = os.path.join("shorts", sid)
+    os.makedirs(tmp, exist_ok=True)
+    año = dt.datetime.now(dt.timezone.utc).year
+    acr = [p["acr"] for p in resumen.get("top", [])[:5]]
+    graficos = await asyncio.to_thread(
+        graficos_f1.graficos_sesion, año, resumen.get("pais"),
+        resumen.get("sesion"), acr, tmp)
+    if not graficos:
+        shutil.rmtree(tmp, ignore_errors=True)
+        return False   # sin datos no hay short técnico
+    top = ", ".join(f"{p['pos']}. {p['nombre']}"
+                    for p in resumen.get("top", [])[:3])
+    datos = (f"SESSION: {resumen.get('sesion')} — {resumen.get('pais')}.\n"
+             f"TOP 3: {top or 'n/a'}.\n"
+             f"FASTEST LAP: {resumen.get('mejor_vuelta') or 'n/a'}.\n"
+             "The Short shows OUR OWN telemetry graphs (fastest-lap speed "
+             "trace and race-pace lap times) for the front-runners.")
+    try:
+        resp = await client.messages.create(
+            model=MODELO_AHORRO, max_tokens=110, system=SYSTEM_SHORT_TEC,
+            messages=[{"role": "user", "content":
+                       datos + "\n\nWrite the Short script now."}])
+        guion = next((b.text for b in resp.content
+                      if b.type == "text"), "").strip()
+    except Exception as e:
+        log.info("Short técnico sin guion (%s)", e)
+        guion = ""
+    if not guion:
+        shutil.rmtree(tmp, ignore_errors=True)
+        return False
+    # Hook: una foto del más rápido; luego los gráficos de datos
+    fotos = []
+    with contextlib.suppress(Exception):
+        if resumen.get("top"):
+            fotos = await fotos_para_tema(
+                resumen["top"][0]["nombre"] + " Formula 1", n=1)
+    fotos = fotos + graficos
+    _guardar_short(sid, {
+        "id": sid,
+        "timestamp": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "tipo": "tecnico",
+        "guion": guion,
+        "fotos": fotos,
+        "duracion_segundos": max(20, min(45, len(guion.split()) * 3)),
+    })
+    log.info("📊 Short técnico en cola: %s (%d gráficos)", sid, len(graficos))
+    return True
+
+
 async def bucle_resumen():
     """Genera el video-reseña (dúo debatiendo lo bueno/lo malo de la
-    carrera) para cada sesión terminada y lo sube a YouTube."""
+    carrera) y un short TÉCNICO de datos para cada sesión terminada, y los
+    sube a YouTube."""
     if os.environ.get("RESUMEN_AUTO", "on").lower() in ("off", "0", ""):
         return
     if not os.environ.get("ANTHROPIC_API_KEY"):
         return
     os.makedirs(RESUMEN_DIR, exist_ok=True)
+    _cliente_tec = anthropic.AsyncAnthropic()
     await asyncio.sleep(45)
     while True:
         try:
             if (youtube_subir.oauth_configurado()
                     and await youtube_subir.asegurar_ffmpeg()):
                 for a in sorted(os.listdir(RESUMEN_DIR)):
-                    if a.startswith("pendiente_") and a.endswith(".json"):
-                        log.info("🎬 Generando video-reseña de la carrera…")
-                        await _procesar_recap(os.path.join(RESUMEN_DIR, a))
+                    if not (a.startswith("pendiente_") and a.endswith(".json")):
+                        continue
+                    ruta = os.path.join(RESUMEN_DIR, a)
+                    # 1) Short técnico de datos (una vez por sesión)
+                    try:
+                        with open(ruta) as f:
+                            resumen = json.load(f)
+                        if not resumen.get("short_tec_hecho"):
+                            if await _generar_short_tecnico(
+                                    _cliente_tec, resumen):
+                                resumen["short_tec_hecho"] = True
+                                with open(ruta, "w") as f:
+                                    json.dump(resumen, f, ensure_ascii=False)
+                    except Exception as e:
+                        log.info("Short técnico: %s", e)
+                    # 2) Video-reseña largo (borra el pendiente al subir)
+                    log.info("🎬 Generando video-reseña de la carrera…")
+                    await _procesar_recap(ruta)
         except Exception as e:
             log.warning("Video-reseña: %s", e)
         await asyncio.sleep(120)
