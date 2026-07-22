@@ -1,0 +1,51 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+
+@layer base {
+  * {
+    @apply border-slate-200 dark:border-slate-800;
+  }
+  html {
+    scroll-behavior: smooth;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  body {
+    @apply bg-white text-slate-900 dark:bg-ink dark:text-slate-100;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  }
+  ::selection {
+    @apply bg-brand-200 text-brand-950;
+  }
+}
+
+@layer components {
+  .container-tight {
+    @apply mx-auto w-full max-w-5xl px-6;
+  }
+  .eyebrow {
+    @apply inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white/60 px-3 py-1 text-xs font-medium uppercase tracking-wider text-slate-500 backdrop-blur dark:border-slate-800 dark:bg-white/5 dark:text-slate-400;
+  }
+  .glass {
+    @apply border border-slate-200/70 bg-white/70 backdrop-blur-xl dark:border-white/10 dark:bg-white/5;
+  }
+  .link-underline {
+    @apply relative after:absolute after:-bottom-0.5 after:left-0 after:h-px after:w-0 after:bg-current after:transition-all hover:after:w-full;
+  }
+}
+
+.gradient-mesh {
+  background:
+    radial-gradient(60% 60% at 20% 10%, rgba(50, 143, 255, 0.12), transparent 60%),
+    radial-gradient(50% 50% at 90% 20%, rgba(27, 111, 245, 0.1), transparent 60%),
+    radial-gradient(40% 40% at 50% 100%, rgba(142, 205, 255, 0.12), transparent 60%);
+}
+
+.text-balance {
+  text-wrap: balance;
+}
