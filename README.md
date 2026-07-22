@@ -33,7 +33,20 @@ Deploy target: **Vercel** + Cloudflare. Data layer (Phase 2): **Supabase / Postg
 
 ---
 
-## What's built (Phase 1 — live & compiling)
+## What's built (Phases 1–2 — live & verified)
+
+**Phase 2 — Data & auth** ✅
+- **Prisma + PostgreSQL** data model: users, customers, addresses, employees, bookings, invoices, reviews, leads (Supabase-ready, vertical-agnostic)
+- **Persistence layer** (`lib/data.ts`) with a two-backend switch: Prisma when `DATABASE_URL` is set, in-memory otherwise — the app runs with zero infrastructure
+- `/api/book` now **persists bookings + captures leads**
+- **Admin auth**: JWT sessions (jose, edge-safe), scrypt password hashing, RBAC (ADMIN / DISPATCHER / STAFF), bootstrap admin via env
+- **Protected `/admin`** via middleware; login/logout flow; admin shell with sidebar + sign-out
+- **Dashboard wired to real data** (live KPIs + recent bookings)
+- Seed script (`npm run db:seed`)
+
+Verified end-to-end: unauthenticated `/admin` → 307 to login · wrong password → 401 · correct → session + role · booking persisted and rendered in the dashboard.
+
+
 
 ✅ Premium marketing site — home, services, areas, about, contact, careers, blog, FAQ, legal
 ✅ **Config-driven** services (9) and city landing pages (5), each SEO-optimized
@@ -56,19 +69,27 @@ npm run typecheck
 
 Copy `.env.example` → `.env.local` to enable integrations. **Nothing is required** to run in dev.
 
+**Enable database persistence + admin login:**
+
+```bash
+# 1. Set DATABASE_URL (Supabase/Postgres), AUTH_SECRET, ADMIN_EMAIL, ADMIN_PASSWORD in .env.local
+openssl rand -base64 32          # value for AUTH_SECRET
+npm run db:push                  # create tables from the Prisma schema
+npm run db:seed                  # optional: admin user + sample data
+```
+
+Then sign in at **`/admin/login`**. Without `DATABASE_URL`, the admin login still works (bootstrap admin from env) and the dashboard shows in-memory bookings.
+
 ---
 
 ## Roadmap
 
-### Phase 1 — Marketing engine & booking ✅ (this release)
+### Phase 1 — Marketing engine & booking ✅
 Premium site, SEO, config-driven services/cities, instant quotes, booking flow, chatbot, admin preview.
 
-### Phase 2 — Data & auth
-- Supabase/Postgres schema (customers, addresses, bookings, invoices, employees, reviews)
-- Prisma models, migrations
-- Auth (customer + admin) with roles & permissions
-- Persist bookings/leads; wire admin dashboard to real data
-- MDX/CMS-driven blog for SEO content velocity
+### Phase 2 — Data & auth ✅
+Prisma/Postgres schema, persistence layer with in-memory fallback, booking + lead persistence, JWT+RBAC admin auth, protected dashboard on real data, seed script.
+_Remaining polish: customer-facing auth/portal, DB migrations in CI, MDX/CMS blog._
 
 ### Phase 3 — Payments & messaging automation
 - Stripe checkout, invoices, recurring billing

@@ -1,0 +1,151 @@
+// Homigo data model (Phase 2)
+// Provider: PostgreSQL (Supabase-compatible). Set DATABASE_URL to activate.
+// Designed to be vertical-agnostic: `serviceSlug`/`vertical` are strings so
+// the same tables power cleaning today and painting/moving/etc. tomorrow.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  DISPATCHER
+  STAFF
+}
+
+enum BookingStatus {
+  PENDING
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+  CANCELED
+}
+
+enum Frequency {
+  ONE_TIME
+  WEEKLY
+  BIWEEKLY
+  MONTHLY
+}
+
+enum InvoiceStatus {
+  DRAFT
+  SENT
+  PAID
+  VOID
+}
+
+// Internal users (admin panel). Bootstrap admin can also come from env.
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String?
+  passwordHash String
+  role         Role     @default(STAFF)
+  createdAt    DateTime @default(now())
+}
+
+model Customer {
+  id        String     @id @default(cuid())
+  name      String
+  email     String     @unique
+  phone     String
+  createdAt DateTime   @default(now())
+  addresses Address[]
+  bookings  Booking[]
+  reviews   Review[]
+
+  @@index([email])
+}
+
+model Address {
+  id         String    @id @default(cuid())
+  customer   Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  customerId String
+  line1      String
+  city       String
+  region     String    @default("FL")
+  postalCode String?
+  notes      String?
+  bookings   Booking[]
+}
+
+model Employee {
+  id       String    @id @default(cuid())
+  name     String
+  email    String    @unique
+  phone    String?
+  rating   Float     @default(5)
+  active   Boolean   @default(true)
+  bookings Booking[]
+}
+
+model Booking {
+  id          String        @id @default(cuid())
+  ref         String        @unique // human-friendly, e.g. HMG-8F2A
+  vertical    String        @default("cleaning")
+  serviceSlug String
+  serviceName String
+  bedrooms    Int           @default(0)
+  bathrooms   Int           @default(0)
+  sqft        Int           @default(0)
+  frequency   Frequency     @default(ONE_TIME)
+  date        String // ISO date (YYYY-MM-DD)
+  time        String
+  quoteLow    Int?
+  quoteHigh   Int?
+  status      BookingStatus @default(SCHEDULED)
+  notes       String?
+  createdAt   DateTime      @default(now())
+
+  customer   Customer  @relation(fields: [customerId], references: [id])
+  customerId String
+  address    Address?  @relation(fields: [addressId], references: [id])
+  addressId  String?
+  employee   Employee? @relation(fields: [employeeId], references: [id])
+  employeeId String?
+  invoice    Invoice?
+  review     Review?
+
+  @@index([status])
+  @@index([createdAt])
+}
+
+model Invoice {
+  id        String        @id @default(cuid())
+  booking   Booking       @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  bookingId String        @unique
+  amount    Int
+  status    InvoiceStatus @default(DRAFT)
+  stripeId  String?
+  createdAt DateTime      @default(now())
+}
+
+model Review {
+  id         String   @id @default(cuid())
+  booking    Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  bookingId  String   @unique
+  customer   Customer @relation(fields: [customerId], references: [id])
+  customerId String
+  rating     Int
+  comment    String?
+  createdAt  DateTime @default(now())
+}
+
+// Every quote/chat/contact intent is captured as a Lead for follow-up.
+model Lead {
+  id        String   @id @default(cuid())
+  name      String?
+  email     String?
+  phone     String?
+  source    String   @default("web") // web | chatbot | contact | voice
+  message   String?
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+}

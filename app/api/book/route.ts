@@ -49,6 +49,34 @@ export async function POST(req: Request) {
   const quote = calculateQuote(data);
   const bookingId = `HMG-${Date.now().toString(36).toUpperCase()}`;
 
+  // Persist the booking (Prisma when DATABASE_URL is set, else in-memory).
+  const { createBooking, createLead } = await import('@/lib/data');
+  try {
+    await createBooking({
+      ref: bookingId,
+      serviceSlug: data.serviceSlug,
+      serviceName: service.name,
+      bedrooms: data.bedrooms,
+      bathrooms: data.bathrooms,
+      sqft: data.sqft,
+      frequency: data.frequency,
+      date: data.date,
+      time: data.time,
+      quoteLow: quote?.low ?? null,
+      quoteHigh: quote?.high ?? null,
+      notes: data.notes,
+      name: data.name,
+      email: data.email,
+      phone: data.phone,
+      address: data.address,
+      city: data.city,
+    });
+    await createLead({ name: data.name, email: data.email, phone: data.phone, source: 'booking' });
+  } catch (err) {
+    console.error('[book] persistence error', err);
+    return NextResponse.json({ error: 'Could not save booking. Please try again.' }, { status: 500 });
+  }
+
   // Automation pipeline (no-op unless integration keys are configured).
   const { runBookingAutomations } = await import('@/lib/automations');
   await runBookingAutomations({ bookingId, ...data, quote });

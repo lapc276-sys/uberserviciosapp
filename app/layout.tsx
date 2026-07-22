@@ -1,10 +1,6 @@
 import type { Metadata, Viewport } from 'next';
 import './globals.css';
 import { buildMetadata } from '@/lib/seo';
-import { site } from '@/lib/config/site';
-import { Navbar } from '@/components/layout/Navbar';
-import { Footer } from '@/components/layout/Footer';
-import { ChatWidget } from '@/components/chat/ChatWidget';
 import { JsonLd } from '@/components/seo/JsonLd';
 import { organizationSchema, localBusinessSchema } from '@/lib/schema';
 import { Analytics } from '@/components/analytics/Analytics';
@@ -37,20 +33,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body className="min-h-screen antialiased">
         <JsonLd data={[organizationSchema(), localBusinessSchema()]} />
-        <a
-          href="#main"
-          className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-lg focus:bg-brand-600 focus:px-4 focus:py-2 focus:text-white"
-        >
-          Skip to content
-        </a>
-        <Navbar />
-        <main id="main">{children}</main>
-        <Footer />
-        <ChatWidget />
+        {children}
         <Analytics />
       </body>
     </html>
   );
 }
-
-export { site };
