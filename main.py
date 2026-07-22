@@ -3670,13 +3670,112 @@ SHORTS_HORARIOS = [6, 12, 18, 23]  # Horas UTC para generar shorts (4/día)
 _shorts_reintento = [0.0]  # último reintento con la bandera sin-créditos
 DURACION_SHORT_MIN = 1  # Duración objetivo de un short (minutos)
 
+# Corazón del canal: mini-lecciones EVERGREEN (no envejecen). Cada tema es
+# (categoría, gancho de la lección, consulta de fotos). Se rota sin repetir.
+_TEMAS_TECNICOS = [
+    # Aerodinámica
+    ("Aero", "how the front wing steers airflow around the whole car",
+     "formula 1 front wing"),
+    ("Aero", "the diffuser and how ground effect sucks the car down",
+     "formula 1 car floor diffuser"),
+    ("Aero", "why 'dirty air' makes it so hard to follow and overtake",
+     "formula 1 cars close racing"),
+    ("Aero", "the trade-off between downforce and top speed (wing levels)",
+     "formula 1 rear wing"),
+    ("Aero", "how the DRS flap works and why it isn't a magic button",
+     "formula 1 rear wing DRS"),
+    # Motores
+    ("Engine", "how the 1.6L turbo-hybrid V6 makes 1000 horsepower",
+     "formula 1 power unit engine"),
+    ("Engine", "the MGU-K and MGU-H: recovering energy from braking and heat",
+     "formula 1 engine hybrid ers"),
+    ("Engine", "why F1 engines rev to 15,000 rpm and still last a season",
+     "formula 1 engine internal"),
+    ("Engine", "how fuel-flow limits shaped the modern power unit",
+     "formula 1 refuelling fuel"),
+    # Neumáticos
+    ("Tyres", "why tyres 'grain' and 'blister', and what that costs",
+     "formula 1 pirelli tyre"),
+    ("Tyres", "the tyre operating window: why warm-up decides a lap",
+     "formula 1 tyre blanket grid"),
+    ("Tyres", "soft vs medium vs hard: the grip-versus-life trade",
+     "formula 1 tyre compounds"),
+    ("Tyres", "how a driver 'manages' tyres to make a one-stop work",
+     "formula 1 tyre wear"),
+    # Estrategia
+    ("Strategy", "the undercut explained: winning without overtaking",
+     "formula 1 pit stop"),
+    ("Strategy", "the overcut: when staying out beats pitting early",
+     "formula 1 pit lane"),
+    ("Strategy", "why a Safety Car turns strategy upside down",
+     "formula 1 safety car"),
+    ("Strategy", "track position vs fresh tyres: the eternal gamble",
+     "formula 1 race start"),
+    # Historia técnica
+    ("Tech history", "1978: how the Lotus 79 invented ground effect",
+     "Lotus 79 formula 1"),
+    ("Tech history", "the 1980s turbo era and its 1400 hp qualifying engines",
+     "formula 1 turbo 1980s"),
+    ("Tech history", "the banned six-wheeled Tyrrell P34",
+     "Tyrrell P34 six wheels"),
+    ("Tech history", "active suspension: the tech so good it got banned",
+     "Williams FW14B active suspension"),
+    ("Tech history", "the F-duct and blown diffuser: clever loopholes",
+     "formula 1 aerodynamics 2010"),
+]
+_SHORTS_TEMAS_USADOS = "shorts_temas_usados.json"
+
+
+def _tema_tecnico_siguiente():
+    """Elige un tema técnico que no se haya usado recientemente (rota por
+    todo el pool antes de repetir)."""
+    usados = []
+    with contextlib.suppress(Exception):
+        with open(_SHORTS_TEMAS_USADOS) as f:
+            usados = json.load(f)
+    disponibles = [t for t in _TEMAS_TECNICOS if t[1] not in usados]
+    if not disponibles:            # se agotó el ciclo: volver a empezar
+        disponibles, usados = list(_TEMAS_TECNICOS), []
+    elegido = random.choice(disponibles)
+    usados.append(elegido[1])
+    with contextlib.suppress(Exception):
+        with open(_SHORTS_TEMAS_USADOS, "w") as f:
+            json.dump(usados[-len(_TEMAS_TECNICOS):], f)
+    return elegido
+
 
 async def generar_short(client: anthropic.AsyncAnthropic, tipo="noticia",
-                        titulares=None):
+                        titulares=None, tema=None):
     """Genera el guión de un short (30-60 seg) para redes sociales.
 
-    Para el tipo "noticia" usa los titulares reales del ticker RSS
-    (`titulares`) como fuente para no inventar hechos."""
+    - "educativo": mini-lección técnica evergreen (aero, motor, neumáticos,
+      estrategia, historia técnica) — el contenido que NO envejece.
+    - "noticia": usa los titulares reales del ticker RSS para no inventar.
+    """
+    if tipo == "educativo":
+        cat, leccion, _consulta = tema or _tema_tecnico_siguiente()[:3]
+        prompt = (
+            f"Teach ONE idea in a punchy vertical Short (max 45 words, "
+            f"~25-35 seconds): {leccion}. Structure: a HOOK question or "
+            f"surprising claim, then the clear explanation a curious fan can "
+            f"picture, then a 'wait, really?' payoff. End with a question to "
+            f"the viewer. Category: {cat}. Write ONLY the script, one tight "
+            f"paragraph.")
+        system = (
+            "You are a viral motorsport EXPLAINER writing 25-35 second "
+            "educational Shorts that make people feel smarter. Punchy, "
+            "vivid, factual. NEVER invent specific numbers, records or "
+            "quotes — speak in accurate general terms. Write only the "
+            "script.")
+        try:
+            r = await client.messages.create(
+                model=MODELO_AHORRO, max_tokens=120, system=system,
+                messages=[{"role": "user", "content": prompt}])
+            texto = next((b.text for b in r.content if b.type == "text"), "")
+            return texto.strip() if texto else None
+        except Exception as e:
+            log.error("No se pudo generar short educativo (%s)", e)
+            return None
     if tipo == "noticia":
         fuente = ""
         if titulares:
@@ -3772,7 +3871,11 @@ async def bucle_shorts():
             if pendiente and puede:
                 _shorts_reintento[0] = time.time()
                 slot_id, hora_slot = pendiente
-                tipo = "drama" if hora_slot in (12, 23) else "noticia"
+                # Énfasis en lo EVERGREEN: 3 de 4 franjas son técnicas-
+                # educativas; solo una (la de la noche) es noticia del fin
+                # de semana. Ajustable con SHORTS_NOTICIA_HORA.
+                hora_noticia = int(os.environ.get("SHORTS_NOTICIA_HORA", "23"))
+                tipo = "noticia" if hora_slot == hora_noticia else "educativo"
                 titulares = ([n["texto"] for n in estado.noticias_crawl]
                              if tipo == "noticia" else None)
                 # Para "noticia" esperamos a tener titulares reales (el ticker
@@ -3782,17 +3885,23 @@ async def bucle_shorts():
                     log.info("📹 Short de noticia en espera de titulares RSS…")
                     await asyncio.sleep(120)
                     continue
-                guion = await generar_short(client, tipo, titulares=titulares)
+                tema = _tema_tecnico_siguiente() if tipo == "educativo" else None
+                guion = await generar_short(client, tipo, titulares=titulares,
+                                            tema=tema)
                 if guion:
                     estado.api_sin_creditos = False  # volvió el saldo
-                    _guardar_short(slot_id, {
+                    datos = {
                         "id": slot_id,
                         "timestamp": ahora.isoformat(),
                         "tipo": tipo,
                         "guion": guion,
                         "duracion_segundos": max(20, min(50, len(guion.split()) * 3)),
                         "fuente_titulares": bool(titulares),
-                    })
+                    }
+                    if tema:      # fotos del tema técnico (no el mix genérico)
+                        datos["consulta"] = tema[2]
+                        datos["categoria"] = tema[0]
+                    _guardar_short(slot_id, datos)
         except Exception as e:
             log.warning("Generador de shorts: %s", e)
         await asyncio.sleep(120)
@@ -3804,8 +3913,8 @@ def _titulo_short(short):
     corte = guion[:70]
     if len(guion) > 70:
         corte = corte.rsplit(" ", 1)[0] + "…"
-    etiqueta = {"drama": "F1 Drama", "tecnico": "F1 Data"}.get(
-        short.get("tipo"), "F1 News")
+    etiqueta = {"drama": "F1 Drama", "tecnico": "F1 Data",
+                "educativo": "F1 Explained"}.get(short.get("tipo"), "F1 News")
     titulo = corte or f"{etiqueta} Short"
     return f"{titulo} #Shorts #F1"[:100]
 
@@ -3997,10 +4106,19 @@ async def bucle_youtube():
                     log.info("📤 Short %s sin audio — se pospone", sid)
                     continue
 
-                # 2) Fotos de libre uso VARIADAS (sin repetir entre shorts)
+                # 2) Fotos de libre uso VARIADAS (sin repetir entre shorts).
+                # Un short educativo usa fotos de SU tema técnico; los demás,
+                # el mix genérico de pilotos/equipos.
                 log.info("📤 Preparando short %s para YouTube "
                          "(video + subida)…", sid)
-                fotos = short.get("fotos") or await _fotos_variadas(short)
+                if short.get("fotos"):
+                    fotos = short["fotos"]
+                elif short.get("consulta"):
+                    fotos = await fotos_para_tema(short["consulta"], n=6)
+                    if len(fotos) < 3:   # respaldo si el tema dio pocas
+                        fotos += await _fotos_variadas(short, n=6 - len(fotos))
+                else:
+                    fotos = await _fotos_variadas(short)
 
                 # 3) Armar video vertical
                 video_ruta = f"shorts/short_{sid}.mp4"
