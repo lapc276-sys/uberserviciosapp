@@ -33,7 +33,17 @@ Deploy target: **Vercel** + Cloudflare. Data layer (Phase 2): **Supabase / Postg
 
 ---
 
-## What's built (Phases 1–2 — live & verified)
+## What's built (Phases 1–3 — live & verified)
+
+**Phase 3 — Payments & messaging automation** ✅
+- **Stripe** (`lib/stripe.ts`): hosted invoice created per booking; `/api/stripe/webhook` verifies signatures and reconciles paid invoices
+- **Resend** (`lib/email.ts`): branded HTML confirmation, reminder and review-request emails
+- **Twilio** (`lib/sms.ts`): SMS confirmations and reminders
+- **Automation pipeline** (`lib/automations.ts`) now fires real email + SMS + invoice on every booking (env-gated, dry-run without keys)
+- **Time-based automations** via `/api/cron/reminders` (Vercel Cron, hourly): 24h + 2h reminders and post-service review requests, each guarded by a per-booking flag so it fires exactly once
+- Verified: booking → 24h reminder + review request sent once; second run is a no-op (idempotent); Stripe webhook rejects bad signatures (400)
+
+
 
 **Phase 2 — Data & auth** ✅
 - **Prisma + PostgreSQL** data model: users, customers, addresses, employees, bookings, invoices, reviews, leads (Supabase-ready, vertical-agnostic)
@@ -92,10 +102,9 @@ Premium site, SEO, config-driven services/cities, instant quotes, booking flow, 
 Prisma/Postgres schema, persistence layer with in-memory fallback, booking + lead persistence, JWT+RBAC admin auth, protected dashboard on real data, seed script.
 _Remaining polish: customer-facing auth/portal, DB migrations in CI, MDX/CMS blog._
 
-### Phase 3 — Payments & messaging automation
-- Stripe checkout, invoices, recurring billing
-- Resend transactional email + Twilio SMS (confirmations, 24h/2h reminders)
-- Google Calendar sync + employee dispatch notifications
+### Phase 3 — Payments & messaging automation ✅
+Stripe invoices + webhook reconciliation, Resend transactional email, Twilio SMS, and cron-driven 24h/2h reminders + review requests.
+_Remaining: recurring billing subscriptions, Google Calendar sync + employee dispatch (Phase 4)._
 
 ### Phase 4 — Ops & lifecycle automation
 - Pro-matching engine (nearest available, ratings)

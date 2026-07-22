@@ -32,6 +32,9 @@ export interface BookingRecord {
   city: string;
   address: string;
   createdAt: string;
+  remind24Sent: boolean;
+  remind2Sent: boolean;
+  reviewRequestSent: boolean;
 }
 
 export interface NewBookingInput {
@@ -73,6 +76,7 @@ const FREQ_MAP: Record<string, Frequency> = {
 const memory = {
   bookings: [] as BookingRecord[],
   leads: [] as (LeadInput & { id: string; createdAt: string })[],
+  invoices: [] as { ref: string; amount: number; status: string; stripeId?: string }[],
 };
 
 function toFrequency(f: string): Frequency {
@@ -101,6 +105,9 @@ export async function createBooking(input: NewBookingInput): Promise<BookingReco
     city: input.city,
     address: input.address,
     createdAt: new Date().toISOString(),
+    remind24Sent: false,
+    remind2Sent: false,
+    reviewRequestSent: false,
   };
 
   if (!isDbConfigured || !prisma) {
@@ -175,6 +182,9 @@ export async function listBookings(limit = 20): Promise<BookingRecord[]> {
     city: b.address?.city ?? '—',
     address: b.address?.line1 ?? '—',
     createdAt: b.createdAt.toISOString(),
+    remind24Sent: b.remind24Sent,
+    remind2Sent: b.remind2Sent,
+    reviewRequestSent: b.reviewRequestSent,
   }));
 }
 
@@ -239,3 +249,98 @@ export async function createLead(input: LeadInput): Promise<void> {
     },
   });
 }
+
+// ── Invoices ─────────────────────────────────────────────────────────────────
+export async function createInvoice(input: {
+  ref: string;
+  amount: number; // cents
+  stripeId?: string;
+  status?: 'DRAFT' | 'SENT' | 'PAID' | 'VOID';
+}): Promise<void> {
+  if (!isDbConfigured || !prisma) {
+    memory.invoices.unshift({ ref: input.ref, amount: input.amount, status: input.status ?? 'SENT', stripeId: input.stripeId });
+    return;
+  }
+  const booking = await prisma.booking.findUnique({ where: { ref: input.ref } });
+  if (!booking) return;
+  await prisma.invoice.upsert({
+    where: { bookingId: booking.id },
+    update: { amount: input.amount, stripeId: input.stripeId, status: input.status ?? 'SENT' },
+    create: { bookingId: booking.id, amount: input.amount, stripeId: input.stripeId, status: input.status ?? 'SENT' },
+  });
+}
+
+export async function markInvoicePaid(stripeId: string): Promise<void> {
+  if (!isDbConfigured || !prisma) {
+    const inv = memory.invoices.find((i) => i.stripeId === stripeId);
+    if (inv) inv.status = 'PAID';
+    return;
+  }
+  await prisma.invoice.updateMany({ where: { stripeId }, data: { status: 'PAID' } });
+}
+
+// ── Reminder / review scanning (used by the cron endpoint) ───────────────────
+export type ReminderKind = '24h' | '2h' | 'review';
+
+export async function bookingsDueFor(kind: ReminderKind, today: string, tomorrow: string): Promise<BookingRecord[]> {
+  if (!isDbConfigured || !prisma) {
+    return memory.bookings.filter((b) => matches(b, kind, today, tomorrow));
+  }
+  const base = { status: 'SCHEDULED' as const };
+  if (kind === '24h') {
+    const rows = await prisma.booking.findMany({ where: { ...base, date: tomorrow, remind24Sent: false }, include: { customer: true, address: true } });
+    return rows.map(mapRow);
+  }
+  if (kind === '2h') {
+    const rows = await prisma.booking.findMany({ where: { ...base, date: today, remind2Sent: false }, include: { customer: true, address: true } });
+    return rows.map(mapRow);
+  }
+  const rows = await prisma.booking.findMany({ where: { date: { lt: today }, reviewRequestSent: false }, include: { customer: true, address: true } });
+  return rows.map(mapRow);
+}
+
+export async function markReminderSent(ref: string, kind: ReminderKind): Promise<void> {
+  const field = kind === '24h' ? 'remind24Sent' : kind === '2h' ? 'remind2Sent' : 'reviewRequestSent';
+  if (!isDbConfigured || !prisma) {
+    const b = memory.bookings.find((x) => x.ref === ref);
+    if (b) (b as any)[field] = true;
+    return;
+  }
+  await prisma.booking.update({ where: { ref }, data: { [field]: true } });
+}
+
+function matches(b: BookingRecord, kind: ReminderKind, today: string, tomorrow: string): boolean {
+  if (kind === '24h') return b.status === 'SCHEDULED' && b.date === tomorrow && !b.remind24Sent;
+  if (kind === '2h') return b.status === 'SCHEDULED' && b.date === today && !b.remind2Sent;
+  return b.date < today && !b.reviewRequestSent;
+}
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+function mapRow(b: any): BookingRecord {
+  return {
+    id: b.id,
+    ref: b.ref,
+    serviceSlug: b.serviceSlug,
+    serviceName: b.serviceName,
+    bedrooms: b.bedrooms,
+    bathrooms: b.bathrooms,
+    sqft: b.sqft,
+    frequency: b.frequency,
+    date: b.date,
+    time: b.time,
+    quoteLow: b.quoteLow,
+    quoteHigh: b.quoteHigh,
+    status: b.status,
+    notes: b.notes,
+    customerName: b.customer?.name ?? '—',
+    customerEmail: b.customer?.email ?? '',
+    customerPhone: b.customer?.phone ?? '',
+    city: b.address?.city ?? '—',
+    address: b.address?.line1 ?? '—',
+    createdAt: b.createdAt.toISOString(),
+    remind24Sent: b.remind24Sent,
+    remind2Sent: b.remind2Sent,
+    reviewRequestSent: b.reviewRequestSent,
+  };
+}
+

@@ -103,6 +103,11 @@ model Booking {
   notes       String?
   createdAt   DateTime      @default(now())
 
+  // Automation lifecycle flags (Phase 3) — guard against double-sends.
+  remind24Sent      Boolean @default(false)
+  remind2Sent       Boolean @default(false)
+  reviewRequestSent Boolean @default(false)
+
   customer   Customer  @relation(fields: [customerId], references: [id])
   customerId String
   address    Address?  @relation(fields: [addressId], references: [id])
