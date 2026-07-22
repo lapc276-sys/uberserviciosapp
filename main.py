@@ -3424,6 +3424,101 @@ def _tarjeta_texto(ruta, texto, subtitulo=""):
         return None
 
 
+# ── Títulos con gancho + miniaturas (para subir el CTR) ──────────────────
+# CTR bajo = títulos/portadas débiles. Estos ayudan a que la gente HAGA
+# CLIC: títulos curiosos y miniaturas con una frase-gancho grande.
+TITULO_GANCHO_SCHEMA = {
+    "type": "object",
+    "properties": {"titulo": {"type": "string"},
+                   "gancho": {"type": "string"}},
+    "required": ["titulo", "gancho"],
+    "additionalProperties": False,
+}
+SYSTEM_GANCHO = ("You are a YouTube growth expert who writes irresistible, "
+                 "HONEST titles (no clickbait lies). Curiosity or stakes, "
+                 "not dry facts. Also give a 2-4 word ALL-CAPS punch phrase "
+                 "for the thumbnail. Never fabricate results.")
+
+
+async def _titulo_y_gancho(client, contexto, vertical=False):
+    """Devuelve (titulo, gancho) atractivos para subir el CTR. Si falla,
+    (None, None) y se usa el título de siempre."""
+    fmt = ("a YouTube SHORT (max 60 chars, add relevant hashtags)"
+           if vertical else "a long YouTube video (max 80 chars)")
+    try:
+        r = await client.messages.create(
+            model=MODELO_AHORRO, max_tokens=140, system=SYSTEM_GANCHO,
+            output_config={"format": {"type": "json_schema",
+                                      "schema": TITULO_GANCHO_SCHEMA}},
+            messages=[{"role": "user", "content":
+                       f"CONTENT: {contexto}\n\nWrite the title for {fmt}, "
+                       "plus the thumbnail punch phrase."}])
+        if r.stop_reason == "refusal":
+            return None, None
+        data = json.loads(next((b.text for b in r.content
+                                if b.type == "text"), "{}"))
+        return (data.get("titulo") or None), (data.get("gancho") or None)
+    except Exception as e:
+        log.info("No se pudo generar título con gancho (%s)", e)
+        return None, None
+
+
+async def _miniatura_video(gancho, fotos, salida):
+    """Crea una miniatura 1280x720: una foto real de fondo (oscurecida) con
+    la frase-gancho GRANDE y una barra roja. Devuelve la ruta o None."""
+    bg_url = next((f for f in (fotos or [])
+                   if isinstance(f, str) and f.startswith("http")), None)
+    try:
+        from PIL import Image, ImageDraw, ImageFont, ImageFilter
+        W, H = 1280, 720
+        base = None
+        if bg_url:
+            tmpbg = salida + ".src"
+            if await youtube_subir._descargar(bg_url, tmpbg):
+                with contextlib.suppress(Exception):
+                    im = Image.open(tmpbg).convert("RGB")
+                    esc = max(W / im.width, H / im.height)
+                    im = im.resize((max(1, round(im.width * esc)),
+                                    max(1, round(im.height * esc))))
+                    x = (im.width - W) // 2
+                    y = (im.height - H) // 2
+                    base = im.crop((x, y, x + W, y + H))
+                with contextlib.suppress(OSError):
+                    os.remove(tmpbg)
+        if base is None:
+            base = Image.new("RGB", (W, H), (11, 13, 18))
+        # Oscurecer para que el texto resalte
+        oscuro = Image.new("RGB", (W, H), (0, 0, 0))
+        base = Image.blend(base, oscuro, 0.45)
+        d = ImageDraw.Draw(base)
+        texto = (gancho or "").upper().strip() or "F1 EXPLAINED"
+        fnt = None
+        for f in youtube_subir._FUENTES:
+            if os.path.exists(f):
+                with contextlib.suppress(Exception):
+                    fnt = ImageFont.truetype(f, size=150)
+                    break
+        if fnt is None:
+            fnt = ImageFont.load_default()
+        lineas = youtube_subir._envolver(texto, ancho=14).split("\n")[:3]
+        alto = 168
+        total = alto * len(lineas)
+        y0 = (H - total) // 2
+        d.rectangle([70, y0 - 40, 70 + 90, y0 - 22], fill=(225, 6, 0))
+        for i, ln in enumerate(lineas):
+            yy = y0 + i * alto
+            # contorno negro para legibilidad sobre cualquier foto
+            for dx in (-4, 0, 4):
+                for dy in (-4, 0, 4):
+                    d.text((72 + dx, yy + dy), ln, font=fnt, fill=(0, 0, 0))
+            d.text((72, yy), ln, font=fnt, fill=(255, 255, 255))
+        base.save(salida, quality=90)
+        return salida
+    except Exception as e:
+        log.info("No se pudo crear la miniatura (%s)", e)
+        return None
+
+
 def _nuevo_episodio_pedido(tipo, prog):
     """Arma el pedido del capítulo uno de un episodio nuevo (con época
     fija para Historia, para cubrir épocas distintas en orden)."""
@@ -3949,6 +4044,12 @@ async def bucle_shorts():
                     if tema:      # fotos del tema técnico (no el mix genérico)
                         datos["consulta"] = tema[2]
                         datos["categoria"] = tema[0]
+                    # Título con gancho (CTR) en vez de recortar el guion
+                    with contextlib.suppress(Exception):
+                        t_g, _ = await _titulo_y_gancho(
+                            client, guion, vertical=True)
+                        if t_g:
+                            datos["titulo"] = t_g[:100]
                     _guardar_short(slot_id, datos)
         except Exception as e:
             log.warning("Generador de shorts: %s", e)
@@ -3956,7 +4057,13 @@ async def bucle_shorts():
 
 
 def _titulo_short(short):
-    """Título corto y atractivo para YouTube a partir del guion."""
+    """Título corto y atractivo para YouTube. Prefiere el título con gancho
+    generado al crear el short; si no hay, recorta el guion (respaldo)."""
+    if short.get("titulo"):
+        t = short["titulo"].strip()
+        if "#" not in t:
+            t = f"{t} #Shorts #F1"
+        return t[:100]
     guion = short.get("guion", "").strip()
     corte = guion[:70]
     if len(guion) > 70:
@@ -4584,7 +4691,17 @@ async def _procesar_recap(ruta):
             json.dump(resumen, f, ensure_ascii=False)
         return False
 
+    # Título con gancho + miniatura propia (sube el CTR)
     ganador = resumen["top"][0]["nombre"] if resumen.get("top") else ""
+    ctx = (f"Post-race review debate of the {resumen.get('sesion')} at "
+           f"{resumen.get('pais')}. Winner: {ganador or 'n/a'}. The good, "
+           "the controversial stewarding, and driver verdicts.")
+    t_nuevo, gancho = await _titulo_y_gancho(client, ctx)
+    if t_nuevo:
+        titulo = t_nuevo[:100]
+    miniatura = await _miniatura_video(
+        gancho or f"{resumen.get('pais','')} REVIEW", fotos,
+        os.path.join(tmp, "thumb.jpg"))
     descripcion = (
         f"Our full review of the {resumen.get('sesion','session')} at "
         f"{resumen.get('pais','')} — the good, the controversial, and our "
@@ -4596,7 +4713,8 @@ async def _procesar_recap(ruta):
     res = await youtube_subir.subir_video(
         video, titulo, descripcion,
         ["F1", "Formula1", "RaceReview", "Analysis",
-         resumen.get("pais", ""), resumen.get("sesion", "")])
+         resumen.get("pais", ""), resumen.get("sesion", "")],
+        miniatura=miniatura)
     if res:
         log.info("🎬 Video-reseña subido: %s", res["url"])
         await _publicar_podcast("recap_" + resumen["id"], titulo,
@@ -4790,6 +4908,17 @@ async def _subir_programa_video(ruta_ep):
         with open(ruta_ep, "w") as f:
             json.dump(ep, f)
         return
+    # Título con gancho + miniatura propia (CTR)
+    miniatura = None
+    with contextlib.suppress(Exception):
+        cli = anthropic.AsyncAnthropic()
+        t_nuevo, gancho = await _titulo_y_gancho(
+            cli, f"{ep.get('titulo')} — {prog['titulo']} documentary")
+        if t_nuevo:
+            titulo = t_nuevo[:100]
+        miniatura = await _miniatura_video(
+            gancho or ep.get("titulo") or prog["titulo"], fotos,
+            os.path.join(tmp, "thumb.jpg"))
     descripcion = (
         f"{prog['titulo'].title()} — {ep.get('titulo')}.\n\n"
         "An AI-narrated motorsport documentary. Original narration + "
@@ -4798,7 +4927,8 @@ async def _subir_programa_video(ruta_ep):
         "#F1 #Formula1 #Motorsport #Documentary")
     res = await youtube_subir.subir_video(
         video, titulo, descripcion,
-        ["F1", "Formula1", "Motorsport", "Documentary", prog["titulo"]])
+        ["F1", "Formula1", "Motorsport", "Documentary", prog["titulo"]],
+        miniatura=miniatura)
     if res:
         log.info("📼 Video de programa subido: %s", res["url"])
         await _publicar_podcast(
@@ -5090,6 +5220,13 @@ async def _producir_tema(tema):
     if not await youtube_subir.armar_video(audio_total, fotos, titulo, video,
                                            horizontal=True, con_musica=True):
         return False
+    # Miniatura propia (+ posible título más curioso) para el CTR
+    t_nuevo, gancho = await _titulo_y_gancho(
+        client, f"{titulo}. {tema.get('intro','')}")
+    if t_nuevo:
+        titulo = t_nuevo[:100]
+    miniatura = await _miniatura_video(
+        gancho or titulo, fotos, os.path.join(tmp, "thumb.jpg"))
     descripcion = (
         f"{tema['intro']}\n\n"
         "An AI-narrated motorsport explainer. Original narration + "
@@ -5099,7 +5236,8 @@ async def _producir_tema(tema):
         "#F1 #Formula1 #Motorsport #Explained")
     res = await youtube_subir.subir_video(
         video, titulo, descripcion,
-        ["F1", "Formula1", "Motorsport", "Explained", "Educational"])
+        ["F1", "Formula1", "Motorsport", "Explained", "Educational"],
+        miniatura=miniatura)
     if not res:
         return False
     log.info("🎓 Episodio de la cola subido: %s", res["url"])

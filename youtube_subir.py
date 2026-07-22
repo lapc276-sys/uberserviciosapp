@@ -841,8 +841,35 @@ def _subir_sync(video_path, titulo, descripcion, tags, privacidad):
     return req.execute()
 
 
-async def subir_video(video_path, titulo, descripcion, tags, privacidad=None):
-    """Sube el MP4 a YouTube. Devuelve {'id', 'url'} o None."""
+def _miniatura_sync(video_id, imagen_path):
+    from googleapiclient.discovery import build
+    from googleapiclient.http import MediaFileUpload
+    yt = build("youtube", "v3", credentials=_credenciales(),
+               cache_discovery=False)
+    media = MediaFileUpload(imagen_path, mimetype="image/jpeg")
+    yt.thumbnails().set(videoId=video_id, media_body=media).execute()
+
+
+async def subir_miniatura(video_id, imagen_path):
+    """Fija una miniatura propia al video. Requiere el canal VERIFICADO
+    (por teléfono); si no lo está, YouTube la rechaza y seguimos igual —
+    el video ya está subido. No lanza."""
+    if not (video_id and imagen_path and os.path.exists(imagen_path)):
+        return False
+    try:
+        await asyncio.to_thread(_miniatura_sync, video_id, imagen_path)
+        log.info("🖼️  Miniatura personalizada fijada en %s", video_id)
+        return True
+    except Exception as e:
+        log.info("No se pudo fijar la miniatura (¿canal sin verificar?) — "
+                 "el video queda con frame automático (%s)", e)
+        return False
+
+
+async def subir_video(video_path, titulo, descripcion, tags, privacidad=None,
+                      miniatura=None):
+    """Sube el MP4 a YouTube. Devuelve {'id', 'url'} o None. Si `miniatura`
+    es una ruta a una imagen, la fija como portada del video."""
     if not oauth_configurado():
         log.warning("OAuth de YouTube sin configurar: no se sube "
                     "(faltan YOUTUBE_CLIENT_ID / SECRET / REFRESH_TOKEN)")
@@ -853,8 +880,10 @@ async def subir_video(video_path, titulo, descripcion, tags, privacidad=None):
             _subir_sync, video_path, titulo, descripcion, tags, privacidad)
         vid = resp.get("id")
         if vid:
-            log.info("📤 Short subido a YouTube: https://youtu.be/%s (%s)",
+            log.info("📤 Subido a YouTube: https://youtu.be/%s (%s)",
                      vid, privacidad)
+            if miniatura:
+                await subir_miniatura(vid, miniatura)
             return {"id": vid, "url": f"https://youtu.be/{vid}"}
         return None
     except Exception as e:
