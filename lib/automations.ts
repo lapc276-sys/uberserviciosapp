@@ -91,8 +91,16 @@ async function addToCalendar(p: BookingPayload) {
 }
 
 async function notifyEmployee(p: BookingPayload) {
-  // TODO(phase-4): assign nearest available pro and notify (SMS/push).
-  log('assign', p.bookingId, 'pending pro-matching engine');
+  const { assignAndNotify } = await import('./dispatch');
+  const pro = await assignAndNotify({
+    ref: p.bookingId,
+    serviceSlug: p.serviceSlug,
+    date: p.date,
+    time: p.time,
+    city: p.city,
+    address: p.address,
+  });
+  log('assign', p.bookingId, pro ? `assigned to ${pro.name}` : 'no available pro');
 }
 
 function log(step: string, id: string, status: string) {

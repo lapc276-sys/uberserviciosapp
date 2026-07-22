@@ -119,6 +119,18 @@ export function reviewRequestEmail(p: { name: string; serviceName: string }): { 
   };
 }
 
+export function winbackEmail(p: { name: string }): { subject: string; html: string } {
+  return {
+    subject: `We miss you, ${p.name.split(' ')[0]} — here's 15% off`,
+    html: shell(`
+      <h1 style="font-size:20px;margin:0 0 8px">Ready for another spotless day? ✨</h1>
+      <p style="color:#4b5563;margin:0 0 20px">It's been a little while. Come back and take <strong>15% off</strong> your next cleaning — our thanks for being a ${site.name} customer.</p>
+      <a href="${site.url}/book" style="display:inline-block;background:#1b6ff5;color:#fff;text-decoration:none;padding:12px 22px;border-radius:999px;font-weight:600;font-size:14px">Book &amp; save 15%</a>
+      <p style="color:#9ca3af;font-size:12px;margin-top:16px">Offer applied automatically at checkout for a limited time.</p>
+    `),
+  };
+}
+
 function row(label: string, value: string): string {
   return `<tr>
     <td style="padding:8px 0;color:#6b7280;border-bottom:1px dashed #e5e7eb">${label}</td>

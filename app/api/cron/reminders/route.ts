@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { bookingsDueFor, markReminderSent } from '@/lib/data';
-import { sendEmail, reminderEmail, reviewRequestEmail } from '@/lib/email';
+import { sendEmail, reminderEmail, reviewRequestEmail, winbackEmail } from '@/lib/email';
 import { sendSms } from '@/lib/sms';
 import { getService } from '@/lib/config/services';
 import { site } from '@/lib/config/site';
@@ -34,10 +34,11 @@ export async function GET(req: Request) {
 
   const today = dateStr(0);
   const tomorrow = dateStr(1);
-  const summary = { remind24: 0, remind2: 0, review: 0 };
+  const weekAgo = dateStr(-7);
+  const summary = { remind24: 0, remind2: 0, review: 0, followup: 0 };
 
   // 24h reminders
-  for (const b of await bookingsDueFor('24h', today, tomorrow)) {
+  for (const b of await bookingsDueFor('24h', today, weekAgo, tomorrow)) {
     const service = getService(b.serviceSlug);
     const { subject, html } = reminderEmail({ name: b.customerName, serviceName: service?.name ?? 'cleaning', date: b.date, time: b.time, when: '24h' });
     if (b.customerEmail) await sendEmail({ to: b.customerEmail, subject, html });
@@ -47,7 +48,7 @@ export async function GET(req: Request) {
   }
 
   // 2h reminders
-  for (const b of await bookingsDueFor('2h', today, tomorrow)) {
+  for (const b of await bookingsDueFor('2h', today, weekAgo, tomorrow)) {
     const service = getService(b.serviceSlug);
     const { subject, html } = reminderEmail({ name: b.customerName, serviceName: service?.name ?? 'cleaning', date: b.date, time: b.time, when: '2h' });
     if (b.customerEmail) await sendEmail({ to: b.customerEmail, subject, html });
@@ -57,12 +58,20 @@ export async function GET(req: Request) {
   }
 
   // Post-service review requests (bookings whose date has passed)
-  for (const b of await bookingsDueFor('review', today, tomorrow)) {
+  for (const b of await bookingsDueFor('review', today, weekAgo, tomorrow)) {
     const service = getService(b.serviceSlug);
     const { subject, html } = reviewRequestEmail({ name: b.customerName, serviceName: service?.name ?? 'cleaning' });
     if (b.customerEmail) await sendEmail({ to: b.customerEmail, subject, html });
     await markReminderSent(b.ref, 'review');
     summary.review++;
+  }
+
+  // One-week win-back with a discount offer
+  for (const b of await bookingsDueFor('followup', today, weekAgo, tomorrow)) {
+    const { subject, html } = winbackEmail({ name: b.customerName });
+    if (b.customerEmail) await sendEmail({ to: b.customerEmail, subject, html });
+    await markReminderSent(b.ref, 'followup');
+    summary.followup++;
   }
 
   return NextResponse.json({ ok: true, ...summary, ranAt: new Date().toISOString() });

@@ -7,9 +7,9 @@ import { site } from '@/lib/config/site';
 
 const nav = [
   { label: 'Dashboard', href: '/admin', icon: LayoutDashboard },
-  { label: 'Bookings', href: '/admin', icon: CalendarDays },
-  { label: 'Customers', href: '/admin', icon: Users },
-  { label: 'Settings', href: '/admin', icon: Settings },
+  { label: 'Bookings', href: '/admin/bookings', icon: CalendarDays },
+  { label: 'Customers', href: '/admin/customers', icon: Users },
+  { label: 'Team', href: '/admin/employees', icon: Settings },
 ];
 
 export function AdminShell({

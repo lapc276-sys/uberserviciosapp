@@ -103,10 +103,11 @@ model Booking {
   notes       String?
   createdAt   DateTime      @default(now())
 
-  // Automation lifecycle flags (Phase 3) — guard against double-sends.
+  // Automation lifecycle flags — guard against double-sends.
   remind24Sent      Boolean @default(false)
   remind2Sent       Boolean @default(false)
   reviewRequestSent Boolean @default(false)
+  followUpSent      Boolean @default(false)
 
   customer   Customer  @relation(fields: [customerId], references: [id])
   customerId String
@@ -116,9 +117,22 @@ model Booking {
   employeeId String?
   invoice    Invoice?
   review     Review?
+  photos     Photo[]
 
   @@index([status])
   @@index([createdAt])
+  @@index([date])
+  @@index([employeeId])
+}
+
+// Before/after service photos (stored in Supabase Storage / S3; URL kept here).
+model Photo {
+  id        String   @id @default(cuid())
+  booking   Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  bookingId String
+  url       String
+  kind      String   @default("after") // before | after
+  createdAt DateTime @default(now())
 }
 
 model Invoice {

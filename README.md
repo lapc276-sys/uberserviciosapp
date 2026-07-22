@@ -33,7 +33,17 @@ Deploy target: **Vercel** + Cloudflare. Data layer (Phase 2): **Supabase / Postg
 
 ---
 
-## What's built (Phases 1–3 — live & verified)
+## What's built (Phases 1–4 — live & verified)
+
+**Phase 4 — Operations & lifecycle** ✅
+- **Dispatch engine** (`lib/dispatch.ts`): auto-assigns the best pro on booking — active only, load-balanced by date, tie-broken by rating — and SMS-notifies them
+- **Admin CRM**: `/admin/bookings` (assign pros + manage status), `/admin/customers` (with lifetime value), `/admin/employees` (roster + job counts)
+- **Protected admin API** (`/api/admin/bookings/[ref]`): status updates + auto-assign, gated by RBAC permission
+- **One-week win-back** email (15% off) added to the cron lifecycle
+- **Dashboard** gains average customer LTV; Prisma gains `Photo` model + `followUpSent` flag
+- Verified: 3 bookings load-balanced 1-per-pro; status change via API 200; unauthenticated API 401
+
+
 
 **Phase 3 — Payments & messaging automation** ✅
 - **Stripe** (`lib/stripe.ts`): hosted invoice created per booking; `/api/stripe/webhook` verifies signatures and reconciles paid invoices
@@ -106,10 +116,9 @@ _Remaining polish: customer-facing auth/portal, DB migrations in CI, MDX/CMS blo
 Stripe invoices + webhook reconciliation, Resend transactional email, Twilio SMS, and cron-driven 24h/2h reminders + review requests.
 _Remaining: recurring billing subscriptions, Google Calendar sync + employee dispatch (Phase 4)._
 
-### Phase 4 — Ops & lifecycle automation
-- Pro-matching engine (nearest available, ratings)
-- Reminder + review-request + 1-week follow-up jobs (Redis/QStash)
-- Full CRM (history, photos, follow-ups, LTV/CAC)
+### Phase 4 — Ops & lifecycle automation ✅
+Dispatch/pro-matching engine, admin CRM (bookings, customers w/ LTV, team), protected admin API, one-week win-back automation.
+_Remaining: photo upload (Supabase Storage), geo-aware matching, Redis-backed job queue._
 
 ### Phase 5 — Admin & analytics
 - Live KPI dashboard, calendar, service map

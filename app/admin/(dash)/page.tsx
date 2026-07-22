@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
-import { TrendingUp, Users, CalendarCheck, DollarSign, Star, Repeat } from 'lucide-react';
+import { TrendingUp, Users, CalendarCheck, DollarSign, Star, Repeat, Wallet } from 'lucide-react';
 import { buildMetadata } from '@/lib/seo';
-import { getDashboardStats, listBookings } from '@/lib/data';
+import { getDashboardStats, listBookings, listCustomers } from '@/lib/data';
 import { formatCurrency } from '@/lib/utils';
 
 export const metadata: Metadata = buildMetadata({ title: 'Admin Dashboard | Homigo', path: '/admin', noindex: true });
@@ -16,13 +16,15 @@ const STATUS_STYLES: Record<string, string> = {
 };
 
 export default async function AdminDashboard() {
-  const [stats, bookings] = await Promise.all([getDashboardStats(), listBookings(15)]);
+  const [stats, bookings, customers] = await Promise.all([getDashboardStats(), listBookings(15), listCustomers()]);
+  const avgLtv = customers.length ? Math.round(customers.reduce((s, c) => s + c.ltv, 0) / customers.length) : 0;
 
   const kpis = [
     { icon: DollarSign, label: 'Revenue (MTD)', value: formatCurrency(stats.revenueMtd) },
     { icon: CalendarCheck, label: 'Bookings', value: String(stats.bookings) },
     { icon: Users, label: 'New customers', value: String(stats.newCustomers) },
     { icon: Repeat, label: 'Recurring rate', value: `${stats.recurringRatePct}%` },
+    { icon: Wallet, label: 'Avg. customer LTV', value: formatCurrency(avgLtv) },
     { icon: Star, label: 'Avg. rating', value: String(stats.avgRating) },
     { icon: TrendingUp, label: 'Data source', value: stats.source === 'db' ? 'Live DB' : 'In-memory' },
   ];
