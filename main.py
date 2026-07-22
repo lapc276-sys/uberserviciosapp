@@ -3725,22 +3725,70 @@ _TEMAS_TECNICOS = [
 ]
 _SHORTS_TEMAS_USADOS = "shorts_temas_usados.json"
 
+# LENTES: cada concepto base se multiplica por una dimensión (trazado,
+# clima, filosofía de equipo, época). 22 conceptos × ~15 lentes = cientos
+# de shorts únicos → da para los 4 diarios durante todo el año sin repetir.
+_TRAZADOS = [
+    ("Monaco", "Circuit de Monaco Formula 1"),
+    ("Monza", "Autodromo Nazionale Monza Formula 1"),
+    ("Spa-Francorchamps", "Spa-Francorchamps Formula 1"),
+    ("Suzuka", "Suzuka Circuit Formula 1"),
+    ("Singapore", "Marina Bay Street Circuit Formula 1"),
+    ("Silverstone", "Silverstone Circuit Formula 1"),
+    ("Interlagos", "Interlagos Formula 1"),
+    ("Jeddah", "Jeddah Corniche Circuit Formula 1"),
+    ("Zandvoort", "Zandvoort Formula 1 banking"),
+    ("Las Vegas", "Las Vegas Strip Circuit Formula 1"),
+    ("Baku", "Baku City Circuit Formula 1"),
+    ("Hungaroring", "Hungaroring Formula 1"),
+]
+_CLIMAS = [
+    ("in heavy rain", "Formula 1 wet race rain"),
+    ("in extreme heat", "Formula 1 race sunshine heat"),
+    ("in cold, low-grip conditions", "Formula 1 cold track"),
+    ("in tricky mixed conditions", "Formula 1 intermediate tyres"),
+]
+
+
+def _lente(concepto):
+    """Aplica una LENTE al concepto base → (cat, lección enfocada, consulta).
+    Distintas dimensiones para que el mismo concepto rinda muchos shorts."""
+    cat, base, consulta = concepto
+    d = random.random()
+    if d < 0.30:                                   # trazado
+        t, tq = random.choice(_TRAZADOS)
+        return cat, f"{base} — and why it matters most at {t}", tq
+    if d < 0.52:                                   # clima
+        c, cq = random.choice(_CLIMAS)
+        return cat, f"{base} — and how it changes {c}", cq
+    if d < 0.68:                                   # filosofía de equipo
+        return (cat, f"{base} — and why rival teams disagree on how to do it",
+                consulta)
+    if d < 0.80:                                   # comparación/mito
+        return cat, f"the biggest myth fans believe about {base}", consulta
+    return cat, base, consulta                     # concepto puro
+
 
 def _tema_tecnico_siguiente():
-    """Elige un tema técnico que no se haya usado recientemente (rota por
-    todo el pool antes de repetir)."""
+    """Genera un tema técnico ENFOCADO (concepto × lente), evitando los
+    usados recientemente. El espacio combinatorio es enorme → prácticamente
+    no repite en todo el año."""
     usados = []
     with contextlib.suppress(Exception):
         with open(_SHORTS_TEMAS_USADOS) as f:
             usados = json.load(f)
-    disponibles = [t for t in _TEMAS_TECNICOS if t[1] not in usados]
-    if not disponibles:            # se agotó el ciclo: volver a empezar
-        disponibles, usados = list(_TEMAS_TECNICOS), []
-    elegido = random.choice(disponibles)
+    elegido = None
+    for _ in range(10):
+        cand = _lente(random.choice(_TEMAS_TECNICOS))
+        if cand[1] not in usados:
+            elegido = cand
+            break
+    if elegido is None:                            # rarísimo: todo repetido
+        elegido = _lente(random.choice(_TEMAS_TECNICOS))
     usados.append(elegido[1])
     with contextlib.suppress(Exception):
         with open(_SHORTS_TEMAS_USADOS, "w") as f:
-            json.dump(usados[-len(_TEMAS_TECNICOS):], f)
+            json.dump(usados[-150:], f)
     return elegido
 
 
@@ -5063,21 +5111,108 @@ async def _producir_tema(tema):
     return True
 
 
+# La cola nunca debe quedarse vacía: cuando bajen los pendientes, la IA
+# propone más temas EN TU ESTILO (técnicos, evergreen), sin repetir los ya
+# hechos. Así los videos siguen saliendo todo el año. Tú puedes seguir
+# añadiendo los tuyos a mano — estos solo evitan que se seque.
+TEMAS_MIN_PENDIENTES = int(os.environ.get("TEMAS_MIN_PENDIENTES", "6"))
+TEMAS_AUTORRELLENO = os.environ.get("TEMAS_AUTORRELLENO", "on").lower() \
+    not in ("off", "0", "")
+
+PROPUESTAS_SCHEMA = {
+    "type": "object",
+    "properties": {"temas": {"type": "array", "items": {
+        "type": "object",
+        "properties": {
+            "titulo": {"type": "string"},
+            "intro": {"type": "string"},
+            "consulta": {"type": "string"}},
+        "required": ["titulo", "intro", "consulta"],
+        "additionalProperties": False}}},
+    "required": ["temas"],
+    "additionalProperties": False,
+}
+
+
+async def _proponer_temas(client, n, existentes):
+    """Pide a la IA n temas NUEVOS de episodio en el estilo del canal
+    (técnicos, evergreen), sin repetir los títulos ya en la cola."""
+    previos = "\n".join(f"- {t}" for t in existentes[-60:]) or "(none yet)"
+    pedido = (
+        f"Propose {n} NEW documentary episode topics for a motorsport "
+        f"explainer channel. Focus on EVERGREEN technical themes that never "
+        f"age: aerodynamics, engines/power units, tyres, race strategy, "
+        f"technical history, car design, and how these change by CIRCUIT, "
+        f"by WEATHER, and by TEAM philosophy. Each topic: a catchy 'titulo' "
+        f"(max 90 chars), a warm 2-3 sentence 'intro' that sets the angle, "
+        f"and a 'consulta' (English image-search terms). Make them curious "
+        f"and specific, not generic. Do NOT repeat any of these existing "
+        f"titles:\n{previos}")
+    try:
+        r = await client.messages.create(
+            model=MODELO_AHORRO, max_tokens=1600, system=SYSTEM_TEMA,
+            output_config={"format": {"type": "json_schema",
+                                      "schema": PROPUESTAS_SCHEMA}},
+            messages=[{"role": "user", "content": pedido}])
+        if r.stop_reason == "refusal":
+            return []
+        data = json.loads(next((b.text for b in r.content
+                                if b.type == "text"), "{}"))
+        titulos_prev = {t.lower() for t in existentes}
+        nuevos = []
+        for t in data.get("temas", []):
+            tit = (t.get("titulo") or "").strip()
+            if tit and tit.lower() not in titulos_prev and t.get("intro"):
+                nuevos.append({"titulo": tit, "intro": t["intro"],
+                               "consulta": t.get("consulta") or tit})
+        return nuevos
+    except Exception as e:
+        log.info("No se pudieron proponer temas nuevos (%s)", e)
+        return []
+
+
+async def _rellenar_cola_temas(client):
+    """Si quedan pocos pendientes, añade temas nuevos propuestos por la IA."""
+    if not TEMAS_AUTORRELLENO:
+        return
+    cola = _cargar_cola_temas()
+    temas = cola.get("temas", [])
+    pendientes = sum(1 for t in temas if t.get("estado") == "pendiente"
+                     and t.get("intentos", 0) < 3)
+    if pendientes >= TEMAS_MIN_PENDIENTES:
+        return
+    existentes = [t.get("titulo", "") for t in temas]
+    nuevos = await _proponer_temas(client, 10, existentes)
+    if not nuevos:
+        return
+    base = len(temas)
+    for i, t in enumerate(nuevos):
+        temas.append({"id": f"auto_{base + i:03d}", "titulo": t["titulo"],
+                      "intro": t["intro"], "consulta": t["consulta"],
+                      "estado": "pendiente", "auto": True})
+    cola["temas"] = temas
+    _guardar_cola_temas(cola)
+    log.info("🧩 Cola de temas rellenada: +%d temas nuevos (IA)", len(nuevos))
+
+
 async def bucle_temas():
     """Produce la cola de temas del dueño: un episodio educativo completo
     cada TEMAS_CADA_MIN minutos (defecto 6 h → ~4 al día como máximo).
     Nunca produce durante una sesión en vivo (no compite por CPU/API).
+    Cuando la cola baja, se rellena sola con temas nuevos en tu estilo.
     TEMAS_VIDEO=off lo apaga."""
     if os.environ.get("TEMAS_VIDEO", "on").lower() in ("off", "0", ""):
         return
     if not os.environ.get("ANTHROPIC_API_KEY"):
         return
+    _cliente_temas = anthropic.AsyncAnthropic()
     await asyncio.sleep(150)   # dejar arrancar el resto
     while True:
         try:
             if (not estado.sesion_actual
                     and youtube_subir.oauth_configurado()
                     and await youtube_subir.asegurar_ffmpeg()):
+                await _rellenar_cola_temas(_cliente_temas)
                 cola = _cargar_cola_temas()
                 pend = next((t for t in cola.get("temas", [])
                              if t.get("estado") == "pendiente"
