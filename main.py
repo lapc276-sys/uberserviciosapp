@@ -36,7 +36,7 @@ from zoneinfo import ZoneInfo
 import anthropic
 import httpx
 import uvicorn
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 import telemetria
@@ -823,6 +823,184 @@ async def descargar_audio_short(short_id: str):
         except Exception:
             pass
     return Response(status_code=404)
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  PODCAST — feed RSS de audio para Spotify / Apple Podcasts
+#  Reusa el audio que YA se genera para los videos-programa, la cola de
+#  temas y las reseñas. Cada episodio nuevo entra al feed y Spotify/Apple
+#  lo absorben solos. Se suscribe UNA vez la URL  <tu-dominio>/podcast.xml
+#  en Spotify for Podcasters y en Apple Podcasts Connect.
+# ══════════════════════════════════════════════════════════════════════
+PODCAST_DIR = "podcast"
+PODCAST_CATALOGO = os.path.join(PODCAST_DIR, "episodios.json")
+PODCAST_ON = os.environ.get("PODCAST", "on").lower() not in ("off", "0", "")
+PODCAST_TITULO = os.environ.get("PODCAST_TITULO", "Motor & Piston")
+PODCAST_DESC = os.environ.get(
+    "PODCAST_DESC",
+    "Documentales y análisis de Fórmula 1 y motorsport, narrados con "
+    "pasión: historia, tecnología, estrategia y las grandes leyendas del "
+    "automovilismo. Contenido original, sin metraje de transmisiones.")
+PODCAST_AUTOR = os.environ.get("PODCAST_AUTOR", "Motor & Piston")
+# Apple exige un email de dueño para verificar la propiedad del feed:
+# defínelo en el Secret PODCAST_EMAIL antes de enviarlo a Apple.
+PODCAST_EMAIL = os.environ.get("PODCAST_EMAIL", "")
+PODCAST_IDIOMA = os.environ.get("PODCAST_IDIOMA", "en")
+PODCAST_IMAGEN = os.environ.get("PODCAST_IMAGEN", "")  # URL de portada propia
+
+
+def _cargar_catalogo_podcast():
+    try:
+        with open(PODCAST_CATALOGO) as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+
+def _guardar_catalogo_podcast(cat):
+    os.makedirs(PODCAST_DIR, exist_ok=True)
+    with open(PODCAST_CATALOGO, "w") as f:
+        json.dump(cat, f, ensure_ascii=False, indent=1)
+
+
+async def _publicar_podcast(ep_id, titulo, descripcion, audio_path):
+    """Añade un episodio audio-only al feed del podcast. Copia el MP3 a
+    podcast/ (persistente) y lo registra en el catálogo. Idempotente por
+    ep_id. No lanza — si algo falla, el video/subida sigue igual."""
+    if not (PODCAST_ON and audio_path and os.path.exists(audio_path)):
+        return
+    try:
+        os.makedirs(PODCAST_DIR, exist_ok=True)
+        fid = re.sub(r"[^A-Za-z0-9_-]", "_", str(ep_id))[:80]
+        destino = os.path.join(PODCAST_DIR, f"{fid}.mp3")
+        cat = _cargar_catalogo_podcast()
+        if any(e.get("id") == fid for e in cat):
+            return   # ya publicado
+        shutil.copy(audio_path, destino)
+        dur = 0.0
+        with contextlib.suppress(Exception):
+            dur = youtube_subir._duracion_audio(destino)
+        cat.append({
+            "id": fid,
+            "titulo": titulo[:200],
+            "descripcion": (descripcion or "")[:3900],
+            "archivo": f"{fid}.mp3",
+            "bytes": os.path.getsize(destino),
+            "duracion": int(dur),
+            "fecha": dt.datetime.now(dt.timezone.utc).strftime(
+                "%a, %d %b %Y %H:%M:%S +0000"),
+        })
+        _guardar_catalogo_podcast(cat)
+        log.info("🎙️  Episodio de podcast publicado: %s", titulo[:60])
+    except Exception as e:
+        log.warning("No se pudo publicar el episodio de podcast (%s)", e)
+
+
+def _xml_escape(s):
+    return (str(s or "").replace("&", "&amp;").replace("<", "&lt;")
+            .replace(">", "&gt;").replace('"', "&quot;"))
+
+
+@app.get("/podcast/audio/{fname}")
+async def podcast_audio(fname: str):
+    """Sirve el MP3 de un episodio del podcast."""
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,80}\.mp3", fname):
+        return Response(status_code=404)
+    ruta = os.path.join(PODCAST_DIR, fname)
+    if not os.path.exists(ruta):
+        return Response(status_code=404)
+    try:
+        with open(ruta, "rb") as f:
+            return Response(content=f.read(), media_type="audio/mpeg")
+    except Exception:
+        return Response(status_code=404)
+
+
+@app.get("/podcast/cover.jpg")
+async def podcast_cover():
+    """Portada del podcast generada (1500x1500, estilo del canal). Si
+    definiste PODCAST_IMAGEN, redirige a esa; si no, genera una."""
+    ruta = os.path.join(PODCAST_DIR, "cover.jpg")
+    if not os.path.exists(ruta):
+        try:
+            os.makedirs(PODCAST_DIR, exist_ok=True)
+            from PIL import Image, ImageDraw, ImageFont
+            S = 1500
+            im = Image.new("RGB", (S, S), (11, 13, 18))
+            d = ImageDraw.Draw(im)
+            fnt = fsub = None
+            for f_ in youtube_subir._FUENTES:
+                if os.path.exists(f_):
+                    with contextlib.suppress(Exception):
+                        fnt = ImageFont.truetype(f_, size=150)
+                        fsub = ImageFont.truetype(f_, size=54)
+                        break
+            if fnt is None:
+                fnt = fsub = ImageFont.load_default()
+            d.rectangle([S // 2 - 120, 470, S // 2 + 120, 486],
+                        fill=(225, 6, 0))
+            for i, ln in enumerate(
+                    youtube_subir._envolver(PODCAST_TITULO, 12).split("\n")):
+                caja = d.textbbox((0, 0), ln, font=fnt)
+                d.text(((S - (caja[2] - caja[0])) / 2, 560 + i * 175), ln,
+                       font=fnt, fill=(235, 240, 248))
+            sub = "F1 & MOTORSPORT DOCUMENTARIES"
+            caja = d.textbbox((0, 0), sub, font=fsub)
+            d.text(((S - (caja[2] - caja[0])) / 2, S - 260), sub,
+                   font=fsub, fill=(150, 160, 175))
+            im.save(ruta, quality=90)
+        except Exception:
+            return Response(status_code=404)
+    with open(ruta, "rb") as f:
+        return Response(content=f.read(), media_type="image/jpeg")
+
+
+@app.get("/podcast.xml")
+async def podcast_feed(request: Request):
+    """Feed RSS 2.0 + iTunes del podcast. Se suscribe esta URL en Spotify
+    for Podcasters y Apple Podcasts Connect (una sola vez)."""
+    base = str(request.base_url).rstrip("/")
+    portada = PODCAST_IMAGEN or f"{base}/podcast/cover.jpg"
+    cat = sorted(_cargar_catalogo_podcast(),
+                 key=lambda e: e.get("fecha", ""), reverse=True)
+    items = []
+    for e in cat:
+        audio_url = f"{base}/podcast/audio/{e['archivo']}"
+        h, resto = divmod(int(e.get("duracion", 0)), 3600)
+        m, s = divmod(resto, 60)
+        dur_txt = f"{h:d}:{m:02d}:{s:02d}" if h else f"{m:d}:{s:02d}"
+        items.append(f"""    <item>
+      <title>{_xml_escape(e['titulo'])}</title>
+      <description>{_xml_escape(e['descripcion'])}</description>
+      <itunes:summary>{_xml_escape(e['descripcion'])}</itunes:summary>
+      <enclosure url="{_xml_escape(audio_url)}" length="{e.get('bytes',0)}" type="audio/mpeg"/>
+      <guid isPermaLink="false">{_xml_escape(e['id'])}</guid>
+      <pubDate>{_xml_escape(e['fecha'])}</pubDate>
+      <itunes:duration>{dur_txt}</itunes:duration>
+      <itunes:explicit>false</itunes:explicit>
+    </item>""")
+    xml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <title>{_xml_escape(PODCAST_TITULO)}</title>
+    <link>{base}/</link>
+    <language>{_xml_escape(PODCAST_IDIOMA)}</language>
+    <description>{_xml_escape(PODCAST_DESC)}</description>
+    <itunes:summary>{_xml_escape(PODCAST_DESC)}</itunes:summary>
+    <itunes:author>{_xml_escape(PODCAST_AUTOR)}</itunes:author>
+    <itunes:owner>
+      <itunes:name>{_xml_escape(PODCAST_AUTOR)}</itunes:name>
+      <itunes:email>{_xml_escape(PODCAST_EMAIL)}</itunes:email>
+    </itunes:owner>
+    <itunes:image href="{_xml_escape(portada)}"/>
+    <image><url>{_xml_escape(portada)}</url><title>{_xml_escape(PODCAST_TITULO)}</title><link>{base}/</link></image>
+    <itunes:category text="Sports"><itunes:category text="Wilderness"/></itunes:category>
+    <itunes:explicit>false</itunes:explicit>
+    <itunes:type>episodic</itunes:type>
+{chr(10).join(items)}
+  </channel>
+</rss>"""
+    return Response(content=xml, media_type="application/rss+xml")
 
 
 @app.get("/panel", response_class=HTMLResponse)
@@ -4255,6 +4433,8 @@ async def _procesar_recap(ruta):
          resumen.get("pais", ""), resumen.get("sesion", "")])
     if res:
         log.info("🎬 Video-reseña subido: %s", res["url"])
+        await _publicar_podcast("recap_" + resumen["id"], titulo,
+                                descripcion, audio_total)
         shutil.rmtree(tmp, ignore_errors=True)
         with contextlib.suppress(OSError):
             os.remove(ruta)
@@ -4455,6 +4635,9 @@ async def _subir_programa_video(ruta_ep):
         ["F1", "Formula1", "Motorsport", "Documentary", prog["titulo"]])
     if res:
         log.info("📼 Video de programa subido: %s", res["url"])
+        await _publicar_podcast(
+            "prog_" + _id_episodio_completo(tipo, ep.get("titulo") or ""),
+            titulo, descripcion, audio_total)
         ep["youtube_id"] = res["id"]
         ep["youtube_url"] = res["url"]
         with open(ruta_ep, "w") as f:
@@ -4754,6 +4937,8 @@ async def _producir_tema(tema):
     if not res:
         return False
     log.info("🎓 Episodio de la cola subido: %s", res["url"])
+    await _publicar_podcast("tema_" + tema["id"], titulo, descripcion,
+                            audio_total)
     tema["youtube_id"] = res["id"]
     tema["youtube_url"] = res["url"]
     shutil.rmtree(tmp, ignore_errors=True)
