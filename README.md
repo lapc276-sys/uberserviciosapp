@@ -54,6 +54,7 @@ Verified end-to-end: unauthenticated `/admin` → 307 to login · wrong password
 ✅ **Instant quote engine** (`lib/quote.ts`) — one deterministic pricing source shared by web, API and chatbot
 ✅ **60-second booking flow** — multi-step, live quote, validated intake (`/book` + `/api/book`)
 ✅ **AI chatbot widget** — OpenAI-powered with a deterministic rules-based fallback (works with no API key)
+✅ **WhatsApp AI agent** (Meta Cloud API) — the *same* assistant brain (`lib/assistant.ts`) answers on WhatsApp with identical pricing, capturing every chat as a lead. Webhook at `/api/whatsapp`
 ✅ **Automation pipeline seam** (`lib/automations.ts`) — email, SMS, calendar, invoicing, reminders, review requests (env-gated stubs)
 ✅ **Admin dashboard** preview (`/admin`) — KPIs, recent bookings
 ✅ Dark mode, responsive, fast (static-first, ~102 kB shared JS), accessible
