@@ -516,6 +516,81 @@ def _titulo_overlay(texto, w, h, salida_png):
         return None
 
 
+def _cta_overlay(w, h, salida_png, texto):
+    """PNG transparente w×h con una 'píldora' de suscripción (barra roja
+    redondeada + texto blanco, estilo YouTube) en el tercio inferior-centro,
+    para superponerla en los últimos segundos del short. Ruta o None."""
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+        capa = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        d = ImageDraw.Draw(capa)
+        tam = max(30, w // 15)
+        fnt = None
+        for f in _FUENTES:
+            if os.path.exists(f):
+                try:
+                    fnt = ImageFont.truetype(f, size=tam)
+                    break
+                except Exception:
+                    pass
+        if fnt is None:
+            fnt = ImageFont.load_default()
+        caja = d.textbbox((0, 0), texto, font=fnt)
+        tw, th = caja[2] - caja[0], caja[3] - caja[1]
+        padx, pady = int(tam * 0.9), int(tam * 0.5)
+        bw, bh = tw + padx * 2, th + pady * 2
+        bx = (w - bw) // 2
+        by = int(h * 0.58)                       # sobre la banda del título
+        d.rounded_rectangle([bx, by, bx + bw, by + bh], radius=bh // 2,
+                            fill=(225, 6, 0, 235))
+        d.text((bx + padx - caja[0], by + pady - caja[1]), texto,
+               font=fnt, fill=(255, 255, 255, 255))
+        capa.save(salida_png)
+        return salida_png
+    except Exception as e:
+        log.info("No se pudo crear el overlay de CTA (%s)", e)
+        return None
+
+
+def _aplicar_cta(video_in, texto, dur, w, h, fps):
+    """SEGUNDA pasada AISLADA: superpone la píldora de suscripción en los
+    últimos ~3.5 s del short. Si algo falla, devuelve False y el llamador se
+    queda con el video original INTACTO — nunca rompe el pipeline principal."""
+    if not (texto and video_in and os.path.exists(video_in)):
+        return False
+    png = None
+    try:
+        png = os.path.join(os.path.dirname(os.path.abspath(video_in)),
+                           "cta_overlay.png")
+        if not _cta_overlay(w, h, png, texto):
+            return False
+        desde = max(0.5, dur - 3.5)
+        salida = video_in + ".cta.mp4"
+        args = [_ffmpeg(), "-y", "-i", video_in,
+                "-loop", "1", "-framerate", str(fps), "-i", png,
+                "-filter_complex",
+                f"[0:v][1:v]overlay=0:0:enable='gte(t,{desde:.2f})':"
+                f"shortest=1[v]",
+                "-map", "[v]", "-map", "0:a?",
+                "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt",
+                "yuv420p", "-c:a", "copy", "-movflags", "+faststart", salida]
+        r = subprocess.run(args, capture_output=True, timeout=300)
+        if r.returncode == 0 and os.path.exists(salida) \
+                and os.path.getsize(salida) > 0:
+            os.replace(salida, video_in)
+            log.info("👍 CTA de suscripción añadido al final del short")
+            return True
+        log.info("CTA overlay falló (%s) — el short queda sin CTA",
+                 (r.stderr or b"")[-200:].decode("utf-8", "ignore"))
+    except Exception as e:
+        log.info("CTA overlay no aplicado (%s)", e)
+    finally:
+        with contextlib.suppress(OSError):
+            if png and os.path.exists(png):
+                os.remove(png)
+    return False
+
+
 def _preparar_imagen(ruta, texto, w, h):
     """Deja la imagen lista con Pillow: recorte a w×h (tipo cover) y el
     título pintado sobre una banda oscura. Nunca lanza — si algo falla,
@@ -613,7 +688,22 @@ def concat_audios(rutas, salida):
 
 
 async def armar_video(audio_path, fotos_urls, titulo, salida_mp4,
-                      horizontal=False, con_musica=False):
+                      horizontal=False, con_musica=False, cta_texto=None):
+    """Construye el MP4 y, si es un short vertical con `cta_texto`, le añade
+    una píldora de suscripción en los últimos segundos (segunda pasada
+    aislada: si falla, el video queda igual). Devuelve True si se creó."""
+    ok = await _armar_video_base(audio_path, fotos_urls, titulo, salida_mp4,
+                                 horizontal=horizontal, con_musica=con_musica)
+    if ok and cta_texto and not horizontal:
+        dur = _duracion_audio(audio_path) or 25.0
+        with contextlib.suppress(Exception):
+            await asyncio.to_thread(_aplicar_cta, salida_mp4, cta_texto,
+                                    dur, VERT_W, VERT_H, 30)
+    return ok
+
+
+async def _armar_video_base(audio_path, fotos_urls, titulo, salida_mp4,
+                            horizontal=False, con_musica=False):
     """Construye el MP4 (vertical para shorts; 16:9 para VODs de sesión).
     Devuelve True si se creó.
 

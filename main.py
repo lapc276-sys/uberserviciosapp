@@ -432,6 +432,10 @@ async def lifespan(app: FastAPI):
         if redes_sociales.instagram_configurado() and not base:
             log.warning("Instagram: falta PUBLIC_URL (o el dominio de Replit) "
                         "— IG no podrá descargar el video del Reel")
+    # Ola temática del GP en curso (contenido oportuno = más alcance): siembra
+    # una tanda de shorts del circuito de esta carrera, que se publican antes.
+    with contextlib.suppress(Exception):
+        _sembrar_ola_gp_actual()
     # Carpetas de trabajo: sin ellas los cachés fallan en silencio y se
     # paga TTS/Claude de nuevo por contenido ya generado
     for d in ("cache", "episodes", "shorts", "vods"):
@@ -696,6 +700,24 @@ async def control_auto(valor: str):
     log.info("🕹️  Panel: director automático %s",
              "ON" if estado.director_auto else "OFF")
     return JSONResponse({"ok": True, "director_auto": estado.director_auto})
+
+
+@app.post("/control/ola/{trazado}")
+async def control_ola(trazado: str):
+    """Siembra al instante una 'ola' de shorts técnicos de un circuito (para
+    montar la ola de tráfico de un GP). Los próximos shorts educativos salen
+    de esa cola prioritaria. Ej.: POST /control/ola/Hungaroring"""
+    tr = _buscar_trazado(trazado)
+    if not tr:
+        return JSONResponse(
+            {"ok": False, "error": f"circuito '{trazado}' no reconocido",
+             "opciones": [t for t, _ in _TRAZADOS]}, status_code=404)
+    n = _sembrar_ola(tr[0], tr[1])
+    with contextlib.suppress(Exception):
+        with open(_OLA_MARCADOR, "w") as f:
+            json.dump({"gp": tr[0]}, f)
+    log.info("🕹️  Panel: ola sembrada para %s (%d shorts)", tr[0], n)
+    return JSONResponse({"ok": True, "gp": tr[0], "shorts_en_cola": n})
 
 
 @app.post("/control/calidad/{modo}")
@@ -3896,10 +3918,125 @@ def _lente(concepto):
     return cat, base, consulta                     # concepto puro
 
 
+# ───────────────────── OLA temática de un GP ─────────────────────
+# Cuando hay un Gran Premio a la vuelta de la esquina, el contenido de ESE
+# circuito es oportuno y el algoritmo lo empuja más (lo comprobamos con el
+# short de Hungría: 1300 vistas en <24h). Sembramos una "ola": una cola
+# PRIORITARIA de shorts técnicos de ese trazado que se publican ANTES que el
+# pozo combinatorio. Reusable cada finde con solo cambiar el Secret GP_ACTUAL
+# (o disparando POST /control/ola/{trazado}); se auto-siembra al arrancar.
+_OLA_ARCHIVO = "shorts_ola.json"          # cola prioritaria (runtime)
+_OLA_MARCADOR = "shorts_ola_gp.json"      # último GP sembrado (runtime)
+# GP en curso: por defecto el Hungaroring (GP vigente). Cambia el Secret
+# GP_ACTUAL cada fin de semana al circuito de la próxima carrera.
+_GP_ACTUAL = (os.environ.get("GP_ACTUAL") or "Hungaroring").strip()
+
+
+def _angulos_trazado(nombre, query, n=8):
+    """n ángulos técnicos DISTINTOS enfocados en UN circuito: toma conceptos
+    base variados (aero, motor, neumáticos, estrategia, historia) y les fuerza
+    la lente del trazado. Así un GP rinde una tanda de shorts oportunos."""
+    conceptos = random.sample(_TEMAS_TECNICOS,
+                              k=min(n, len(_TEMAS_TECNICOS)))
+    return [[cat, f"{base} — and why it matters most at {nombre}", query]
+            for cat, base, _q in conceptos]
+
+
+def _sembrar_ola(nombre, query, n=8):
+    """Escribe la cola prioritaria con ángulos del circuito. Devuelve cuántos
+    quedaron en cola."""
+    temas = _angulos_trazado(nombre, query, n)
+    with contextlib.suppress(Exception):
+        with open(_OLA_ARCHIVO, "w") as f:
+            json.dump({"gp": nombre, "temas": temas}, f)
+    log.info("🌊 Ola sembrada: %d shorts técnicos de %s en cola prioritaria",
+             len(temas), nombre)
+    return len(temas)
+
+
+def _tema_prioritario():
+    """Saca y CONSUME el próximo tema de la ola del GP. None si no hay ola."""
+    try:
+        with open(_OLA_ARCHIVO) as f:
+            data = json.load(f)
+    except Exception:
+        return None
+    temas = data.get("temas") or []
+    if not temas:
+        return None
+    elegido = temas.pop(0)
+    data["temas"] = temas
+    with contextlib.suppress(Exception):
+        with open(_OLA_ARCHIVO, "w") as f:
+            json.dump(data, f)
+    try:
+        return tuple(elegido)
+    except Exception:
+        return None
+
+
+# Alias de país / nombre común → circuito de _TRAZADOS, para que GP_ACTUAL y
+# el endpoint acepten "hungary", "italy", "brazil"… y no solo el nombre exacto.
+_ALIAS_TRAZADO = {
+    "hungary": "Hungaroring", "budapest": "Hungaroring",
+    "italy": "Monza", "italian": "Monza",
+    "belgium": "Spa-Francorchamps", "spa": "Spa-Francorchamps",
+    "japan": "Suzuka", "japanese": "Suzuka",
+    "britain": "Silverstone", "british": "Silverstone", "uk": "Silverstone",
+    "brazil": "Interlagos", "brazilian": "Interlagos", "sao paulo": "Interlagos",
+    "netherlands": "Zandvoort", "dutch": "Zandvoort",
+    "saudi": "Jeddah", "saudi arabia": "Jeddah",
+    "azerbaijan": "Baku",
+    "vegas": "Las Vegas", "usa": "Las Vegas",
+    "singapore": "Singapore",
+    "monaco": "Monaco", "montecarlo": "Monaco", "monte carlo": "Monaco",
+}
+
+
+def _buscar_trazado(nombre):
+    """Encuentra un trazado por nombre (flexible) en _TRAZADOS → (nombre, q).
+    Acepta el nombre del circuito o el país/alias común (hungary, italy…)."""
+    nombre = (nombre or "").strip().lower()
+    if not nombre:
+        return None
+    if nombre in _ALIAS_TRAZADO:
+        nombre = _ALIAS_TRAZADO[nombre].lower()
+    for t, tq in _TRAZADOS:
+        if nombre in t.lower() or t.lower() in nombre:
+            return t, tq
+    return None
+
+
+def _sembrar_ola_gp_actual():
+    """Al arrancar: si el GP en curso (Secret GP_ACTUAL) cambió respecto a la
+    última ola sembrada, siembra la ola de ese circuito. Solo una vez por GP."""
+    if not _GP_ACTUAL:
+        return
+    ultimo = None
+    with contextlib.suppress(Exception):
+        with open(_OLA_MARCADOR) as f:
+            ultimo = json.load(f).get("gp")
+    if ultimo == _GP_ACTUAL:
+        return
+    tr = _buscar_trazado(_GP_ACTUAL)
+    if not tr:
+        log.info("GP_ACTUAL=%s no coincide con ningún circuito conocido — "
+                 "sin ola (opciones: %s)", _GP_ACTUAL,
+                 ", ".join(t for t, _ in _TRAZADOS))
+        return
+    _sembrar_ola(tr[0], tr[1])
+    with contextlib.suppress(Exception):
+        with open(_OLA_MARCADOR, "w") as f:
+            json.dump({"gp": _GP_ACTUAL}, f)
+
+
 def _tema_tecnico_siguiente():
     """Genera un tema técnico ENFOCADO (concepto × lente), evitando los
     usados recientemente. El espacio combinatorio es enorme → prácticamente
-    no repite en todo el año."""
+    no repite en todo el año. Si hay una OLA de GP sembrada, ese tema manda."""
+    prioritario = _tema_prioritario()
+    if prioritario:
+        return prioritario
     usados = []
     with contextlib.suppress(Exception):
         with open(_SHORTS_TEMAS_USADOS) as f:
@@ -4065,18 +4202,24 @@ async def bucle_shorts():
                                             tema=tema)
                 if guion:
                     estado.api_sin_creditos = False  # volvió el saldo
+                    # CTA hablado: una frase de cierre que pide seguir. Es lo
+                    # que convierte VISTAS en SUSCRIPTORES en Shorts (el guion
+                    # ya cierra con pregunta → comentarios; el CTA → subs).
+                    guion_final = f"{guion.rstrip()} {_cta_hablada()}"
                     datos = {
                         "id": slot_id,
                         "timestamp": ahora.isoformat(),
                         "tipo": tipo,
-                        "guion": guion,
-                        "duracion_segundos": max(20, min(50, len(guion.split()) * 3)),
+                        "guion": guion_final,
+                        "duracion_segundos": max(
+                            20, min(55, len(guion_final.split()) * 3)),
                         "fuente_titulares": bool(titulares),
                     }
                     if tema:      # fotos del tema técnico (no el mix genérico)
                         datos["consulta"] = tema[2]
                         datos["categoria"] = tema[0]
-                    # Título con gancho (CTR) en vez de recortar el guion
+                    # Título con gancho (CTR) a partir del guion ORIGINAL
+                    # (sin el CTA, que ensuciaría el título).
                     with contextlib.suppress(Exception):
                         t_g, _ = await _titulo_y_gancho(
                             client, guion, vertical=True)
@@ -4104,6 +4247,38 @@ def _titulo_short(short):
                 "educativo": "F1 Explained"}.get(short.get("tipo"), "F1 News")
     titulo = corte or f"{etiqueta} Short"
     return f"{titulo} #Shorts #F1"[:100]
+
+
+# CTA hablado de cierre: se añade al final del guion de cada short para pedir
+# la suscripción (el mayor conversor vistas→subs en Shorts). Se rota para que
+# no suene repetitivo. En el idioma del canal (IDIOMA).
+_CTA_HABLADA = {
+    "es": [
+        "Sígueme para entender la Fórmula 1 como un ingeniero.",
+        "Suscríbete: cada día explico un secreto técnico de la F1.",
+        "Dale a seguir y no te pierdas el próximo dato de F1.",
+        "Si aprendiste algo, suscríbete: hay uno nuevo cada día.",
+    ],
+    "en": [
+        "Follow to understand Formula 1 like an engineer.",
+        "Subscribe for a new F1 tech secret every single day.",
+        "Hit follow so you don't miss the next F1 breakdown.",
+        "If you learned something, subscribe — there's a new one daily.",
+    ],
+}
+
+
+def _cta_hablada():
+    """Frase de cierre (subscribe) en el idioma del canal, rotando variantes."""
+    return random.choice(_CTA_HABLADA.get(IDIOMA, _CTA_HABLADA["en"]))
+
+
+# Texto de la píldora de suscripción que se pinta en los últimos segundos.
+_CTA_VISUAL = {"es": "SUSCRÍBETE", "en": "SUBSCRIBE"}
+
+
+def _cta_visual():
+    return _CTA_VISUAL.get(IDIOMA, _CTA_VISUAL["en"])
 
 
 # Hashtags que funcionan en Reels/TikTok (descubribilidad de motorsport).
@@ -4328,10 +4503,11 @@ async def bucle_youtube():
                 else:
                     fotos = await _fotos_variadas(short)
 
-                # 3) Armar video vertical
+                # 3) Armar video vertical (con píldora de suscripción al final)
                 video_ruta = f"shorts/short_{sid}.mp4"
                 ok = await youtube_subir.armar_video(
-                    audio_ruta, fotos, _titulo_short(short), video_ruta)
+                    audio_ruta, fotos, _titulo_short(short), video_ruta,
+                    cta_texto=_cta_visual())
                 if not ok:
                     short["yt_intentos"] = short.get("yt_intentos", 0) + 1
                     _guardar_short(sid, short)
