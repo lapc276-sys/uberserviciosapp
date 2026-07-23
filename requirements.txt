@@ -2,6 +2,7 @@
 fastapi
 uvicorn[standard]
 anthropic
+httpx
 
 # Subida automática de shorts a YouTube (opcional; también necesita ffmpeg
 # en el sistema para armar el video vertical)

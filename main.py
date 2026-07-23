@@ -41,6 +41,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 import telemetria
 import youtube_subir
+import redes_sociales
 import graficos_f1
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
@@ -418,6 +419,19 @@ async def lifespan(app: FastAPI):
     else:
         log.warning("Sin clave de TTS (ELEVENLABS_API_KEY / OPENAI_API_KEY) "
                     "— la Mac usará sus voces del sistema (robóticas)")
+    # Redes sociales extra (opcionales): los shorts verticales se replican
+    # tal cual en Instagram Reels y TikTok si están configuradas.
+    _redes = []
+    if redes_sociales.instagram_configurado():
+        _redes.append("Instagram Reels")
+    if redes_sociales.tiktok_configurado():
+        _redes.append("TikTok")
+    if _redes:
+        base = redes_sociales.public_url_base()
+        log.info("📲 Difusión en redes activada: %s", " + ".join(_redes))
+        if redes_sociales.instagram_configurado() and not base:
+            log.warning("Instagram: falta PUBLIC_URL (o el dominio de Replit) "
+                        "— IG no podrá descargar el video del Reel")
     # Carpetas de trabajo: sin ellas los cachés fallan en silencio y se
     # paga TTS/Claude de nuevo por contenido ya generado
     for d in ("cache", "episodes", "shorts", "vods"):
@@ -820,6 +834,24 @@ async def descargar_audio_short(short_id: str):
         try:
             with open(ruta, "rb") as f:
                 return Response(content=f.read(), media_type="audio/mpeg")
+        except Exception:
+            pass
+    return Response(status_code=404)
+
+
+@app.get("/media/short/{short_id}.mp4")
+async def descargar_video_short(short_id: str):
+    """Sirve el MP4 vertical de un short. Instagram DESCARGA el video de
+    esta URL pública para publicar el Reel (la API de IG no acepta subir el
+    archivo directamente). El archivo solo existe mientras se publica: en
+    cuanto pasa por todas las redes, bucle_shorts lo borra."""
+    if not _short_id_valido(short_id):
+        return Response(status_code=404)
+    ruta = f"shorts/short_{short_id}.mp4"
+    if os.path.exists(ruta):
+        try:
+            with open(ruta, "rb") as f:
+                return Response(content=f.read(), media_type="video/mp4")
         except Exception:
             pass
     return Response(status_code=404)
@@ -4074,6 +4106,27 @@ def _titulo_short(short):
     return f"{titulo} #Shorts #F1"[:100]
 
 
+# Hashtags que funcionan en Reels/TikTok (descubribilidad de motorsport).
+_HASHTAGS_REDES = ("#F1 #Formula1 #Racing #Motorsport #F1Shorts #Reels "
+                   "#FYP #Aerodynamics #Engineering #GrandPrix")
+
+
+def _caption_redes(short):
+    """Texto para Instagram Reels / TikTok: título con gancho (o el guion) +
+    un extracto + hashtags de descubribilidad. TikTok e Instagram premian
+    los hashtags, así que se incluyen siempre."""
+    titulo = (short.get("titulo") or "").strip()
+    if not titulo:
+        titulo = _titulo_short(short).split("#")[0].strip()
+    guion = (short.get("guion") or "").strip()
+    # Título limpio (sin los hashtags que _titulo_short pudiera añadir) +
+    # un extracto del guion para dar contexto, sin pasarnos de largo.
+    base = titulo.split("#")[0].strip()
+    if guion and guion[:60] not in base:
+        base = f"{base}\n\n{guion[:180]}".strip()
+    return f"{base}\n\n{_HASHTAGS_REDES}"[:2100]
+
+
 def _shorts_sin_subir():
     """Shorts guardados que todavía no se subieron a YouTube."""
     pendientes = []
@@ -4301,11 +4354,31 @@ async def bucle_youtube():
                     short["youtube_id"] = res["id"]
                     short["youtube_url"] = res["url"]
                     _guardar_short(sid, short)
-                    with contextlib.suppress(OSError):
-                        os.remove(video_ruta)  # ya subido, liberar disco
                 else:
                     short["yt_intentos"] = short.get("yt_intentos", 0) + 1
                     _guardar_short(sid, short)
+
+                # 5) Publicar TAMBIÉN en Instagram Reels / TikTok — el mismo
+                # MP4 vertical sirve igual, sin reprocesar. Instagram DESCARGA
+                # el video de /media/short/{sid}.mp4 y TikTok sube el archivo
+                # local; por eso se hace ANTES de borrar el MP4. Best-effort:
+                # si una red falla, el short sigue publicado en las demás.
+                if (redes_sociales.alguna_red_configurada()
+                        and not short.get("redes")):
+                    try:
+                        r_redes = await redes_sociales.publicar_en_redes(
+                            video_ruta, sid, _caption_redes(short))
+                        if r_redes.get("instagram") or r_redes.get("tiktok"):
+                            short["redes"] = r_redes
+                            _guardar_short(sid, short)
+                    except Exception as e:
+                        log.warning("Redes sociales: %s", e)
+
+                # Liberar disco solo cuando el short ya se subió a YouTube (si
+                # YouTube falló, el MP4 se conserva para el reintento).
+                if res:
+                    with contextlib.suppress(OSError):
+                        os.remove(video_ruta)
 
                 await asyncio.sleep(30)  # espaciar subidas (cuota API)
         except Exception as e:
