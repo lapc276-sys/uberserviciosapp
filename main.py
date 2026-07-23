@@ -3656,6 +3656,114 @@ async def _miniatura_video(gancho, fotos, salida):
         return None
 
 
+# ── Foto "hero" para la miniatura ────────────────────────────────────────
+# La portada vende el video: una foto DRAMÁTICA y nítida (un coche en pista,
+# un primer plano de una pieza) hace que la gente entre; una genérica los
+# espanta. Antes la miniatura agarraba la PRIMERA foto del video; ahora se
+# busca aparte material impactante y la VISIÓN elige el mejor plano.
+_HERO_QUERIES = [
+    "formula 1 car close up", "race car detail", "formula 1 wheel tyre macro",
+    "formula 1 brake disc glowing", "formula 1 aerodynamics wing detail",
+    "formula 1 car cockpit", "formula 1 car on track dramatic",
+    "race car engine detail",
+]
+_HERO_POR_CAT = {
+    "Aero": ["formula 1 front wing close up", "race car aerodynamics detail",
+             "formula 1 rear wing detail"],
+    "Engine": ["formula 1 engine detail", "race car engine bay close up",
+               "turbo engine macro"],
+    "Tyres": ["formula 1 tyre macro close up", "pirelli racing tyre detail",
+              "race car wheel rim detail"],
+    "Strategy": ["formula 1 pit stop action", "formula 1 pit lane",
+                 "race car pit crew close up"],
+    "Tech history": ["classic formula 1 car detail", "vintage race car close up",
+                     "historic grand prix car"],
+}
+HERO_MINIATURA_SCHEMA = {
+    "type": "object",
+    "properties": {"indice": {"type": "integer"}},
+    "required": ["indice"],
+    "additionalProperties": False,
+}
+SYSTEM_HERO = (
+    "You are a YouTube thumbnail art director for a motorsport channel. From "
+    "the candidate images, pick the ONE that works best as a thumbnail "
+    "BACKGROUND: dramatic, sharp, high quality, a single clear subject (a race "
+    "car or a mechanical part), strong colour and contrast, and a CLEAN, "
+    "AESTHETIC composition. Strongly PREFER shots WITHOUT prominent sponsor "
+    "logos or brand names (cleaner and safer). REJECT collages, watermarks, "
+    "text-heavy, logo-plastered, blurry or cluttered shots. Answer with the "
+    "0-based index of the best image.")
+
+
+async def _elegir_hero_vision(client, candidatas):
+    """Muestra las candidatas a la visión y devuelve la MEJOR como portada.
+    Si no hay clave/API o falla, devuelve la primera válida."""
+    if not (candidatas and os.environ.get("ANTHROPIC_API_KEY")):
+        return candidatas[0] if candidatas else None
+    contenido, validas = [], []
+    for src in candidatas:
+        b64 = await _jpeg_para_vision(src)
+        if not b64:
+            continue
+        contenido.append({"type": "text", "text": f"Image index {len(validas)}:"})
+        contenido.append({"type": "image", "source": {
+            "type": "base64", "media_type": "image/jpeg", "data": b64}})
+        validas.append(src)
+    if not validas:
+        return None
+    if len(validas) == 1:
+        return validas[0]
+    try:
+        r = await client.messages.create(
+            model=MODELO_AHORRO, max_tokens=60, system=SYSTEM_HERO,
+            output_config={"format": {"type": "json_schema",
+                                      "schema": HERO_MINIATURA_SCHEMA}},
+            messages=[{"role": "user", "content": contenido + [
+                {"type": "text",
+                 "text": "Pick the best thumbnail background image."}]}])
+        data = json.loads(next((b.text for b in r.content
+                                if b.type == "text"), "{}"))
+        idx = int(data.get("indice", 0))
+        if 0 <= idx < len(validas):
+            log.info("🖼️  Portada elegida por visión (índice %d de %d)",
+                     idx, len(validas))
+            return validas[idx]
+    except Exception as e:
+        log.info("No se pudo elegir portada con visión (%s)", e)
+    return validas[0]
+
+
+async def _foto_hero_miniatura(client, consulta, categoria=None, n_cand=5):
+    """Busca material DRAMÁTICO de alta calidad para la portada (biblioteca
+    curada + búsquedas de primeros planos de coches/piezas) y deja que la
+    visión elija el mejor plano. Devuelve una URL/ruta, o None si no hay nada
+    (el llamador cae entonces a las fotos del propio video)."""
+    cands = list(fotos_biblioteca(consulta or categoria or "motorsport", 3))
+    queries = list(_HERO_POR_CAT.get(categoria, []))
+    if consulta:
+        queries.append(f"{consulta} close up")
+    queries += _HERO_QUERIES
+    for q in queries:
+        if len(cands) >= n_cand:
+            break
+        try:
+            for u in await imagenes_pexels(q, n=3):
+                if u not in cands:
+                    cands.append(u)
+        except Exception:
+            pass
+    if len(cands) < 2:                     # respaldo si Pexels no dio material
+        with contextlib.suppress(Exception):
+            for u in await imagenes_openverse(consulta or "formula 1 car", n=4):
+                if u not in cands:
+                    cands.append(u)
+    cands = cands[:n_cand]
+    if not cands:
+        return None
+    return await _elegir_hero_vision(client, cands)
+
+
 def _nuevo_episodio_pedido(tipo, prog):
     """Arma el pedido del capítulo uno de un episodio nuevo (con época
     fija para Historia, para cubrir épocas distintas en orden)."""
@@ -5031,8 +5139,11 @@ async def _procesar_recap(ruta):
     t_nuevo, gancho = await _titulo_y_gancho(client, ctx)
     if t_nuevo:
         titulo = t_nuevo[:100]
+    hero = await _foto_hero_miniatura(
+        client, f"formula 1 {resumen.get('pais','')} race car")
     miniatura = await _miniatura_video(
-        gancho or f"{resumen.get('pais','')} REVIEW", fotos,
+        gancho or f"{resumen.get('pais','')} REVIEW",
+        ([hero] + fotos) if hero else fotos,
         os.path.join(tmp, "thumb.jpg"))
     descripcion = (
         f"Our full review of the {resumen.get('sesion','session')} at "
@@ -5248,8 +5359,11 @@ async def _subir_programa_video(ruta_ep):
             cli, f"{ep.get('titulo')} — {prog['titulo']} documentary")
         if t_nuevo:
             titulo = t_nuevo[:100]
+        hero = await _foto_hero_miniatura(
+            cli, ep.get("titulo") or prog["titulo"])
         miniatura = await _miniatura_video(
-            gancho or ep.get("titulo") or prog["titulo"], fotos,
+            gancho or ep.get("titulo") or prog["titulo"],
+            ([hero] + fotos) if hero else fotos,
             os.path.join(tmp, "thumb.jpg"))
     descripcion = (
         f"{prog['titulo'].title()} — {ep.get('titulo')}.\n\n"
@@ -5557,8 +5671,11 @@ async def _producir_tema(tema):
         client, f"{titulo}. {tema.get('intro','')}")
     if t_nuevo:
         titulo = t_nuevo[:100]
+    hero = await _foto_hero_miniatura(
+        client, tema.get("consulta") or titulo, tema.get("categoria"))
     miniatura = await _miniatura_video(
-        gancho or titulo, fotos, os.path.join(tmp, "thumb.jpg"))
+        gancho or titulo, ([hero] + fotos) if hero else fotos,
+        os.path.join(tmp, "thumb.jpg"))
     descripcion = (
         f"{tema['intro']}\n\n"
         "An AI-narrated motorsport explainer. Original narration + "
