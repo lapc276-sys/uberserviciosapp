@@ -3488,25 +3488,35 @@ TITULO_GANCHO_SCHEMA = {
     "required": ["titulo", "gancho"],
     "additionalProperties": False,
 }
-SYSTEM_GANCHO = ("You are a YouTube growth expert who writes irresistible, "
-                 "HONEST titles (no clickbait lies). Curiosity or stakes, "
-                 "not dry facts. Also give a 2-4 word ALL-CAPS punch phrase "
-                 "for the thumbnail. Never fabricate results.")
+SYSTEM_GANCHO = (
+    "You are a YouTube growth expert. Write ONE irresistible but HONEST title "
+    "that makes the viewer NEED to click. Use an open curiosity gap, real "
+    "stakes, or a mild contrarian angle — patterns like 'why X is a myth', "
+    "'the truth about X', 'what nobody tells you about X', 'X changed "
+    "everything', 'the reason X...'. Be CONCRETE, not vague. Front-load the "
+    "hook in the first 3 words (phones cut titles off). NEVER lie, never "
+    "invent results, numbers, records or quotes. Then give a punchy 2-4 word "
+    "ALL-CAPS phrase for the thumbnail: the single most intriguing idea (a "
+    "hook, NOT a summary), short enough to read big on a phone. "
+    f"Write everything in {IDIOMA_NOMBRE}.")
 
 
 async def _titulo_y_gancho(client, contexto, vertical=False):
     """Devuelve (titulo, gancho) atractivos para subir el CTR. Si falla,
     (None, None) y se usa el título de siempre."""
-    fmt = ("a YouTube SHORT (max 60 chars, add relevant hashtags)"
-           if vertical else "a long YouTube video (max 80 chars)")
+    fmt = ("a YouTube SHORT (max 60 chars, add 1-2 relevant hashtags)"
+           if vertical else "a long YouTube video (max 70 chars so it isn't "
+           "truncated on mobile)")
     try:
         r = await client.messages.create(
-            model=MODELO_AHORRO, max_tokens=140, system=SYSTEM_GANCHO,
+            model=MODELO_AHORRO, max_tokens=160, system=SYSTEM_GANCHO,
             output_config={"format": {"type": "json_schema",
                                       "schema": TITULO_GANCHO_SCHEMA}},
             messages=[{"role": "user", "content":
                        f"CONTENT: {contexto}\n\nWrite the title for {fmt}, "
-                       "plus the thumbnail punch phrase."}])
+                       "plus the thumbnail punch phrase. The thumbnail phrase "
+                       "must NOT just repeat the title — pick the most "
+                       "curiosity-provoking angle."}])
         if r.stop_reason == "refusal":
             return None, None
         data = json.loads(next((b.text for b in r.content
@@ -3517,55 +3527,128 @@ async def _titulo_y_gancho(client, contexto, vertical=False):
         return None, None
 
 
+def _fuente_miniatura(size):
+    """Fuente bold al tamaño pedido (o la default si no hay TTF)."""
+    from PIL import ImageFont
+    for f in youtube_subir._FUENTES:
+        if os.path.exists(f):
+            with contextlib.suppress(Exception):
+                return ImageFont.truetype(f, size=size)
+    with contextlib.suppress(Exception):
+        return ImageFont.load_default(size=size)
+    return ImageFont.load_default()
+
+
+def _envolver_ancho(draw, texto, fuente, max_w):
+    """Parte el texto en líneas que caben en max_w píxeles (por ancho real)."""
+    palabras, lineas, actual = texto.split(), [], ""
+    for w in palabras:
+        prueba = (actual + " " + w).strip()
+        if draw.textlength(prueba, font=fuente) <= max_w or not actual:
+            actual = prueba
+        else:
+            lineas.append(actual)
+            actual = w
+    if actual:
+        lineas.append(actual)
+    return lineas
+
+
+def _ajustar_texto_miniatura(draw, texto, max_w, max_h, lineas_max=3):
+    """Busca el MAYOR tamaño de fuente que hace caber el gancho en la zona de
+    texto (para que se lea GRANDE en móvil). Devuelve (fuente, lineas)."""
+    mejor = None
+    for size in range(210, 66, -6):
+        fnt = _fuente_miniatura(size)
+        lineas = _envolver_ancho(draw, texto, fnt, max_w)
+        if len(lineas) > lineas_max:
+            continue
+        alto_linea = int(size * 1.16)
+        if alto_linea * len(lineas) <= max_h:
+            return fnt, lineas
+        mejor = (fnt, lineas)
+    return mejor or (_fuente_miniatura(72),
+                     _envolver_ancho(draw, texto, _fuente_miniatura(72), max_w))
+
+
 async def _miniatura_video(gancho, fotos, salida):
-    """Crea una miniatura 1280x720: una foto real de fondo (oscurecida) con
-    la frase-gancho GRANDE y una barra roja. Devuelve la ruta o None."""
-    bg_url = next((f for f in (fotos or [])
-                   if isinstance(f, str) and f.startswith("http")), None)
+    """Crea una miniatura 1280x720 optimizada para CTR: foto real de fondo con
+    color reforzado, un degradado (no un velo plano) que garantiza contraste
+    abajo-izquierda, y el gancho en AMARILLO gigante con contorno negro grueso
+    (revienta de contraste en el modo oscuro de YouTube). Ruta o None."""
+    # Fondo: primera foto utilizable — acepta URL http o archivo LOCAL de la
+    # biblioteca (antes se ignoraban las locales y salía miniatura sin foto).
+    bg = next((f for f in (fotos or []) if isinstance(f, str)
+               and (f.startswith("http") or os.path.exists(f))), None)
     try:
-        from PIL import Image, ImageDraw, ImageFont, ImageFilter
+        from PIL import Image, ImageDraw, ImageEnhance
         W, H = 1280, 720
         base = None
-        if bg_url:
+        origen = None
+        if bg and bg.startswith("http"):
             tmpbg = salida + ".src"
-            if await youtube_subir._descargar(bg_url, tmpbg):
-                with contextlib.suppress(Exception):
-                    im = Image.open(tmpbg).convert("RGB")
-                    esc = max(W / im.width, H / im.height)
-                    im = im.resize((max(1, round(im.width * esc)),
-                                    max(1, round(im.height * esc))))
-                    x = (im.width - W) // 2
-                    y = (im.height - H) // 2
-                    base = im.crop((x, y, x + W, y + H))
+            if await youtube_subir._descargar(bg, tmpbg):
+                origen = tmpbg
+        elif bg:
+            origen = bg
+        if origen:
+            with contextlib.suppress(Exception):
+                im = Image.open(origen).convert("RGB")
+                esc = max(W / im.width, H / im.height)
+                im = im.resize((max(1, round(im.width * esc)),
+                                max(1, round(im.height * esc))))
+                x = (im.width - W) // 2
+                y = (im.height - H) // 2
+                base = im.crop((x, y, x + W, y + H))
+                # Color más vivo: las miniaturas saturadas destacan en el feed
+                base = ImageEnhance.Color(base).enhance(1.18)
+                base = ImageEnhance.Contrast(base).enhance(1.06)
+            if bg.startswith("http"):
                 with contextlib.suppress(OSError):
-                    os.remove(tmpbg)
+                    os.remove(origen)
         if base is None:
             base = Image.new("RGB", (W, H), (11, 13, 18))
-        # Oscurecer para que el texto resalte
-        oscuro = Image.new("RGB", (W, H), (0, 0, 0))
-        base = Image.blend(base, oscuro, 0.45)
+
+        # Degradado: la foto se mantiene viva arriba-derecha y se oscurece
+        # abajo (donde va el texto). Garantiza legibilidad sin apagar la foto.
+        grad = Image.new("L", (1, H))
+        for yy in range(H):
+            t = yy / H
+            grad.putpixel((0, yy), int(40 + 205 * (t ** 1.7)))
+        grad = grad.resize((W, H))
+        base = Image.composite(Image.new("RGB", (W, H), (0, 0, 0)), base, grad)
+
         d = ImageDraw.Draw(base)
-        texto = (gancho or "").upper().strip() or "F1 EXPLAINED"
-        fnt = None
-        for f in youtube_subir._FUENTES:
-            if os.path.exists(f):
-                with contextlib.suppress(Exception):
-                    fnt = ImageFont.truetype(f, size=150)
-                    break
-        if fnt is None:
-            fnt = ImageFont.load_default()
-        lineas = youtube_subir._envolver(texto, ancho=14).split("\n")[:3]
-        alto = 168
+        texto = (gancho or "").upper().strip() or "F1"
+        margen = 70
+        zona_w = W - margen * 2
+        zona_h = 360                      # tercio inferior para el texto
+        fnt, lineas = _ajustar_texto_miniatura(d, texto, zona_w, zona_h)
+        lineas = lineas[:3]
+        try:
+            alto = int(fnt.size * 1.16)
+        except Exception:
+            alto = 150
         total = alto * len(lineas)
-        y0 = (H - total) // 2
-        d.rectangle([70, y0 - 40, 70 + 90, y0 - 22], fill=(225, 6, 0))
+        y0 = H - total - 60              # anclado abajo
+        # Barra roja de acento, con peso real
+        d.rectangle([margen, y0 - 42, margen + 120, y0 - 18], fill=(225, 6, 0))
+        grosor = max(6, fnt.size // 16)
         for i, ln in enumerate(lineas):
             yy = y0 + i * alto
-            # contorno negro para legibilidad sobre cualquier foto
-            for dx in (-4, 0, 4):
-                for dy in (-4, 0, 4):
-                    d.text((72 + dx, yy + dy), ln, font=fnt, fill=(0, 0, 0))
-            d.text((72, yy), ln, font=fnt, fill=(255, 255, 255))
+            # sombra suave para despegar el texto de la foto
+            d.text((margen + 6, yy + 8), ln, font=fnt, fill=(0, 0, 0))
+            # amarillo con contorno negro grueso (máximo contraste en móvil)
+            with contextlib.suppress(TypeError):
+                d.text((margen, yy), ln, font=fnt, fill=(255, 214, 0),
+                       stroke_width=grosor, stroke_fill=(0, 0, 0))
+                continue
+            # respaldo si la versión de Pillow no soporta stroke_width
+            for dx in (-grosor, 0, grosor):
+                for dy in (-grosor, 0, grosor):
+                    d.text((margen + dx, yy + dy), ln, font=fnt,
+                           fill=(0, 0, 0))
+            d.text((margen, yy), ln, font=fnt, fill=(255, 214, 0))
         base.save(salida, quality=90)
         return salida
     except Exception as e:
