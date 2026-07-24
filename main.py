@@ -733,6 +733,20 @@ async def control_ola(trazado: str):
     return JSONResponse({"ok": True, "gp": tr[0], "shorts_en_cola": n})
 
 
+@app.post("/control/tarjeta")
+async def control_tarjeta():
+    """Genera al instante un short de TARJETA DE COMPARACIÓN con datos reales
+    del campeonato (líder vs 2º). Se sube en el próximo ciclo."""
+    sid = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d_%H%M%S")
+    if await _generar_short_comparacion(sid):
+        return JSONResponse({"ok": True, "short": sid,
+                             "estado": "Tarjeta creada; se subirá en el "
+                             "próximo ciclo de subida."})
+    return JSONResponse(
+        {"ok": False, "error": "Clasificación aún no disponible — espera a que "
+         "carguen los standings y reintenta."}, status_code=503)
+
+
 @app.post("/control/rethumbnail")
 async def control_rethumbnail(limite: int = 50):
     """Re-genera la miniatura de los videos YA subidos (foto hero + gancho) y
@@ -3524,6 +3538,111 @@ def _tarjeta_texto(ruta, texto, subtitulo=""):
         return None
 
 
+def _texto_borde_pil(d, xy, texto, fnt, grosor, fill=(255, 255, 255)):
+    """Texto con contorno negro grueso (stroke), respaldo manual si la
+    versión de Pillow no soporta stroke_width."""
+    try:
+        d.text(xy, texto, font=fnt, fill=fill, stroke_width=grosor,
+               stroke_fill=(0, 0, 0))
+    except TypeError:
+        x, y = xy
+        for dx in (-grosor, 0, grosor):
+            for dy in (-grosor, 0, grosor):
+                d.text((x + dx, y + dy), texto, font=fnt, fill=(0, 0, 0))
+        d.text(xy, texto, font=fnt, fill=fill)
+
+
+def _tarjeta_comparacion_png(salida, item_a, item_b, delta_txt=None,
+                             titulo=None, fotos=None):
+    """Tarjeta 1080x1920 estilo 'comparación viral': dos paneles con foto
+    (licencia libre), un STAT gigante cada uno, nombre + equipo, y un badge
+    verde con la diferencia. TODOS los números vienen de datos REALES (nunca
+    inventados). Devuelve la ruta o None."""
+    try:
+        from PIL import Image, ImageDraw, ImageEnhance
+        W, H = 1080, 1920
+        lienzo = Image.new("RGB", (W, H), (9, 11, 16))
+        gap = 8
+        ph = (H - gap) // 2
+        for idx in range(2):
+            y0 = idx * (ph + gap)
+            foto = (fotos or [None, None])[idx]
+            base = None
+            if foto and os.path.exists(str(foto)):
+                with contextlib.suppress(Exception):
+                    im = Image.open(foto).convert("RGB")
+                    esc = max(W / im.width, ph / im.height)
+                    im = im.resize((max(1, round(im.width * esc)),
+                                    max(1, round(im.height * esc))))
+                    x = (im.width - W) // 2
+                    yy = (im.height - ph) // 2
+                    base = im.crop((x, yy, x + W, yy + ph))
+                    base = ImageEnhance.Color(base).enhance(1.12)
+            if base is None:
+                base = Image.new("RGB", (W, ph), (22, 26, 34))
+            grad = Image.new("L", (1, ph))
+            for yy in range(ph):
+                t = 1 - (yy / ph)
+                grad.putpixel((0, yy), int(200 * (t ** 1.25)))
+            grad = grad.resize((W, ph))
+            base = Image.composite(Image.new("RGB", (W, ph), (0, 0, 0)),
+                                   base, grad)
+            lienzo.paste(base, (0, y0))
+
+        d = ImageDraw.Draw(lienzo)
+        if titulo:
+            ft = _fuente_miniatura(46)
+            tw = d.textlength(titulo.upper(), font=ft)
+            _texto_borde_pil(d, ((W - tw) // 2, 24), titulo.upper(), ft, 4)
+
+        for idx, item in enumerate((item_a, item_b)):
+            y0 = idx * (ph + gap)
+            stat = str(item.get("stat", ""))
+            size = 210
+            fs = _fuente_miniatura(size)
+            sw = d.textlength(stat, font=fs)
+            while sw > W - 160 and size > 90:
+                size -= 10
+                fs = _fuente_miniatura(size)
+                sw = d.textlength(stat, font=fs)
+            sx = (W - sw) // 2
+            sy = y0 + 70
+            _texto_borde_pil(d, (sx, sy), stat, fs, max(7, size // 14))
+            uni = item.get("unidad", "")
+            if uni:
+                fu = _fuente_miniatura(58)
+                _texto_borde_pil(d, (sx + sw + 14, sy + size - 74), uni, fu, 5,
+                                 fill=(255, 214, 0))
+            lab = str(item.get("label", "")).upper()
+            fl = _fuente_miniatura(66)
+            lw = d.textlength(lab, font=fl)
+            _texto_borde_pil(d, ((W - lw) // 2, sy + size + 6), lab, fl, 5)
+            sub = str(item.get("sub", "")).upper()
+            if sub:
+                fsub = _fuente_miniatura(44)
+                suw = d.textlength(sub, font=fsub)
+                _texto_borde_pil(d, ((W - suw) // 2, sy + size + 84), sub,
+                                 fsub, 4, fill=(255, 214, 0))
+
+        if delta_txt:
+            fdd = _fuente_miniatura(80)
+            dw = d.textlength(delta_txt, font=fdd)
+            padx, pady = 34, 16
+            bw, bh = dw + padx * 2, 80 + pady * 2
+            bx = (W - bw) // 2
+            by = ph - bh // 2
+            with contextlib.suppress(Exception):
+                d.rounded_rectangle([bx, by, bx + bw, by + bh],
+                                    radius=bh // 2, fill=(16, 185, 92))
+            _texto_borde_pil(d, (bx + padx, by + pady - 6), delta_txt, fdd, 3)
+
+        lienzo.save(salida, quality=90)
+        return salida
+    except Exception as e:
+        log.info("No se pudo crear la tarjeta de comparación (%s)", e)
+        return None
+
+
 # ── Títulos con gancho + miniaturas (para subir el CTR) ──────────────────
 # CTR bajo = títulos/portadas débiles. Estos ayudan a que la gente HAGA
 # CLIC: títulos curiosos y miniaturas con una frase-gancho grande.
@@ -4489,6 +4608,16 @@ async def bucle_shorts():
             if pendiente and puede:
                 _shorts_reintento[0] = time.time()
                 slot_id, hora_slot = pendiente
+                # Una franja al día es TARJETA DE COMPARACIÓN (datos reales del
+                # campeonato, formato viral). Si aún no hay clasificación
+                # cargada, esa franja cae a educativo normal. Ajustable con
+                # SHORTS_COMPARACION_HORA.
+                hora_compar = int(os.environ.get("SHORTS_COMPARACION_HORA",
+                                                 "18"))
+                if hora_slot == hora_compar and \
+                        await _generar_short_comparacion(slot_id):
+                    await asyncio.sleep(120)
+                    continue
                 # Énfasis en lo EVERGREEN: 3 de 4 franjas son técnicas-
                 # educativas; solo una (la de la noche) es noticia del fin
                 # de semana. Ajustable con SHORTS_NOTICIA_HORA.
@@ -4608,6 +4737,79 @@ def _chip_serie(short):
     if short.get("serie") and short.get("serie_num"):
         return f"{short['serie']} · #{short['serie_num']}"
     return None
+
+
+# ── Tarjetas de comparación (estilo viral, con datos REALES) ─────────────
+# Formato que engancha: dos stats gigantes sobre fotos, un badge con la
+# diferencia. Los números salen de la clasificación REAL (Jolpica), nunca
+# inventados, y las fotos son de licencia libre — mismo gancho que las cuentas
+# que usan fotos con derechos, pero 100% legal.
+def _apellido(nombre):
+    partes = (nombre or "").strip().split()
+    return partes[-1].upper() if partes else ""
+
+
+async def _descargar_foto_comparacion(query, destino):
+    """Baja UNA foto de licencia libre para un panel de la tarjeta. Ruta local
+    o None (el panel queda oscuro, que también se ve bien)."""
+    with contextlib.suppress(Exception):
+        for u in await fotos_para_tema(query, n=1):
+            if isinstance(u, str) and os.path.exists(u):
+                return u                      # ya es local (biblioteca)
+            if isinstance(u, str) and u.startswith("http"):
+                if await youtube_subir._descargar(u, destino):
+                    return destino
+    return None
+
+
+async def _generar_short_comparacion(sid):
+    """Crea un short de tarjeta de comparación con datos REALES (líder vs 2º
+    del campeonato de pilotos). Guarda el short y devuelve True; None si aún no
+    hay clasificación cargada."""
+    pil = [p for p in (estado.standings_pilotos or [])
+           if p.get("puntos") is not None and p.get("nombre")]
+    if len(pil) < 2:
+        return None
+    a, b = pil[0], pil[1]
+    try:
+        delta = int(a["puntos"]) - int(b["puntos"])
+    except (TypeError, ValueError):
+        return None
+    fa = await _descargar_foto_comparacion(
+        f"{a['nombre']} F1", f"shorts/cmpa_{sid}.jpg")
+    fb = await _descargar_foto_comparacion(
+        f"{b['nombre']} F1", f"shorts/cmpb_{sid}.jpg")
+    card = f"shorts/card_comp_{sid}.png"
+    _tarjeta_comparacion_png(
+        card,
+        {"stat": a["puntos"], "unidad": "PTS", "label": _apellido(a["nombre"]),
+         "sub": a.get("equipo", "")},
+        {"stat": b["puntos"], "unidad": "PTS", "label": _apellido(b["nombre"]),
+         "sub": b.get("equipo", "")},
+        delta_txt=f"+{delta}", titulo="LUCHA POR EL TÍTULO · F1",
+        fotos=[fa, fb])
+    if not os.path.exists(card):
+        return None
+    lider, seg = _apellido(a["nombre"]), _apellido(b["nombre"])
+    # Guion FACTUAL: usa solo los números reales dados, no inventa nada.
+    guion = (f"{a['nombre']} lidera el campeonato con {a['puntos']} puntos, "
+             f"{delta} más que {b['nombre']}, con {b['puntos']}. "
+             f"Solo {delta} puntos separan al líder de su perseguidor. "
+             f"¿Aguantará {lider}, o {seg} dará la vuelta?")
+    datos = {
+        "id": sid,
+        "timestamp": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "tipo": "comparacion",
+        "guion": f"{guion} {_cta_hablada()}",
+        "duracion_segundos": 22,
+        "fotos": [f for f in (card, fa, fb) if f],
+        "titulo": f"{lider} vs {seg}: la lucha por el título F1",
+        "sin_overlay": True,      # la tarjeta ya trae su propio texto
+    }
+    _guardar_short(sid, datos)
+    log.info("📊 Short de comparación creado: %s %s vs %s %s",
+             lider, a["puntos"], seg, b["puntos"])
+    return True
 
 
 # CTA hablado de cierre: se añade al final del guion de cada short para pedir
@@ -4866,11 +5068,15 @@ async def bucle_youtube():
 
                 # 3) Armar video vertical: rótulo grande estilo F1 Shorts (solo
                 # el gancho limpio, sin hashtags), chip de serie arriba y
-                # píldora de suscripción al final.
+                # píldora de suscripción al final. Las tarjetas de comparación
+                # ya traen su propio texto → sin rótulo ni chip encima.
                 video_ruta = f"shorts/short_{sid}.mp4"
+                sin_ov = short.get("sin_overlay")
                 ok = await youtube_subir.armar_video(
-                    audio_ruta, fotos, _texto_overlay_short(short), video_ruta,
-                    cta_texto=_cta_visual(), chip=_chip_serie(short))
+                    audio_ruta, fotos,
+                    "" if sin_ov else _texto_overlay_short(short), video_ruta,
+                    cta_texto=_cta_visual(),
+                    chip=None if sin_ov else _chip_serie(short))
                 if not ok:
                     short["yt_intentos"] = short.get("yt_intentos", 0) + 1
                     _guardar_short(sid, short)
