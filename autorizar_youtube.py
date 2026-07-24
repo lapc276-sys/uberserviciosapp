@@ -25,7 +25,11 @@ el CLIENT_ID y el CLIENT_SECRET.
 import os
 import sys
 
-SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
+# upload = subir videos y fijar miniaturas; readonly = listar los videos ya
+# subidos para re-generarles la miniatura. Si ya te habías autorizado antes
+# solo con upload, vuelve a correr este script para conceder también lectura.
+SCOPES = ["https://www.googleapis.com/auth/youtube.upload",
+          "https://www.googleapis.com/auth/youtube.readonly"]
 
 
 def main():

@@ -33,6 +33,10 @@ log = logging.getLogger("youtube")
 
 VERT_W, VERT_H = 1080, 1920
 SCOPES_SUBIR = ["https://www.googleapis.com/auth/youtube.upload"]
+# Lectura: solo hace falta para LISTAR los videos ya subidos y re-generarles
+# la miniatura. Requiere re-autorizar (autorizar_youtube.py) una vez.
+SCOPES_LECTURA = ["https://www.googleapis.com/auth/youtube.upload",
+                  "https://www.googleapis.com/auth/youtube.readonly"]
 # User-Agent conforme a la política de Wikimedia (identificable + contacto);
 # sin esto, upload.wikimedia.org responde 429 a IPs compartidas como Replit
 _UA = {"User-Agent":
@@ -895,7 +899,7 @@ async def _armar_video_base(audio_path, fotos_urls, titulo, salida_mp4,
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-def _credenciales():
+def _credenciales(scopes=None):
     from google.oauth2.credentials import Credentials
     return Credentials(
         token=None,
@@ -903,8 +907,49 @@ def _credenciales():
         client_id=os.environ["YOUTUBE_CLIENT_ID"],
         client_secret=os.environ["YOUTUBE_CLIENT_SECRET"],
         token_uri="https://oauth2.googleapis.com/token",
-        scopes=SCOPES_SUBIR,
+        scopes=scopes or SCOPES_SUBIR,
     )
+
+
+def _listar_mis_videos_sync(max_n):
+    """Lista los últimos videos subidos al canal (playlist de subidas).
+    Devuelve [{'id','titulo','descripcion'}] o None si falla (típicamente
+    porque el token no tiene el permiso de lectura → hay que re-autorizar)."""
+    from googleapiclient.discovery import build
+    yt = build("youtube", "v3", credentials=_credenciales(SCOPES_LECTURA),
+               cache_discovery=False)
+    ch = yt.channels().list(part="contentDetails", mine=True).execute()
+    items = ch.get("items", [])
+    if not items:
+        return []
+    uploads = items[0]["contentDetails"]["relatedPlaylists"]["uploads"]
+    videos, token = [], None
+    while len(videos) < max_n:
+        pl = yt.playlistItems().list(
+            part="snippet,contentDetails", playlistId=uploads,
+            maxResults=min(50, max_n - len(videos)), pageToken=token).execute()
+        for it in pl.get("items", []):
+            videos.append({
+                "id": it["contentDetails"]["videoId"],
+                "titulo": it["snippet"].get("title", ""),
+                "descripcion": it["snippet"].get("description", ""),
+            })
+        token = pl.get("nextPageToken")
+        if not token:
+            break
+    return videos
+
+
+def listar_mis_videos(max_n=50):
+    """Envoltura segura: None si no se puede listar (sin lanzar)."""
+    if not oauth_configurado():
+        return None
+    try:
+        return _listar_mis_videos_sync(max_n)
+    except Exception as e:
+        log.warning("No se pudieron listar los videos (¿falta el permiso de "
+                    "lectura? re-autoriza con autorizar_youtube.py) — %s", e)
+        return None
 
 
 def _subir_sync(video_path, titulo, descripcion, tags, privacidad):

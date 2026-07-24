@@ -720,6 +720,34 @@ async def control_ola(trazado: str):
     return JSONResponse({"ok": True, "gp": tr[0], "shorts_en_cola": n})
 
 
+@app.post("/control/rethumbnail")
+async def control_rethumbnail(limite: int = 50):
+    """Re-genera la miniatura de los videos YA subidos (foto hero + gancho) y
+    la fija, SIN re-subir el video — para rescatar los que salieron con el
+    empaque viejo. Corre en segundo plano. Requiere el permiso de lectura de
+    YouTube (re-autoriza con autorizar_youtube.py si nunca lo concediste)."""
+    if not youtube_subir.oauth_configurado():
+        return JSONResponse(
+            {"ok": False, "error": "OAuth de YouTube sin configurar"},
+            status_code=400)
+    videos = await asyncio.to_thread(
+        youtube_subir.listar_mis_videos, min(max(1, limite), 200))
+    if videos is None:
+        return JSONResponse(
+            {"ok": False, "error": "No pude listar tus videos. Re-autoriza "
+             "con el permiso de lectura: corre autorizar_youtube.py de nuevo "
+             "y actualiza el Secret YOUTUBE_REFRESH_TOKEN."}, status_code=403)
+    if not videos:
+        return JSONResponse({"ok": True, "encontrados": 0,
+                             "estado": "No hay videos subidos todavía."})
+    asyncio.create_task(_rethumbnail_lote(videos))
+    log.info("🕹️  Panel: rethumbnail de %d videos en segundo plano",
+             len(videos))
+    return JSONResponse({
+        "ok": True, "encontrados": len(videos),
+        "estado": "Regenerando miniaturas en segundo plano — mira los logs."})
+
+
 @app.post("/control/calidad/{modo}")
 async def control_calidad(modo: str):
     """Control de gasto sin Secrets: 'auto' (caro solo en carrera), 'max'
@@ -3784,6 +3812,53 @@ async def _foto_hero_miniatura(client, consulta, categoria=None, n_cand=5):
     if not cands:
         return None
     return await _elegir_hero_vision(client, cands)
+
+
+# ── Rescatar videos VIEJOS: re-generar su miniatura sin re-subir ──────────
+# Los videos subidos con el empaque viejo salieron con miniatura floja (texto
+# sobre negro o un frame automático). YouTube deja CAMBIAR la miniatura de un
+# video ya publicado — así se rescatan esos que ya tienen impresiones, sin
+# tocar el video. Se dispara con POST /control/rethumbnail.
+async def _regenerar_miniatura(client, video, tmp):
+    """Genera una miniatura nueva (foto hero + gancho) para un video YA
+    subido y la fija. Devuelve True si se actualizó."""
+    titulo = (video.get("titulo") or "").strip()
+    if not titulo:
+        return False
+    gancho = None
+    with contextlib.suppress(Exception):
+        _t, gancho = await _titulo_y_gancho(client, titulo)   # solo el gancho
+    hero = await _foto_hero_miniatura(client, titulo)
+    salida = os.path.join(tmp, f"thumb_{video['id']}.jpg")
+    mini = await _miniatura_video(gancho or titulo,
+                                  [hero] if hero else [], salida)
+    if not mini:
+        return False
+    ok = await youtube_subir.subir_miniatura(video["id"], mini)
+    with contextlib.suppress(OSError):
+        os.remove(mini)
+    return ok
+
+
+async def _rethumbnail_lote(videos):
+    """Regenera la miniatura de cada video de la lista (en segundo plano)."""
+    client = anthropic.AsyncAnthropic()
+    tmp = os.path.join("cache", "rethumb")
+    os.makedirs(tmp, exist_ok=True)
+    ok = 0
+    for v in videos:
+        try:
+            if await _regenerar_miniatura(client, v, tmp):
+                ok += 1
+                log.info("🖼️  Miniatura renovada: %s (%s)",
+                         v.get("titulo", "")[:50], v["id"])
+        except Exception as e:
+            log.info("No se pudo renovar la miniatura de %s (%s)",
+                     v.get("id"), e)
+        await asyncio.sleep(2)          # cuota de la API (thumbnails.set)
+    log.info("🖼️  Rethumbnail terminado: %d/%d miniaturas renovadas",
+             ok, len(videos))
+    return ok
 
 
 def _nuevo_episodio_pedido(tipo, prog):
