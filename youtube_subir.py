@@ -706,6 +706,20 @@ async def armar_video(audio_path, fotos_urls, titulo, salida_mp4,
     return ok
 
 
+def _imagen_valida(path):
+    """True si Pillow puede abrir el archivo como imagen RASTER. Descarta los
+    SVG (mapas de circuito de Wikimedia), páginas HTML de error y archivos
+    corruptos: si uno de esos entra al filtergraph, ffmpeg no puede
+    decodificarlo ('no decoder found for: svg') y REVIENTA el video entero."""
+    try:
+        from PIL import Image
+        with Image.open(path) as im:
+            im.verify()
+        return True
+    except Exception:
+        return False
+
+
 async def _armar_video_base(audio_path, fotos_urls, titulo, salida_mp4,
                             horizontal=False, con_musica=False):
     """Construye el MP4 (vertical para shorts; 16:9 para VODs de sesión).
@@ -747,6 +761,14 @@ async def _armar_video_base(audio_path, fotos_urls, titulo, salida_mp4,
                 destino = os.path.join(tmp, f"{pref}_{i}{ext}")
                 try:
                     shutil.copy(src, destino)
+                    # Descartar imágenes locales ilegibles (SVG, corruptas):
+                    # reventarían el filtergraph. Los clips (video) no se validan
+                    # como imagen; los gráficos son PNG propios y sí pasan.
+                    if not clip and not _imagen_valida(destino):
+                        log.info("Imagen local ilegible descartada: %s", base)
+                        with contextlib.suppress(OSError):
+                            os.remove(destino)
+                        continue
                     imgs.append(destino)
                     es_chart.append(chart)
                     es_clip.append(clip)
@@ -756,7 +778,9 @@ async def _armar_video_base(audio_path, fotos_urls, titulo, salida_mp4,
             if len(imgs) - sum(es_chart) > 0:
                 await asyncio.sleep(2)  # pausa entre descargas Wikimedia
             destino = os.path.join(tmp, f"img_{i}.jpg")
-            if await _descargar(src, destino):
+            # Solo entra si se descargó Y Pillow la puede abrir (un SVG o un
+            # HTML de error tumbarían todo el video).
+            if await _descargar(src, destino) and _imagen_valida(destino):
                 imgs.append(destino)
                 es_chart.append(False)
                 es_clip.append(False)

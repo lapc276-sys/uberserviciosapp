@@ -319,6 +319,12 @@ async def _tts_openai(quien, texto):
         return r.content
 
 
+# Si la clave de ElevenLabs es inválida (401/403), se desactiva por esta
+# sesión: sin esto, CADA línea reintenta ElevenLabs, recibe 401 y recién
+# entonces cae a OpenAI — un martilleo que ralentiza toda la producción.
+_elevenlabs_estado = {"desactivado": False}
+
+
 async def sintetizar(quien, texto):
     """Convierte una línea en MP3: ElevenLabs > OpenAI > None (voz Mac)."""
     # Primero, intentar caché de audios
@@ -328,11 +334,18 @@ async def sintetizar(quien, texto):
 
     # Si no está en caché, generar y guardar
     audio = None
-    if ELEVENLABS_API_KEY:
+    if ELEVENLABS_API_KEY and not _elevenlabs_estado["desactivado"]:
         try:
             audio = await _tts_elevenlabs(quien, texto)
         except Exception as e:
-            log.error("ElevenLabs falló (%s) — probando OpenAI", e)
+            code = getattr(getattr(e, "response", None), "status_code", None)
+            if code in (401, 403):
+                _elevenlabs_estado["desactivado"] = True
+                log.error("ElevenLabs rechazó la clave (%s) — DESACTIVADO por "
+                          "esta sesión; se usa OpenAI TTS. Revisa el Secret "
+                          "ELEVENLABS_API_KEY.", code)
+            else:
+                log.error("ElevenLabs falló (%s) — probando OpenAI", e)
     if not audio and OPENAI_API_KEY:
         try:
             audio = await _tts_openai(quien, texto)
@@ -3123,6 +3136,11 @@ _FOTO_MALA = ("simulator", "sim rig", "office", "computer", "keyboard",
 
 def _foto_sospechosa(url):
     u = (url or "").lower()
+    # SVG: ni Pillow ni el ffmpeg estático los decodifican; si uno entra al
+    # video, revienta el armado entero. Se descartan de raíz (muchos mapas de
+    # circuito de Wikimedia son .svg). Igual el armador valida cada imagen.
+    if u.split("?")[0].endswith(".svg"):
+        return True
     return any(x in u for x in _FOTO_MALA)
 
 
