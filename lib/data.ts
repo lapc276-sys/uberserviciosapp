@@ -367,6 +367,77 @@ export async function updateBookingStatus(ref: string, status: BookingStatus): P
   await prisma.booking.update({ where: { ref }, data: { status } });
 }
 
+// ── Analytics (Phase 5) ──────────────────────────────────────────────────────
+export interface AnalyticsData {
+  funnel: { leads: number; bookings: number; completed: number };
+  conversionPct: number; // leads → bookings
+  completionPct: number; // bookings → completed
+  avgTicket: number; // USD, midpoint of quotes
+  recurringPct: number;
+  estRevenue: number; // USD, sum of quote midpoints (booked value)
+  byDay: { date: string; count: number; value: number }[]; // last 14 days
+  byService: { name: string; count: number; value: number }[];
+  byCity: { name: string; count: number }[];
+  source: 'db' | 'memory';
+}
+
+export async function getAnalytics(): Promise<AnalyticsData> {
+  const [bookings, leads] = await Promise.all([listBookings(1000), countLeads()]);
+
+  const mid = (b: BookingRecord) =>
+    b.quoteLow && b.quoteHigh ? Math.round((b.quoteLow + b.quoteHigh) / 2) : b.quoteLow ?? 0;
+
+  const completed = bookings.filter((b) => b.status === 'COMPLETED').length;
+  const recurring = bookings.filter((b) => b.frequency !== 'ONE_TIME').length;
+  const estRevenue = bookings.reduce((s, b) => s + mid(b), 0);
+
+  // Last 14 days series keyed by creation date.
+  const byDayMap = new Map<string, { count: number; value: number }>();
+  for (let i = 13; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    byDayMap.set(d.toISOString().split('T')[0], { count: 0, value: 0 });
+  }
+  for (const b of bookings) {
+    const day = b.createdAt.split('T')[0];
+    const bucket = byDayMap.get(day);
+    if (bucket) {
+      bucket.count += 1;
+      bucket.value += mid(b);
+    }
+  }
+
+  const byServiceMap = new Map<string, { count: number; value: number }>();
+  const byCityMap = new Map<string, number>();
+  for (const b of bookings) {
+    const s = byServiceMap.get(b.serviceName) ?? { count: 0, value: 0 };
+    s.count += 1;
+    s.value += mid(b);
+    byServiceMap.set(b.serviceName, s);
+    byCityMap.set(b.city, (byCityMap.get(b.city) ?? 0) + 1);
+  }
+
+  return {
+    funnel: { leads: Math.max(leads, bookings.length), bookings: bookings.length, completed },
+    conversionPct: leads > 0 ? Math.round((bookings.length / Math.max(leads, bookings.length)) * 100) : 0,
+    completionPct: bookings.length ? Math.round((completed / bookings.length) * 100) : 0,
+    avgTicket: bookings.length ? Math.round(estRevenue / bookings.length) : 0,
+    recurringPct: bookings.length ? Math.round((recurring / bookings.length) * 100) : 0,
+    estRevenue,
+    byDay: [...byDayMap.entries()].map(([date, v]) => ({ date, ...v })),
+    byService: [...byServiceMap.entries()]
+      .map(([name, v]) => ({ name, ...v }))
+      .sort((a, b) => b.value - a.value),
+    byCity: [...byCityMap.entries()].map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count),
+    source: isDbConfigured ? 'db' : 'memory',
+  };
+}
+
+export async function countLeads(): Promise<number> {
+  if (!isDbConfigured || !prisma) return memory.leads.length;
+  return prisma.lead.count();
+}
+
 export async function listCustomers(): Promise<CustomerSummary[]> {
   const bookings = await listBookings(500);
   const byEmail = new Map<string, CustomerSummary>();

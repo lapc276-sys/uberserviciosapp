@@ -33,7 +33,15 @@ Deploy target: **Vercel** + Cloudflare. Data layer (Phase 2): **Supabase / Postg
 
 ---
 
-## What's built (Phases 1–4 — live & verified)
+## What's built (Phases 1–5 — live & verified)
+
+**Phase 5 — Analytics** ✅
+- `/admin/analytics`: booked value, average ticket, lead→booking conversion, completion rate, recurring share
+- Conversion funnel (leads → bookings → completed), 14-day demand chart, booked value by service, bookings by city (with table view)
+- Zero chart dependencies (server-rendered), brand hue validated for light & dark surfaces, works on in-memory or DB data
+- `SETUP.md`: step-by-step account setup guide (Vercel → Supabase → Stripe → Resend → Twilio → WhatsApp → OpenAI → GA4/Pixel)
+
+
 
 **Phase 4 — Operations & lifecycle** ✅
 - **Dispatch engine** (`lib/dispatch.ts`): auto-assigns the best pro on booking — active only, load-balanced by date, tie-broken by rating — and SMS-notifies them
@@ -120,9 +128,9 @@ _Remaining: recurring billing subscriptions, Google Calendar sync + employee dis
 Dispatch/pro-matching engine, admin CRM (bookings, customers w/ LTV, team), protected admin API, one-week win-back automation.
 _Remaining: photo upload (Supabase Storage), geo-aware matching, Redis-backed job queue._
 
-### Phase 5 — Admin & analytics
-- Live KPI dashboard, calendar, service map
-- Analytics: CAC, LTV, ROI, conversion, funnel, SEO/CTR
+### Phase 5 — Admin & analytics ✅
+Analytics dashboard: funnel, conversion, demand trend, value by service/city.
+_Remaining: calendar view, service map, ad-spend inputs for true CAC/ROI (needs GA4/Ads data)._
 
 ### Phase 6 — Voice AI & channels
 - Voice agent (Twilio + realtime AI): answer calls, quote, book, transfer, SMS/email, CRM write

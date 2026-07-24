@@ -2,13 +2,14 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { LayoutDashboard, CalendarDays, Users, Settings, LogOut, ExternalLink } from 'lucide-react';
+import { LayoutDashboard, CalendarDays, Users, Settings, LogOut, ExternalLink, BarChart3 } from 'lucide-react';
 import { site } from '@/lib/config/site';
 
 const nav = [
   { label: 'Dashboard', href: '/admin', icon: LayoutDashboard },
   { label: 'Bookings', href: '/admin/bookings', icon: CalendarDays },
   { label: 'Customers', href: '/admin/customers', icon: Users },
+  { label: 'Analytics', href: '/admin/analytics', icon: BarChart3 },
   { label: 'Team', href: '/admin/employees', icon: Settings },
 ];
 
