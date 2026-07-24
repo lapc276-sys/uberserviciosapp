@@ -3576,10 +3576,32 @@ async def _miniatura_video(gancho, fotos, salida):
     color reforzado, un degradado (no un velo plano) que garantiza contraste
     abajo-izquierda, y el gancho en AMARILLO gigante con contorno negro grueso
     (revienta de contraste en el modo oscuro de YouTube). Ruta o None."""
-    # Fondo: primera foto utilizable — acepta URL http o archivo LOCAL de la
-    # biblioteca (antes se ignoraban las locales y salía miniatura sin foto).
-    bg = next((f for f in (fotos or []) if isinstance(f, str)
-               and (f.startswith("http") or os.path.exists(f))), None)
+    # Fondo: primera FOTO real utilizable (URL http o archivo local de la
+    # biblioteca). Se SALTAN las tarjetas de texto (card_*) y los gráficos
+    # (g_*): usarlas de fondo daría "texto sobre texto" / miniatura fea.
+    def _bg_valido(f):
+        if not isinstance(f, str):
+            return False
+        if f.startswith("http"):
+            return True
+        if os.path.exists(f):
+            b = os.path.basename(f).lower()
+            return not (b.startswith("card_") or b.startswith("g_"))
+        return False
+
+    bg = next((f for f in (fotos or []) if _bg_valido(f)), None)
+    # Último recurso: si NADA sirve de fondo, traer UNA foto dramática ahora
+    # mismo. Nunca queremos una miniatura de texto sobre negro (mata el CTR).
+    if not bg:
+        for q in ("formula 1 car close up", "race car detail",
+                  "formula 1 car on track"):
+            with contextlib.suppress(Exception):
+                urls = await imagenes_pexels(q, n=2)
+                if not urls:
+                    urls = await imagenes_openverse(q, n=2)
+                if urls:
+                    bg = urls[0]
+                    break
     try:
         from PIL import Image, ImageDraw, ImageEnhance
         W, H = 1280, 720
