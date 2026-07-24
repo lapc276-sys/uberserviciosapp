@@ -454,30 +454,112 @@ def _construir_ffmpeg_kb(imgs, es_chart, titulo_png, audio, salida, per,
     return args
 
 
-def _dibujar_titulo(im, texto, w, h):
-    """Pinta la banda oscura + el título sobre una imagen PIL (RGB o RGBA).
-    Se usa tanto para rotular la foto directamente como para armar el
-    overlay transparente del efecto Ken Burns."""
-    from PIL import ImageDraw, ImageFont
-    d = ImageDraw.Draw(im, "RGBA")
-    tam = w // 18
-    fnt = None
+def _fuente_tam(tam):
+    from PIL import ImageFont
     for f in _FUENTES:
         if os.path.exists(f):
             try:
-                fnt = ImageFont.truetype(f, size=tam)
-                break
+                return ImageFont.truetype(f, size=tam)
             except Exception:
                 pass
+    try:
+        return ImageFont.load_default(size=tam)
+    except TypeError:
+        return ImageFont.load_default()
+
+
+def _envolver_px(draw, texto, fnt, max_w):
+    """Parte el texto en líneas que caben en max_w PÍXELES (ancho real)."""
+    palabras, lineas, actual = texto.split(), [], ""
+    for w in palabras:
+        prueba = (actual + " " + w).strip()
+        if draw.textlength(prueba, font=fnt) <= max_w or not actual:
+            actual = prueba
+        else:
+            lineas.append(actual)
+            actual = w
+    if actual:
+        lineas.append(actual)
+    return lineas
+
+
+def _texto_borde(d, xy, texto, fnt, grosor, relleno=(255, 255, 255, 255)):
+    """Dibuja texto con contorno negro grueso (stroke), con respaldo manual
+    si la versión de Pillow no soporta stroke_width."""
+    x, y = xy
+    try:
+        d.text((x, y), texto, font=fnt, fill=relleno,
+               stroke_width=grosor, stroke_fill=(0, 0, 0, 255))
+    except TypeError:
+        for dx in range(-grosor, grosor + 1, max(1, grosor)):
+            for dy in range(-grosor, grosor + 1, max(1, grosor)):
+                d.text((x + dx, y + dy), texto, font=fnt, fill=(0, 0, 0, 255))
+        d.text((x, y), texto, font=fnt, fill=relleno)
+
+
+def _dibujar_chip_serie(d, texto, w):
+    """Pega arriba-centro una 'píldora' roja con el nombre de la serie
+    (crea sensación de serie → la gente vuelve). Devuelve el alto ocupado."""
+    if not texto:
+        return 0
+    fnt = _fuente_tam(max(28, w // 26))
+    caja = d.textbbox((0, 0), texto, font=fnt)
+    tw, th = caja[2] - caja[0], caja[3] - caja[1]
+    padx, pady = int(w * 0.03), int(w * 0.016)
+    bw, bh = tw + padx * 2, th + pady * 2
+    bx, by = (w - bw) // 2, int(w * 0.05)
+    with contextlib.suppress(Exception):
+        d.rounded_rectangle([bx, by, bx + bw, by + bh], radius=bh // 2,
+                            fill=(225, 6, 0, 235))
+    d.text((bx + padx - caja[0], by + pady - caja[1]), texto, font=fnt,
+           fill=(255, 255, 255, 255))
+    return by + bh
+
+
+def _dibujar_titulo_short(im, texto, w, h):
+    """Rótulo estilo 'F1 Shorts' para VERTICALES: texto GRANDE en MAYÚSCULAS,
+    blanco con contorno negro grueso, arriba-centro, sin banda — se lee de
+    lejos al pasar por el feed."""
+    from PIL import ImageDraw
+    d = ImageDraw.Draw(im, "RGBA")
+    texto = (texto or "").upper().strip()
+    if not texto:
+        return
+    margen = int(w * 0.06)
+    zona_w = w - margen * 2
+    fnt, lineas = None, None
+    for tam in range(int(w * 0.155), int(w * 0.05), -4):
+        f = _fuente_tam(tam)
+        ls = _envolver_px(d, texto, f, zona_w)
+        if len(ls) <= 4:
+            fnt, lineas = f, ls
+            break
     if fnt is None:
-        try:
-            fnt = ImageFont.load_default(size=tam)
-        except TypeError:
-            fnt = ImageFont.load_default()
-    lineas = _envolver(texto, ancho=26 if h > w else 44).split("\n")
+        fnt = _fuente_tam(int(w * 0.06))
+        lineas = _envolver_px(d, texto, fnt, zona_w)[:4]
+    tam = getattr(fnt, "size", int(w * 0.1))
+    alto = int(tam * 1.14)
+    grosor = max(6, tam // 11)
+    y0 = int(h * 0.11)
+    for i, ln in enumerate(lineas):
+        tw = d.textlength(ln, font=fnt)
+        _texto_borde(d, ((w - tw) // 2, y0 + i * alto), ln, fnt, grosor)
+
+
+def _dibujar_titulo(im, texto, w, h):
+    """Rótulo del video. Vertical (shorts) → estilo grande F1 Shorts; 16:9
+    (VODs/documentales) → banda oscura clásica abajo."""
+    if h > w:
+        _dibujar_titulo_short(im, texto, w, h)
+        return
+    from PIL import ImageDraw
+    d = ImageDraw.Draw(im, "RGBA")
+    tam = w // 18
+    fnt = _fuente_tam(tam)
+    lineas = _envolver(texto, ancho=44).split("\n")
     alto = round(tam * 1.35)
     total = alto * len(lineas)
-    y0 = h - total - (190 if h > w else 64)
+    y0 = h - total - 64
     d.rectangle([0, y0 - 26, w, y0 + total + 26], fill=(0, 0, 0, 150))
     for i, ln in enumerate(lineas):
         caja = d.textbbox((0, 0), ln, font=fnt)
@@ -503,16 +585,19 @@ def _cubrir_imagen(ruta, w, h):
         return False
 
 
-def _titulo_overlay(texto, w, h, salida_png):
-    """Crea un PNG TRANSPARENTE w×h con solo la banda + el título, para
-    superponerlo FIJO encima de la foto que se mueve (Ken Burns). Devuelve
-    la ruta, o None si no hay texto o falla."""
-    if not texto:
+def _titulo_overlay(texto, w, h, salida_png, chip=None):
+    """Crea un PNG TRANSPARENTE w×h con el título (y, si se pasa `chip`, la
+    píldora de serie arriba) para superponerlo FIJO sobre la foto en
+    movimiento (Ken Burns). Devuelve la ruta, o None si no hay nada/falla."""
+    if not (texto or chip):
         return None
     try:
-        from PIL import Image
+        from PIL import Image, ImageDraw
         capa = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-        _dibujar_titulo(capa, texto, w, h)
+        if texto:
+            _dibujar_titulo(capa, texto, w, h)
+        if chip and h > w:
+            _dibujar_chip_serie(ImageDraw.Draw(capa, "RGBA"), chip, w)
         capa.save(salida_png)
         return salida_png
     except Exception as e:
@@ -692,12 +777,15 @@ def concat_audios(rutas, salida):
 
 
 async def armar_video(audio_path, fotos_urls, titulo, salida_mp4,
-                      horizontal=False, con_musica=False, cta_texto=None):
+                      horizontal=False, con_musica=False, cta_texto=None,
+                      chip=None):
     """Construye el MP4 y, si es un short vertical con `cta_texto`, le añade
     una píldora de suscripción en los últimos segundos (segunda pasada
-    aislada: si falla, el video queda igual). Devuelve True si se creó."""
+    aislada: si falla, el video queda igual). `chip` = nombre de serie que se
+    pinta arriba (crea sensación de serie). Devuelve True si se creó."""
     ok = await _armar_video_base(audio_path, fotos_urls, titulo, salida_mp4,
-                                 horizontal=horizontal, con_musica=con_musica)
+                                 horizontal=horizontal, con_musica=con_musica,
+                                 chip=chip)
     if ok and cta_texto and not horizontal:
         dur = _duracion_audio(audio_path) or 25.0
         with contextlib.suppress(Exception):
@@ -721,7 +809,7 @@ def _imagen_valida(path):
 
 
 async def _armar_video_base(audio_path, fotos_urls, titulo, salida_mp4,
-                            horizontal=False, con_musica=False):
+                            horizontal=False, con_musica=False, chip=None):
     """Construye el MP4 (vertical para shorts; 16:9 para VODs de sesión).
     Devuelve True si se creó.
 
@@ -887,7 +975,7 @@ async def _armar_video_base(audio_path, fotos_urls, titulo, salida_mp4,
         if usar_kb:
             _prep(_cubrir_imagen)               # recorte SIN rótulo
             titulo_png = _titulo_overlay(
-                titulo, w, h, os.path.join(tmp, "titulo.png"))
+                titulo, w, h, os.path.join(tmp, "titulo.png"), chip=chip)
             args = _construir_ffmpeg_kb(imgs, es_chart, titulo_png, audio_path,
                                         salida_mp4, per, w, h, fps,
                                         musica=musica, es_clip=es_clip)

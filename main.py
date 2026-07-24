@@ -4524,6 +4524,11 @@ async def bucle_shorts():
                     if tema:      # fotos del tema técnico (no el mix genérico)
                         datos["consulta"] = tema[2]
                         datos["categoria"] = tema[0]
+                        # Serie temática numerada (crea hábito de volver)
+                        serie, num = _asignar_serie(tema[0])
+                        if serie:
+                            datos["serie"] = serie
+                            datos["serie_num"] = num
                     # Título con gancho (CTR) a partir del guion ORIGINAL
                     # (sin el CTA, que ensuciaría el título).
                     with contextlib.suppress(Exception):
@@ -4537,22 +4542,72 @@ async def bucle_shorts():
         await asyncio.sleep(120)
 
 
+def _gancho_limpio_short(short):
+    """El hook LIMPIO de un short, sin hashtags ni fragmentos crudos de guion.
+    Prioriza el título con gancho; si no hay, la PRIMERA frase del guion (no
+    un corte a media palabra). Usado para el YouTube title y el texto en
+    pantalla — así nunca sale 'fragmento de guion #tag #tag' (rec. de la IA
+    de YouTube)."""
+    t = (short.get("titulo") or "").split("#")[0].strip(" -–—:·")
+    if t:
+        return t
+    guion = (short.get("guion") or "").strip()
+    frase = re.split(r"[.!?]", guion)[0].strip()
+    if frase and len(frase) <= 90:
+        return frase
+    return {"drama": "F1 Drama", "tecnico": "F1 Data",
+            "educativo": "F1 Explained"}.get(short.get("tipo"), "F1 News")
+
+
 def _titulo_short(short):
-    """Título corto y atractivo para YouTube. Prefiere el título con gancho
-    generado al crear el short; si no hay, recorta el guion (respaldo)."""
-    if short.get("titulo"):
-        t = short["titulo"].strip()
-        if "#" not in t:
-            t = f"{t} #Shorts #F1"
-        return t[:100]
-    guion = short.get("guion", "").strip()
-    corte = guion[:70]
-    if len(guion) > 70:
-        corte = corte.rsplit(" ", 1)[0] + "…"
-    etiqueta = {"drama": "F1 Drama", "tecnico": "F1 Data",
-                "educativo": "F1 Explained"}.get(short.get("tipo"), "F1 News")
-    titulo = corte or f"{etiqueta} Short"
-    return f"{titulo} #Shorts #F1"[:100]
+    """Título de YouTube: el gancho LIMPIO primero (lo emocionante visible de
+    inmediato) y los hashtags al final."""
+    base = _gancho_limpio_short(short)
+    return f"{base} #Shorts #F1"[:100]
+
+
+def _texto_overlay_short(short):
+    """Texto que se PINTA en el video del short: solo el gancho limpio (sin
+    hashtags ni fragmentos de guion). El rótulo grande lo pone en MAYÚSCULAS."""
+    return _gancho_limpio_short(short)
+
+
+# ── Serie temática: agrupa los shorts educativos por categoría y los numera
+# ("AERODINÁMICA · #7"). Crea sensación de serie → la gente vuelve por más
+# (recomendación de la IA de YouTube). Contador persistente por serie.
+_SERIE_POR_CAT = {
+    "Aero": "AERODINÁMICA",
+    "Engine": "MOTORES F1",
+    "Tyres": "NEUMÁTICOS",
+    "Strategy": "ESTRATEGIA",
+    "Tech history": "HISTORIA TÉCNICA",
+}
+_SERIE_CONTADOR = "series_contador.json"
+
+
+def _asignar_serie(categoria):
+    """Devuelve (nombre_serie, numero) para una categoría e incrementa el
+    contador persistente. (None, None) si la categoría no tiene serie."""
+    nombre = _SERIE_POR_CAT.get(categoria or "")
+    if not nombre:
+        return None, None
+    cont = {}
+    with contextlib.suppress(Exception):
+        with open(_SERIE_CONTADOR) as f:
+            cont = json.load(f)
+    n = int(cont.get(nombre, 0)) + 1
+    cont[nombre] = n
+    with contextlib.suppress(Exception):
+        with open(_SERIE_CONTADOR, "w") as f:
+            json.dump(cont, f)
+    return nombre, n
+
+
+def _chip_serie(short):
+    """Etiqueta de serie para pintar arriba del short, o None."""
+    if short.get("serie") and short.get("serie_num"):
+        return f"{short['serie']} · #{short['serie_num']}"
+    return None
 
 
 # CTA hablado de cierre: se añade al final del guion de cada short para pedir
@@ -4809,11 +4864,13 @@ async def bucle_youtube():
                 else:
                     fotos = await _fotos_variadas(short)
 
-                # 3) Armar video vertical (con píldora de suscripción al final)
+                # 3) Armar video vertical: rótulo grande estilo F1 Shorts (solo
+                # el gancho limpio, sin hashtags), chip de serie arriba y
+                # píldora de suscripción al final.
                 video_ruta = f"shorts/short_{sid}.mp4"
                 ok = await youtube_subir.armar_video(
-                    audio_ruta, fotos, _titulo_short(short), video_ruta,
-                    cta_texto=_cta_visual())
+                    audio_ruta, fotos, _texto_overlay_short(short), video_ruta,
+                    cta_texto=_cta_visual(), chip=_chip_serie(short))
                 if not ok:
                     short["yt_intentos"] = short.get("yt_intentos", 0) + 1
                     _guardar_short(sid, short)
