@@ -3751,7 +3751,7 @@ def _ajustar_texto_miniatura(draw, texto, max_w, max_h, lineas_max=3):
                      _envolver_ancho(draw, texto, _fuente_miniatura(72), max_w))
 
 
-async def _miniatura_video(gancho, fotos, salida):
+async def _miniatura_video(gancho, fotos, salida, trazado=None):
     """Crea una miniatura 1280x720 optimizada para CTR: foto real de fondo con
     color reforzado, un degradado (no un velo plano) que garantiza contraste
     abajo-izquierda, y el gancho en AMARILLO gigante con contorno negro grueso
@@ -3820,10 +3820,27 @@ async def _miniatura_video(gancho, fotos, salida):
         grad = grad.resize((W, H))
         base = Image.composite(Image.new("RGB", (W, H), (0, 0, 0)), base, grad)
 
+        # Trazado REAL del circuito (dato propio de la telemetría), a color,
+        # pegado a la derecha. El texto se estrecha para no pisarlo.
+        ancho_trazado = 0
+        if trazado:
+            png_tr = _trazado_png(trazado, salida + ".track.png", lado=520,
+                                  grosor=22)
+            if png_tr:
+                with contextlib.suppress(Exception):
+                    tr = Image.open(png_tr).convert("RGBA")
+                    base = base.convert("RGBA")
+                    base.alpha_composite(tr, (W - tr.width - 24,
+                                              (H - tr.height) // 2))
+                    base = base.convert("RGB")
+                    ancho_trazado = tr.width - 20
+                with contextlib.suppress(OSError):
+                    os.remove(png_tr)
+
         d = ImageDraw.Draw(base)
         texto = (gancho or "").upper().strip() or "F1"
         margen = 70
-        zona_w = W - margen * 2
+        zona_w = W - margen * 2 - ancho_trazado
         zona_h = 360                      # tercio inferior para el texto
         fnt, lineas = _ajustar_texto_miniatura(d, texto, zona_w, zona_h)
         lineas = lineas[:3]
@@ -4011,6 +4028,134 @@ async def _rethumbnail_lote(videos):
     log.info("🖼️  Rethumbnail terminado: %d/%d miniaturas renovadas",
              ok, len(videos))
     return ok
+
+
+# ── Trazado REAL del circuito, a color, para las miniaturas ──────────────
+# La forma sale de NUESTRA telemetría (coordenadas de un coche dando una
+# vuelta): es un dato propio y exacto, sin depender de mapas SVG de terceros
+# (que además ni Pillow ni ffmpeg decodifican). Se cachea por circuito para
+# poder dibujarlo aunque no haya sesión en vivo.
+_TRAZADOS_DIR = os.path.join("cache", "trazados")
+
+
+def _clave_circuito(nombre):
+    return re.sub(r"[^a-z0-9]+", "_", (nombre or "").strip().lower()).strip("_")
+
+
+def _guardar_trazado_cache(circuito, puntos):
+    clave = _clave_circuito(circuito)
+    if not (clave and puntos):
+        return
+    with contextlib.suppress(Exception):
+        os.makedirs(_TRAZADOS_DIR, exist_ok=True)
+        with open(os.path.join(_TRAZADOS_DIR, f"{clave}.json"), "w") as f:
+            json.dump(puntos, f)
+        log.info("🗺️  Trazado de %s guardado para las miniaturas", circuito)
+
+
+def _cargar_trazado_cache(circuito):
+    clave = _clave_circuito(circuito)
+    if not clave:
+        return []
+    with contextlib.suppress(Exception):
+        with open(os.path.join(_TRAZADOS_DIR, f"{clave}.json")) as f:
+            p = json.load(f)
+        return p if isinstance(p, list) and len(p) > 20 else []
+    return []
+
+
+def _color_velocidad(t):
+    """Escala azul → cian → amarillo → rojo para t en 0..1 (lento→rápido)."""
+    t = max(0.0, min(1.0, t))
+    paradas = [(0.0, (40, 90, 220)), (0.4, (0, 200, 210)),
+               (0.72, (250, 205, 0)), (1.0, (235, 30, 15))]
+    for i in range(len(paradas) - 1):
+        t0, c0 = paradas[i]
+        t1, c1 = paradas[i + 1]
+        if t <= t1:
+            k = (t - t0) / (t1 - t0 or 1)
+            return tuple(int(c0[j] + (c1[j] - c0[j]) * k) for j in range(3))
+    return paradas[-1][1]
+
+
+def _trazado_png(puntos, salida, lado=620, grosor=26, por_velocidad=True):
+    """Dibuja el trazado como PNG transparente.
+
+    por_velocidad=True colorea por velocidad RELATIVA: las muestras de posición
+    llegan a intervalos regulares, así que la separación entre puntos
+    consecutivos es proporcional a la velocidad (azul lento → rojo rápido).
+    Solo tiene sentido con coordenadas REALES de telemetría; con un trazado
+    dibujado a mano se usa False (degradado decorativo, sin afirmar datos).
+    Devuelve la ruta o None."""
+    try:
+        from PIL import Image, ImageDraw, ImageFilter
+        pts = [(float(p["x"]), float(p["y"])) for p in (puntos or [])
+               if isinstance(p, dict) and p.get("x") is not None
+               and p.get("y") is not None]
+        if len(pts) < 20:
+            return None
+        margen = grosor + 14
+        xs = [p[0] for p in pts]
+        ys = [p[1] for p in pts]
+        mnx, mxx, mny, mxy = min(xs), max(xs), min(ys), max(ys)
+        esc = min((lado - 2 * margen) / max(1e-6, mxx - mnx),
+                  (lado - 2 * margen) / max(1e-6, mxy - mny))
+        ox = (lado - (mxx - mnx) * esc) / 2
+        oy = (lado - (mxy - mny) * esc) / 2
+        # Y invertida: en pantalla crece hacia abajo
+        xy = [(ox + (x - mnx) * esc, lado - oy - (y - mny) * esc)
+              for x, y in pts]
+        if xy[0] != xy[-1]:
+            xy.append(xy[0])
+
+        # Velocidad relativa por segmento (suavizada) → 0..1 por percentiles
+        d = [((xy[i + 1][0] - xy[i][0]) ** 2
+              + (xy[i + 1][1] - xy[i][1]) ** 2) ** 0.5
+             for i in range(len(xy) - 1)]
+        suave = []
+        for i in range(len(d)):
+            v = d[max(0, i - 2):i + 3]
+            suave.append(sum(v) / len(v))
+        if por_velocidad:
+            orden = sorted(suave)
+            lo = orden[int(len(orden) * 0.08)]
+            hi = orden[int(len(orden) * 0.92)]
+            rango = (hi - lo) or 1.0
+            norm = [max(0.0, min(1.0, (v - lo) / rango)) for v in suave]
+        else:
+            # Degradado decorativo a lo largo de la vuelta (no afirma datos)
+            n = max(1, len(suave) - 1)
+            norm = [0.25 + 0.75 * (i / n) for i in range(len(suave))]
+
+        capa = Image.new("RGBA", (lado, lado), (0, 0, 0, 0))
+        cd = ImageDraw.Draw(capa)
+        # 1) Glow
+        glow = Image.new("RGBA", (lado, lado), (0, 0, 0, 0))
+        gd = ImageDraw.Draw(glow)
+        gd.line(xy, fill=(255, 60, 20, 150), width=grosor + 16, joint="curve")
+        glow = glow.filter(ImageFilter.GaussianBlur(16))
+        capa = Image.alpha_composite(capa, glow)
+        cd = ImageDraw.Draw(capa)
+        # 2) Casing oscuro (la "pista")
+        cd.line(xy, fill=(16, 19, 27, 255), width=grosor, joint="curve")
+        # 3) Línea de color por velocidad
+        ancho = max(5, grosor // 2 - 1)
+        for i in range(len(xy) - 1):
+            c = _color_velocidad(norm[i])
+            cd.line([xy[i], xy[i + 1]], fill=c + (255,), width=ancho)
+            cd.ellipse([xy[i + 1][0] - ancho / 2, xy[i + 1][1] - ancho / 2,
+                        xy[i + 1][0] + ancho / 2, xy[i + 1][1] + ancho / 2],
+                       fill=c + (255,))
+        # 4) Punto de meta
+        x0, y0 = xy[0]
+        cd.ellipse([x0 - 13, y0 - 13, x0 + 13, y0 + 13],
+                   fill=(255, 255, 255, 255))
+        cd.ellipse([x0 - 8, y0 - 8, x0 + 8, y0 + 8], fill=(225, 6, 0, 255))
+        capa.save(salida)
+        return salida
+    except Exception as e:
+        log.info("No se pudo dibujar el trazado (%s)", e)
+        return None
 
 
 def _nuevo_episodio_pedido(tipo, prog):
@@ -5293,6 +5438,10 @@ async def bucle_mapa():
                 tele_trazada = t
                 log.info("🗺️  Trazado del circuito precargado (%d puntos)",
                          len(trazado))
+                # Guardarlo por circuito: sirve luego para dibujar el trazado
+                # REAL (a color) en las miniaturas, ya sin sesión en vivo.
+                _guardar_trazado_cache(
+                    t.sesion.get("circuit_short_name") or "", trazado)
         try:
             pos = await t.posiciones_pista()
         except Exception:
@@ -5548,7 +5697,8 @@ async def _procesar_recap(ruta):
     miniatura = await _miniatura_video(
         gancho or f"{resumen.get('pais','')} REVIEW",
         ([hero] + fotos) if hero else fotos,
-        os.path.join(tmp, "thumb.jpg"))
+        os.path.join(tmp, "thumb.jpg"),
+        trazado=_cargar_trazado_cache(resumen.get("circuito") or ""))
     descripcion = (
         f"Our full review of the {resumen.get('sesion','session')} at "
         f"{resumen.get('pais','')} — the good, the controversial, and our "
