@@ -383,55 +383,56 @@ class Telemetria:
         /location, para dibujar la pista entera de una vez (en vez de irla
         acumulando). Devuelve [{"x","y"}] normalizados o [] si no se pudo."""
         sk = self.sesion.get("session_key")
-        if not sk:
-            return []
-        # Un piloto cualquiera que tengamos, y una ventana de 3 min bien
-        # dentro de la sesión (coches rodando, no en garaje)
-        num = next(iter(self.pilotos), None)
-        if num is None:
+        if not sk or not self.pilotos:
             return []
         try:
             inicio = _fecha(self.sesion["date_start"])
         except Exception:
             return []
+        # Ventana AMPLIA bien dentro de la sesión (coches rodando varias
+        # vueltas, no en garaje). Se prueban varios pilotos: alguno pudo estar
+        # parado en esa ventana, así que no dependemos de uno solo.
         desde = (inicio + dt.timedelta(minutes=15)).isoformat()
-        hasta = (inicio + dt.timedelta(minutes=18)).isoformat()
-        try:
-            async with httpx.AsyncClient() as client:
-                url = (f"{BASE}/location?session_key={sk}"
-                       f"&driver_number={num}&date>{desde}&date<{hasta}")
-                r = await client.get(url, timeout=25,
-                                     headers=await _auth_headers(client))
-                r.raise_for_status()
-                filas = r.json()
-        except Exception as e:
-            log.info("Trazado del circuito no disponible (%s)", e)
-            return []
-        # Puntos válidos (descartar 0,0 = fuera de pista)
-        puntos = [(f["x"], f["y"]) for f in filas
-                  if isinstance(f.get("x"), (int, float))
-                  and isinstance(f.get("y"), (int, float))
-                  and (f["x"], f["y"]) != (0, 0)]
-        if len(puntos) < 50:
-            return []
-        # Descartar GLITCHES de coordenadas: un solo punto atípico (sensor que
-        # salta a un valor extremo) dispara el bounding box y colapsa todo el
-        # circuito a una RAYA en pantalla. Se filtran por rango intercuartílico
-        # en cada eje (conserva las esquinas reales, tumba solo lo imposible).
+        hasta = (inicio + dt.timedelta(minutes=23)).isoformat()
+
         def _limites(vals):
             v = sorted(vals)
             n = len(v)
             q1, q3 = v[n // 4], v[(3 * n) // 4]
             iqr = (q3 - q1) or 1
             return q1 - 3 * iqr, q3 + 3 * iqr
-        xlo, xhi = _limites([p[0] for p in puntos])
-        ylo, yhi = _limites([p[1] for p in puntos])
-        puntos = [(x, y) for x, y in puntos
-                  if xlo <= x <= xhi and ylo <= y <= yhi]
-        if len(puntos) < 50:
-            return []
-        paso = max(1, len(puntos) // 500)
-        return [{"x": x, "y": y} for x, y in puntos[::paso]]
+
+        for num in list(self.pilotos)[:5]:
+            try:
+                async with httpx.AsyncClient() as client:
+                    url = (f"{BASE}/location?session_key={sk}"
+                           f"&driver_number={num}&date>{desde}&date<{hasta}")
+                    r = await client.get(url, timeout=25,
+                                         headers=await _auth_headers(client))
+                    r.raise_for_status()
+                    filas = r.json()
+            except Exception as e:
+                log.info("Trazado: piloto %s sin datos (%s)", num, e)
+                continue
+            # Puntos válidos (descartar 0,0 = fuera de pista)
+            puntos = [(f["x"], f["y"]) for f in filas
+                      if isinstance(f.get("x"), (int, float))
+                      and isinstance(f.get("y"), (int, float))
+                      and (f["x"], f["y"]) != (0, 0)]
+            if len(puntos) < 50:
+                continue
+            # Descartar GLITCHES de coordenadas: un solo punto atípico dispara
+            # el bounding box y colapsa el circuito a una RAYA. Se filtran por
+            # rango intercuartílico (conserva las esquinas, tumba lo imposible).
+            xlo, xhi = _limites([p[0] for p in puntos])
+            ylo, yhi = _limites([p[1] for p in puntos])
+            puntos = [(x, y) for x, y in puntos
+                      if xlo <= x <= xhi and ylo <= y <= yhi]
+            if len(puntos) < 50:
+                continue
+            paso = max(1, len(puntos) // 500)
+            return [{"x": x, "y": y} for x, y in puntos[::paso]]
+        return []
 
     def fin_datos(self):
         """Fecha del último dato descargado (el borde de la sesión). Sirve

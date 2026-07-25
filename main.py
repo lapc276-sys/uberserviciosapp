@@ -1808,18 +1808,28 @@ function pintarMapa(d) {
   }
   const cv = document.getElementById(grande ? 'mapa-grande' : 'mapa');
   const ctx = cv.getContext('2d');
+  // Encuadre ROBUSTO: un glitch de coordenadas (un coche o punto que salta a
+  // un valor imposible) dispara la escala y colapsa el mapa a una raya. Se
+  // descartan atípicos por rango intercuartílico en cada eje, sobre trazado
+  // Y coches juntos, y con lo que queda se calcula el bounding box real.
+  const bpts = linea.concat(coches.map(c => [c.x, c.y]));
+  const _lim = arr => {
+    const v = arr.slice().sort((a, b) => a - b), n = v.length;
+    const q1 = v[n >> 2], q3 = v[(3 * n) >> 2], iqr = (q3 - q1) || 1;
+    return [q1 - 3 * iqr, q3 + 3 * iqr];
+  };
+  const [xlo, xhi] = _lim(bpts.map(p => p[0]));
+  const [ylo, yhi] = _lim(bpts.map(p => p[1]));
   let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-  for (const [x, y] of linea) {
+  for (const [x, y] of bpts) {
+    if (x < xlo || x > xhi || y < ylo || y > yhi) continue;  // glitch
     if (x < minX) minX = x; if (x > maxX) maxX = x;
     if (y < minY) minY = y; if (y > maxY) maxY = y;
   }
-  // Solo dejamos que los coches amplíen el encuadre cuando AÚN no hay trazado
-  // (modo respaldo). Con trazado ya definido, una posición glicheada de un
-  // coche no debe estirar la escala y colapsar el mapa a una raya.
-  if (!trazado.length) {
-    for (const c of coches) {
-      if (c.x < minX) minX = c.x; if (c.x > maxX) maxX = c.x;
-      if (c.y < minY) minY = c.y; if (c.y > maxY) maxY = c.y;
+  if (minX === Infinity) {                 // todo filtrado (raro): usar crudo
+    for (const [x, y] of bpts) {
+      if (x < minX) minX = x; if (x > maxX) maxX = x;
+      if (y < minY) minY = y; if (y > maxY) maxY = y;
     }
   }
   const pad = grande ? 60 : 20, w = cv.width, h = cv.height;
