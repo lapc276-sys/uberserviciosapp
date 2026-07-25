@@ -4717,14 +4717,14 @@ def _texto_overlay_short(short):
 
 
 # ── Serie temática: agrupa los shorts educativos por categoría y los numera
-# ("AERODINÁMICA · #7"). Crea sensación de serie → la gente vuelve por más
-# (recomendación de la IA de YouTube). Contador persistente por serie.
+# ("AERODYNAMICS · #7"). Crea sensación de serie → la gente vuelve por más
+# (recomendación de la IA de YouTube). En el IDIOMA del canal. Contador
+# persistente por serie.
 _SERIE_POR_CAT = {
-    "Aero": "AERODINÁMICA",
-    "Engine": "MOTORES F1",
-    "Tyres": "NEUMÁTICOS",
-    "Strategy": "ESTRATEGIA",
-    "Tech history": "HISTORIA TÉCNICA",
+    "en": {"Aero": "AERODYNAMICS", "Engine": "F1 ENGINES", "Tyres": "TYRES",
+           "Strategy": "STRATEGY", "Tech history": "TECH HISTORY"},
+    "es": {"Aero": "AERODINÁMICA", "Engine": "MOTORES F1", "Tyres": "NEUMÁTICOS",
+           "Strategy": "ESTRATEGIA", "Tech history": "HISTORIA TÉCNICA"},
 }
 _SERIE_CONTADOR = "series_contador.json"
 
@@ -4732,7 +4732,8 @@ _SERIE_CONTADOR = "series_contador.json"
 def _asignar_serie(categoria):
     """Devuelve (nombre_serie, numero) para una categoría e incrementa el
     contador persistente. (None, None) si la categoría no tiene serie."""
-    nombre = _SERIE_POR_CAT.get(categoria or "")
+    tabla = _SERIE_POR_CAT.get(IDIOMA, _SERIE_POR_CAT["en"])
+    nombre = tabla.get(categoria or "")
     if not nombre:
         return None, None
     cont = {}
@@ -4794,6 +4795,9 @@ async def _generar_short_comparacion(sid):
         f"{a['nombre']} F1", f"shorts/cmpa_{sid}.jpg")
     fb = await _descargar_foto_comparacion(
         f"{b['nombre']} F1", f"shorts/cmpb_{sid}.jpg")
+    lider, seg = _apellido(a["nombre"]), _apellido(b["nombre"])
+    es = IDIOMA == "es"
+    tit_tarjeta = "LUCHA POR EL TÍTULO · F1" if es else "CHAMPIONSHIP BATTLE · F1"
     card = f"shorts/card_comp_{sid}.png"
     _tarjeta_comparacion_png(
         card,
@@ -4801,16 +4805,23 @@ async def _generar_short_comparacion(sid):
          "sub": a.get("equipo", "")},
         {"stat": b["puntos"], "unidad": "PTS", "label": _apellido(b["nombre"]),
          "sub": b.get("equipo", "")},
-        delta_txt=f"+{delta}", titulo="LUCHA POR EL TÍTULO · F1",
-        fotos=[fa, fb])
+        delta_txt=f"+{delta}", titulo=tit_tarjeta, fotos=[fa, fb])
     if not os.path.exists(card):
         return None
-    lider, seg = _apellido(a["nombre"]), _apellido(b["nombre"])
-    # Guion FACTUAL: usa solo los números reales dados, no inventa nada.
-    guion = (f"{a['nombre']} lidera el campeonato con {a['puntos']} puntos, "
-             f"{delta} más que {b['nombre']}, con {b['puntos']}. "
-             f"Solo {delta} puntos separan al líder de su perseguidor. "
-             f"¿Aguantará {lider}, o {seg} dará la vuelta?")
+    # Guion FACTUAL: usa solo los números reales dados, no inventa nada. En el
+    # idioma del canal (IDIOMA).
+    if es:
+        guion = (f"{a['nombre']} lidera el campeonato con {a['puntos']} puntos, "
+                 f"{delta} más que {b['nombre']}, con {b['puntos']}. Solo "
+                 f"{delta} puntos separan al líder de su perseguidor. "
+                 f"¿Aguantará {lider}, o {seg} dará la vuelta?")
+        titulo = f"{lider} vs {seg}: la lucha por el título F1"
+    else:
+        guion = (f"{a['nombre']} leads the championship on {a['puntos']} points, "
+                 f"{delta} ahead of {b['nombre']} on {b['puntos']}. Just {delta} "
+                 f"points separate the leader from his chaser. Can {lider} hold "
+                 f"on, or will {seg} turn it around?")
+        titulo = f"{lider} vs {seg}: the F1 title fight"
     datos = {
         "id": sid,
         "timestamp": dt.datetime.now(dt.timezone.utc).isoformat(),
@@ -4818,7 +4829,7 @@ async def _generar_short_comparacion(sid):
         "guion": f"{guion} {_cta_hablada()}",
         "duracion_segundos": 22,
         "fotos": [f for f in (card, fa, fb) if f],
-        "titulo": f"{lider} vs {seg}: la lucha por el título F1",
+        "titulo": titulo,
         "sin_overlay": True,      # la tarjeta ya trae su propio texto
     }
     _guardar_short(sid, datos)
