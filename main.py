@@ -1813,9 +1813,14 @@ function pintarMapa(d) {
     if (x < minX) minX = x; if (x > maxX) maxX = x;
     if (y < minY) minY = y; if (y > maxY) maxY = y;
   }
-  for (const c of coches) {  // por si un coche sale del bounding del trazado
-    if (c.x < minX) minX = c.x; if (c.x > maxX) maxX = c.x;
-    if (c.y < minY) minY = c.y; if (c.y > maxY) maxY = c.y;
+  // Solo dejamos que los coches amplíen el encuadre cuando AÚN no hay trazado
+  // (modo respaldo). Con trazado ya definido, una posición glicheada de un
+  // coche no debe estirar la escala y colapsar el mapa a una raya.
+  if (!trazado.length) {
+    for (const c of coches) {
+      if (c.x < minX) minX = c.x; if (c.x > maxX) maxX = c.x;
+      if (c.y < minY) minY = c.y; if (c.y > maxY) maxY = c.y;
+    }
   }
   const pad = grande ? 60 : 20, w = cv.width, h = cv.height;
   const s = Math.min((w - 2 * pad) / Math.max(1, maxX - minX),

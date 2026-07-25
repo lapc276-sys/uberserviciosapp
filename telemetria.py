@@ -407,9 +407,27 @@ class Telemetria:
         except Exception as e:
             log.info("Trazado del circuito no disponible (%s)", e)
             return []
-        # Puntos válidos (descartar 0,0 = fuera de pista) submuestreados
+        # Puntos válidos (descartar 0,0 = fuera de pista)
         puntos = [(f["x"], f["y"]) for f in filas
-                  if f.get("x") not in (None, 0) and f.get("y") not in (None, 0)]
+                  if isinstance(f.get("x"), (int, float))
+                  and isinstance(f.get("y"), (int, float))
+                  and (f["x"], f["y"]) != (0, 0)]
+        if len(puntos) < 50:
+            return []
+        # Descartar GLITCHES de coordenadas: un solo punto atípico (sensor que
+        # salta a un valor extremo) dispara el bounding box y colapsa todo el
+        # circuito a una RAYA en pantalla. Se filtran por rango intercuartílico
+        # en cada eje (conserva las esquinas reales, tumba solo lo imposible).
+        def _limites(vals):
+            v = sorted(vals)
+            n = len(v)
+            q1, q3 = v[n // 4], v[(3 * n) // 4]
+            iqr = (q3 - q1) or 1
+            return q1 - 3 * iqr, q3 + 3 * iqr
+        xlo, xhi = _limites([p[0] for p in puntos])
+        ylo, yhi = _limites([p[1] for p in puntos])
+        puntos = [(x, y) for x, y in puntos
+                  if xlo <= x <= xhi and ylo <= y <= yhi]
         if len(puntos) < 50:
             return []
         paso = max(1, len(puntos) // 500)
