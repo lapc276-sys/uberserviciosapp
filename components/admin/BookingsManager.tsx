@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { UserPlus, Loader2 } from 'lucide-react';
+import { UserPlus, Loader2, Send } from 'lucide-react';
 import { formatCurrency } from '@/lib/utils';
 
 interface Booking {
@@ -14,7 +14,7 @@ interface Booking {
   time: string;
   quoteLow: number | null;
   status: string;
-  employeeName: string | null;
+  proName: string | null;
 }
 
 const STATUSES = ['PENDING', 'SCHEDULED', 'IN_PROGRESS', 'COMPLETED', 'CANCELED'];
@@ -75,16 +75,30 @@ export function BookingsManager({ bookings }: { bookings: Booking[] }) {
               <td className="p-4">{b.date}<span className="block text-xs text-slate-400">{b.time}</span></td>
               <td className="p-4 font-medium">{b.quoteLow ? `${formatCurrency(b.quoteLow)}+` : '—'}</td>
               <td className="p-4">
-                {b.employeeName ? (
-                  <span>{b.employeeName}</span>
+                {b.proName ? (
+                  <span>{b.proName}</span>
                 ) : (
-                  <button
-                    onClick={() => patch(b.ref, { action: 'auto-assign' })}
-                    disabled={busy === b.ref}
-                    className="inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs text-slate-600 hover:border-brand-300 hover:text-brand-700 disabled:opacity-50 dark:text-slate-300"
-                  >
-                    {busy === b.ref ? <Loader2 className="h-3 w-3 animate-spin" /> : <UserPlus className="h-3 w-3" />} Assign
-                  </button>
+                  <div className="flex flex-col gap-1">
+                    <span className="text-xs text-amber-600 dark:text-amber-400">Unclaimed</span>
+                    <div className="flex gap-1">
+                      <button
+                        onClick={() => patch(b.ref, { action: 're-offer' })}
+                        disabled={busy === b.ref}
+                        title="Send a new offer round to available pros"
+                        className="inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs text-slate-600 hover:border-brand-300 hover:text-brand-700 disabled:opacity-50 dark:text-slate-300"
+                      >
+                        {busy === b.ref ? <Loader2 className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />} Re-offer
+                      </button>
+                      <button
+                        onClick={() => patch(b.ref, { action: 'force-assign' })}
+                        disabled={busy === b.ref}
+                        title="Override the marketplace and assign the best available pro"
+                        className="inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs text-slate-600 hover:border-brand-300 hover:text-brand-700 disabled:opacity-50 dark:text-slate-300"
+                      >
+                        <UserPlus className="h-3 w-3" /> Assign
+                      </button>
+                    </div>
+                  </div>
                 )}
               </td>
               <td className="p-4">

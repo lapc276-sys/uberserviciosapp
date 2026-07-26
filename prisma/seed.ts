@@ -25,13 +25,17 @@ async function main() {
     create: { email: adminEmail, name: 'Administrator', role: 'ADMIN', passwordHash: await hash(adminPassword) },
   });
 
-  const employees = [
-    { name: 'Maria G.', email: 'maria@homigo.com', rating: 4.9 },
-    { name: 'Carlos R.', email: 'carlos@homigo.com', rating: 4.8 },
-    { name: 'Aisha K.', email: 'aisha@homigo.com', rating: 5 },
+  const pros = [
+    { name: 'Maria G.', email: 'maria@homigo.com', rating: 4.9, serviceAreas: ['manhattan-ny', 'brooklyn-ny'], yearsExperience: 6, hasTransport: true },
+    { name: 'Carlos R.', email: 'carlos@homigo.com', rating: 4.8, serviceAreas: ['brooklyn-ny', 'queens-ny'], yearsExperience: 4, hasTransport: true },
+    { name: 'Aisha K.', email: 'aisha@homigo.com', rating: 5, serviceAreas: ['manhattan-ny', 'queens-ny', 'bronx-ny'], yearsExperience: 8, hasTransport: false },
   ];
-  for (const e of employees) {
-    await prisma.employee.upsert({ where: { email: e.email }, update: {}, create: e });
+  for (const p of pros) {
+    await prisma.pro.upsert({
+      where: { email: p.email },
+      update: {},
+      create: { ...p, status: 'APPROVED' },
+    });
   }
 
   const customer = await prisma.customer.upsert({
@@ -41,7 +45,7 @@ async function main() {
       name: 'A. Rivera',
       email: 'sample@customer.com',
       phone: '+1 (555) 010-1010',
-      addresses: { create: { line1: '123 Brickell Ave', city: 'Miami', region: 'FL', postalCode: '33131' } },
+      addresses: { create: { line1: '100 Broadway', city: 'Manhattan', region: 'NY', postalCode: '10005' } },
     },
     include: { addresses: true },
   });

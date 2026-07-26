@@ -36,17 +36,33 @@ export interface BookingRecord {
   remind2Sent: boolean;
   reviewRequestSent: boolean;
   followUpSent: boolean;
-  employeeId: string | null;
-  employeeName: string | null;
+  proId: string | null;
+  proName: string | null;
 }
 
-export interface EmployeeRecord {
+export type ProStatus = 'APPLIED' | 'APPROVED' | 'SUSPENDED';
+
+export interface ProRecord {
   id: string;
   name: string;
   email: string;
   phone: string | null;
+  status: ProStatus;
   rating: number;
-  active: boolean;
+  serviceAreas: string[]; // city slugs
+  yearsExperience: number;
+  hasTransport: boolean;
+  bio: string | null;
+}
+
+export interface ProApplicationInput {
+  name: string;
+  email: string;
+  phone: string;
+  serviceAreas: string[];
+  yearsExperience: number;
+  hasTransport: boolean;
+  bio?: string;
 }
 
 export interface CustomerSummary {
@@ -100,11 +116,13 @@ const memory = {
   invoices: [] as { ref: string; amount: number; status: string; stripeId?: string }[],
   optOuts: new Set<string>(),
   // Seeded so dispatch works out of the box without a database.
-  employees: [
-    { id: 'emp_maria', name: 'Maria G.', email: 'maria@homigo.com', phone: '+15550101001', rating: 4.9, active: true },
-    { id: 'emp_carlos', name: 'Carlos R.', email: 'carlos@homigo.com', phone: '+15550101002', rating: 4.8, active: true },
-    { id: 'emp_aisha', name: 'Aisha K.', email: 'aisha@homigo.com', phone: '+15550101003', rating: 5.0, active: true },
-  ] as EmployeeRecord[],
+  pros: [
+    { id: 'pro_maria', name: 'Maria G.', email: 'maria@homigo.com', phone: '+15550101001', status: 'APPROVED', rating: 4.9, serviceAreas: ['manhattan-ny', 'brooklyn-ny'], yearsExperience: 6, hasTransport: true, bio: null },
+    { id: 'pro_carlos', name: 'Carlos R.', email: 'carlos@homigo.com', phone: '+15550101002', status: 'APPROVED', rating: 4.8, serviceAreas: ['brooklyn-ny', 'queens-ny'], yearsExperience: 4, hasTransport: true, bio: null },
+    { id: 'pro_aisha', name: 'Aisha K.', email: 'aisha@homigo.com', phone: '+15550101003', status: 'APPROVED', rating: 5.0, serviceAreas: ['manhattan-ny', 'queens-ny', 'bronx-ny'], yearsExperience: 8, hasTransport: false, bio: null },
+    { id: 'pro_luis', name: 'Luis M.', email: 'luis@homigo.com', phone: '+15550101004', status: 'APPROVED', rating: 4.7, serviceAreas: ['miami-fl', 'miami-beach-fl'], yearsExperience: 5, hasTransport: true, bio: null },
+  ] as ProRecord[],
+  offers: [] as { bookingRef: string; proId: string; status: 'PENDING' | 'ACCEPTED' | 'DECLINED' | 'EXPIRED' }[],
 };
 
 function toFrequency(f: string): Frequency {
@@ -137,8 +155,8 @@ export async function createBooking(input: NewBookingInput): Promise<BookingReco
     remind2Sent: false,
     reviewRequestSent: false,
     followUpSent: false,
-    employeeId: null,
-    employeeName: null,
+    proId: null,
+    proName: null,
   };
 
   if (!isDbConfigured || !prisma) {
@@ -190,7 +208,7 @@ export async function listBookings(limit = 20): Promise<BookingRecord[]> {
   const rows = await prisma.booking.findMany({
     take: limit,
     orderBy: { createdAt: 'desc' },
-    include: { customer: true, address: true, employee: true },
+    include: { customer: true, address: true, pro: true },
   });
   return rows.map(mapRow);
 }
@@ -307,7 +325,7 @@ export async function bookingsBetween(fromDate: string, toDate: string): Promise
   }
   const rows = await prisma.booking.findMany({
     where: { date: { gte: fromDate, lte: toDate } },
-    include: { customer: true, address: true, employee: true },
+    include: { customer: true, address: true, pro: true },
   });
   return rows.map(mapRow);
 }
@@ -322,32 +340,186 @@ export async function markReminderSent(ref: string, kind: ReminderKind): Promise
   await prisma.booking.update({ where: { ref }, data: { [field]: true } });
 }
 
-// ── Employees, dispatch & CRM (Phase 4) ──────────────────────────────────────
-export async function listEmployees(): Promise<EmployeeRecord[]> {
-  if (!isDbConfigured || !prisma) return memory.employees;
-  const rows = await prisma.employee.findMany({ orderBy: { rating: 'desc' } });
-  return rows.map((e) => ({ id: e.id, name: e.name, email: e.email, phone: e.phone, rating: e.rating, active: e.active }));
+// ── Marketplace: pros, offers & CRM ──────────────────────────────────────────
+function toProRecord(p: any): ProRecord {
+  return {
+    id: p.id,
+    name: p.name,
+    email: p.email,
+    phone: p.phone,
+    status: p.status,
+    rating: p.rating,
+    serviceAreas: p.serviceAreas ?? [],
+    yearsExperience: p.yearsExperience ?? 0,
+    hasTransport: p.hasTransport ?? false,
+    bio: p.bio ?? null,
+  };
 }
 
-/** Count of bookings already assigned to an employee on a given date (load). */
-export async function employeeLoadOn(date: string): Promise<Record<string, number>> {
+export async function listPros(status?: ProStatus): Promise<ProRecord[]> {
+  if (!isDbConfigured || !prisma) {
+    return memory.pros.filter((p) => !status || p.status === status);
+  }
+  const rows = await prisma.pro.findMany({
+    where: status ? { status } : undefined,
+    orderBy: [{ status: 'asc' }, { rating: 'desc' }],
+  });
+  return rows.map(toProRecord);
+}
+
+/** Approved pros who cover a given city slug. */
+export async function prosForCity(citySlug: string): Promise<ProRecord[]> {
+  if (!isDbConfigured || !prisma) {
+    return memory.pros.filter((p) => p.status === 'APPROVED' && p.serviceAreas.includes(citySlug));
+  }
+  const rows = await prisma.pro.findMany({
+    where: { status: 'APPROVED', serviceAreas: { has: citySlug } },
+    orderBy: { rating: 'desc' },
+  });
+  return rows.map(toProRecord);
+}
+
+export async function createProApplication(input: ProApplicationInput): Promise<{ ok: boolean; duplicate?: boolean }> {
+  const email = input.email.trim().toLowerCase();
+  if (!isDbConfigured || !prisma) {
+    if (memory.pros.some((p) => p.email === email)) return { ok: false, duplicate: true };
+    memory.pros.push({
+      id: `pro_${Date.now().toString(36)}`,
+      name: input.name,
+      email,
+      phone: input.phone,
+      status: 'APPLIED',
+      rating: 5,
+      serviceAreas: input.serviceAreas,
+      yearsExperience: input.yearsExperience,
+      hasTransport: input.hasTransport,
+      bio: input.bio ?? null,
+    });
+    return { ok: true };
+  }
+  const existing = await prisma.pro.findUnique({ where: { email } });
+  if (existing) return { ok: false, duplicate: true };
+  await prisma.pro.create({
+    data: {
+      name: input.name,
+      email,
+      phone: input.phone,
+      serviceAreas: input.serviceAreas,
+      yearsExperience: input.yearsExperience,
+      hasTransport: input.hasTransport,
+      bio: input.bio,
+    },
+  });
+  return { ok: true };
+}
+
+export async function setProStatus(id: string, status: ProStatus): Promise<void> {
+  if (!isDbConfigured || !prisma) {
+    const p = memory.pros.find((x) => x.id === id);
+    if (p) p.status = status;
+    return;
+  }
+  await prisma.pro.update({ where: { id }, data: { status } });
+}
+
+/** Count of bookings already committed to a pro on a given date (load). */
+export async function proLoadOn(date: string): Promise<Record<string, number>> {
   const load: Record<string, number> = {};
   if (!isDbConfigured || !prisma) {
-    for (const b of memory.bookings) if (b.date === date && b.employeeId) load[b.employeeId] = (load[b.employeeId] ?? 0) + 1;
+    for (const b of memory.bookings) if (b.date === date && b.proId) load[b.proId] = (load[b.proId] ?? 0) + 1;
     return load;
   }
-  const rows = await prisma.booking.groupBy({ by: ['employeeId'], where: { date, employeeId: { not: null } }, _count: true });
-  for (const r of rows) if (r.employeeId) load[r.employeeId] = r._count;
+  const rows = await prisma.booking.groupBy({ by: ['proId'], where: { date, proId: { not: null } }, _count: true });
+  for (const r of rows) if (r.proId) load[r.proId] = r._count;
   return load;
 }
 
-export async function assignEmployee(ref: string, employeeId: string, employeeName: string): Promise<void> {
+/** Records offers sent to a shortlist of pros for a booking. */
+export async function createJobOffers(ref: string, proIds: string[]): Promise<void> {
   if (!isDbConfigured || !prisma) {
-    const b = memory.bookings.find((x) => x.ref === ref);
-    if (b) { b.employeeId = employeeId; b.employeeName = employeeName; }
+    for (const proId of proIds) {
+      if (!memory.offers.some((o) => o.bookingRef === ref && o.proId === proId)) {
+        memory.offers.push({ bookingRef: ref, proId, status: 'PENDING' });
+      }
+    }
     return;
   }
-  await prisma.booking.update({ where: { ref }, data: { employeeId } });
+  const booking = await prisma.booking.findUnique({ where: { ref } });
+  if (!booking) return;
+  await prisma.jobOffer.createMany({
+    data: proIds.map((proId) => ({ bookingId: booking.id, proId })),
+    skipDuplicates: true,
+  });
+}
+
+/**
+ * First-to-accept wins. Returns false if the job was already taken, so the
+ * losing pro gets an honest "already claimed" instead of a silent overwrite.
+ */
+export async function acceptJobOffer(ref: string, proId: string): Promise<{ ok: boolean; reason?: string }> {
+  if (!isDbConfigured || !prisma) {
+    const booking = memory.bookings.find((b) => b.ref === ref);
+    if (!booking) return { ok: false, reason: 'not_found' };
+    if (booking.proId) return { ok: false, reason: 'already_claimed' };
+    const pro = memory.pros.find((p) => p.id === proId);
+    if (!pro || pro.status !== 'APPROVED') return { ok: false, reason: 'not_eligible' };
+    booking.proId = pro.id;
+    booking.proName = pro.name;
+    for (const o of memory.offers.filter((x) => x.bookingRef === ref)) {
+      o.status = o.proId === proId ? 'ACCEPTED' : 'EXPIRED';
+    }
+    return { ok: true };
+  }
+
+  const booking = await prisma.booking.findUnique({ where: { ref } });
+  if (!booking) return { ok: false, reason: 'not_found' };
+  if (booking.proId) return { ok: false, reason: 'already_claimed' };
+
+  const pro = await prisma.pro.findUnique({ where: { id: proId } });
+  if (!pro || pro.status !== 'APPROVED') return { ok: false, reason: 'not_eligible' };
+
+  // Conditional update guards the race: only claims if still unassigned.
+  const claimed = await prisma.booking.updateMany({
+    where: { ref, proId: null },
+    data: { proId },
+  });
+  if (claimed.count === 0) return { ok: false, reason: 'already_claimed' };
+
+  await prisma.$transaction([
+    prisma.jobOffer.updateMany({
+      where: { bookingId: booking.id, proId },
+      data: { status: 'ACCEPTED', respondedAt: new Date() },
+    }),
+    prisma.jobOffer.updateMany({
+      where: { bookingId: booking.id, proId: { not: proId }, status: 'PENDING' },
+      data: { status: 'EXPIRED', respondedAt: new Date() },
+    }),
+  ]);
+  return { ok: true };
+}
+
+export async function declineJobOffer(ref: string, proId: string): Promise<void> {
+  if (!isDbConfigured || !prisma) {
+    const o = memory.offers.find((x) => x.bookingRef === ref && x.proId === proId);
+    if (o) o.status = 'DECLINED';
+    return;
+  }
+  const booking = await prisma.booking.findUnique({ where: { ref } });
+  if (!booking) return;
+  await prisma.jobOffer.updateMany({
+    where: { bookingId: booking.id, proId, status: 'PENDING' },
+    data: { status: 'DECLINED', respondedAt: new Date() },
+  });
+}
+
+/** Admin override: hard-assign a pro (used when nobody accepts in time). */
+export async function assignPro(ref: string, proId: string, proName: string): Promise<void> {
+  if (!isDbConfigured || !prisma) {
+    const b = memory.bookings.find((x) => x.ref === ref);
+    if (b) { b.proId = proId; b.proName = proName; }
+    return;
+  }
+  await prisma.booking.update({ where: { ref }, data: { proId } });
 }
 
 export async function updateBookingStatus(ref: string, status: BookingStatus): Promise<void> {
@@ -442,6 +614,29 @@ export async function unsubscribe(email: string): Promise<void> {
   await prisma.optOut.upsert({ where: { email: key }, update: {}, create: { email: key } });
 }
 
+/** A single booking by reference, for the pro-facing job view. */
+export async function getBookingByRef(ref: string): Promise<BookingRecord | null> {
+  if (!isDbConfigured || !prisma) {
+    return memory.bookings.find((b) => b.ref === ref) ?? null;
+  }
+  const row = await prisma.booking.findUnique({
+    where: { ref },
+    include: { customer: true, address: true, pro: true },
+  });
+  return row ? mapRow(row) : null;
+}
+
+/** Pros currently holding a pending offer for a booking. */
+export async function pendingOfferProIds(ref: string): Promise<string[]> {
+  if (!isDbConfigured || !prisma) {
+    return memory.offers.filter((o) => o.bookingRef === ref && o.status === 'PENDING').map((o) => o.proId);
+  }
+  const booking = await prisma.booking.findUnique({ where: { ref } });
+  if (!booking) return [];
+  const rows = await prisma.jobOffer.findMany({ where: { bookingId: booking.id, status: 'PENDING' } });
+  return rows.map((o) => o.proId);
+}
+
 export async function countLeads(): Promise<number> {
   if (!isDbConfigured || !prisma) return memory.leads.length;
   return prisma.lead.count();
@@ -499,8 +694,8 @@ function mapRow(b: any): BookingRecord {
     remind2Sent: b.remind2Sent,
     reviewRequestSent: b.reviewRequestSent,
     followUpSent: b.followUpSent,
-    employeeId: b.employeeId ?? null,
-    employeeName: b.employee?.name ?? null,
+    proId: b.proId ?? null,
+    proName: b.pro?.name ?? null,
   };
 }
 

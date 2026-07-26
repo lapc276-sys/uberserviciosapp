@@ -24,7 +24,7 @@ const schema = z.object({
 /**
  * Booking intake. Validates, prices, and returns a confirmation.
  * In production this persists to the DB and fires the automation pipeline
- * (email + SMS + calendar + employee assignment + invoice). Those side
+ * (email + SMS + calendar + pro dispatch + invoice). Those side
  * effects are stubbed behind env-gated integrations — see lib/automations.
  */
 export async function POST(req: Request) {

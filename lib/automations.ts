@@ -36,7 +36,7 @@ export async function runBookingAutomations(payload: BookingPayload): Promise<vo
     sendConfirmationSms,
     createBookingInvoice,
     addToCalendar,
-    notifyEmployee,
+    offerToPros,
   ];
   await Promise.allSettled(steps.map((step) => step(payload)));
 }
@@ -90,9 +90,9 @@ async function addToCalendar(p: BookingPayload) {
   log('calendar', p.bookingId, 'queued');
 }
 
-async function notifyEmployee(p: BookingPayload) {
-  const { assignAndNotify } = await import('./dispatch');
-  const pro = await assignAndNotify({
+async function offerToPros(p: BookingPayload) {
+  const { offerJob } = await import('./dispatch');
+  const result = await offerJob({
     ref: p.bookingId,
     serviceSlug: p.serviceSlug,
     date: p.date,
@@ -100,7 +100,11 @@ async function notifyEmployee(p: BookingPayload) {
     city: p.city,
     address: p.address,
   });
-  log('assign', p.bookingId, pro ? `assigned to ${pro.name}` : 'no available pro');
+  log(
+    'dispatch',
+    p.bookingId,
+    result.offered.length ? `offered to ${result.offered.map((x) => x.name).join(', ')}` : 'no pro covers this city',
+  );
 }
 
 function log(step: string, id: string, status: string) {

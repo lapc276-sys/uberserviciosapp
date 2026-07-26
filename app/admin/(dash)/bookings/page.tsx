@@ -24,7 +24,7 @@ export default async function BookingsPage() {
           time: b.time,
           quoteLow: b.quoteLow,
           status: b.status,
-          employeeName: b.employeeName,
+          proName: b.proName,
         }))}
       />
     </section>

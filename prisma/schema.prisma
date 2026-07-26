@@ -75,14 +75,63 @@ model Address {
   bookings   Booking[]
 }
 
-model Employee {
-  id       String    @id @default(cuid())
-  name     String
-  email    String    @unique
-  phone    String?
-  rating   Float     @default(5)
-  active   Boolean   @default(true)
+enum ProStatus {
+  APPLIED
+  APPROVED
+  SUSPENDED
+}
+
+/**
+ * An independent service professional on the marketplace.
+ *
+ * Deliberately NOT called "Employee": pros are independent contractors who
+ * apply, choose their own service areas, and are free to accept or decline
+ * each job offer. That right to decline is modeled explicitly via JobOffer —
+ * it is a core marketplace mechanic and a factor in worker classification.
+ * Confirm your classification approach with employment counsel per state.
+ */
+model Pro {
+  id              String    @id @default(cuid())
+  name            String
+  email           String    @unique
+  phone           String?
+  status          ProStatus @default(APPLIED)
+  rating          Float     @default(5)
+  /** City slugs this pro serves, e.g. ["manhattan-ny","brooklyn-ny"]. */
+  serviceAreas    String[]  @default([])
+  yearsExperience Int       @default(0)
+  hasTransport    Boolean   @default(false)
+  bio             String?
+  /** Stripe Connect account for payouts (Phase 7). */
+  stripeAccountId String?
+  createdAt       DateTime  @default(now())
+
   bookings Booking[]
+  offers   JobOffer[]
+
+  @@index([status])
+}
+
+enum OfferStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  EXPIRED
+}
+
+/** A job offered to a pro. First to accept wins; the rest expire. */
+model JobOffer {
+  id          String      @id @default(cuid())
+  booking     Booking     @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  bookingId   String
+  pro         Pro         @relation(fields: [proId], references: [id], onDelete: Cascade)
+  proId       String
+  status      OfferStatus @default(PENDING)
+  sentAt      DateTime    @default(now())
+  respondedAt DateTime?
+
+  @@unique([bookingId, proId])
+  @@index([status])
 }
 
 model Booking {
@@ -109,20 +158,21 @@ model Booking {
   reviewRequestSent Boolean @default(false)
   followUpSent      Boolean @default(false)
 
-  customer   Customer  @relation(fields: [customerId], references: [id])
+  customer   Customer   @relation(fields: [customerId], references: [id])
   customerId String
-  address    Address?  @relation(fields: [addressId], references: [id])
+  address    Address?   @relation(fields: [addressId], references: [id])
   addressId  String?
-  employee   Employee? @relation(fields: [employeeId], references: [id])
-  employeeId String?
+  pro        Pro?       @relation(fields: [proId], references: [id])
+  proId      String?
   invoice    Invoice?
   review     Review?
   photos     Photo[]
+  offers     JobOffer[]
 
   @@index([status])
   @@index([createdAt])
   @@index([date])
-  @@index([employeeId])
+  @@index([proId])
 }
 
 // Before/after service photos (stored in Supabase Storage / S3; URL kept here).

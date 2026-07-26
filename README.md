@@ -33,7 +33,34 @@ Deploy target: **Vercel** + Cloudflare. Data layer (Phase 2): **Supabase / Postg
 
 ---
 
-## What's built (Phases 1–5 — live & verified)
+## Business model: marketplace
+
+Homigo operates as a **marketplace**, not an employer. Pros are independent
+contractors who apply, choose their own service areas, and are **free to accept
+or decline every job**. That right to decline is modeled explicitly (`JobOffer`)
+rather than implied — it is a core product mechanic and a factor in worker
+classification.
+
+> ⚠️ Worker classification, licensing, insurance and sales tax vary by state and
+> city. New York in particular applies strict contractor tests. Confirm your
+> structure with employment counsel and an accountant before launching a market.
+> `lib/config/cities.ts` carries per-market tax config with published rates —
+> verify them; they change.
+
+**How dispatch works:** a booking is offered to the top 3 approved pros covering
+that city (lightest load that date first, then rating). First to accept claims
+it; the rest expire. Admins can re-offer or force-assign if a round goes unclaimed.
+
+## What's built (Phases 1–5 + marketplace — live & verified)
+
+**Marketplace** ✅
+- `Pro` model with application → approval → active lifecycle, service areas, ratings
+- Public `/pros/apply` — supply-side acquisition page with SEO + FAQ schema
+- `/pros/jobs/[ref]` — pro-facing offer with pay shown up front; address withheld until claimed
+- First-to-accept dispatch with a race-safe conditional claim; losers get a clear 409
+- Admin `/admin/pros`: review applications, approve, suspend
+
+
 
 **Phase 5 — Analytics** ✅
 - `/admin/analytics`: booked value, average ticket, lead→booking conversion, completion rate, recurring share

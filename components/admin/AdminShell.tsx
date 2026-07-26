@@ -10,7 +10,7 @@ const nav = [
   { label: 'Bookings', href: '/admin/bookings', icon: CalendarDays },
   { label: 'Customers', href: '/admin/customers', icon: Users },
   { label: 'Analytics', href: '/admin/analytics', icon: BarChart3 },
-  { label: 'Team', href: '/admin/employees', icon: Settings },
+  { label: 'Pros', href: '/admin/pros', icon: Settings },
 ];
 
 export function AdminShell({

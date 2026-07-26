@@ -21,7 +21,7 @@ export interface SessionPayload {
 
 // Coarse permission map. Extend as the admin surface grows.
 const PERMISSIONS: Record<Role, string[]> = {
-  ADMIN: ['dashboard:view', 'bookings:manage', 'customers:manage', 'employees:manage', 'settings:manage'],
+  ADMIN: ['dashboard:view', 'bookings:manage', 'customers:manage', 'pros:manage', 'settings:manage'],
   DISPATCHER: ['dashboard:view', 'bookings:manage', 'customers:manage'],
   STAFF: ['dashboard:view'],
 };

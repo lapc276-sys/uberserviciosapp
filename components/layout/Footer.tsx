@@ -6,6 +6,7 @@ import { verticals } from '@/lib/config/verticals';
 
 const company = [
   { label: 'About', href: '/about' },
+  { label: 'Become a Pro', href: '/pros/apply' },
   { label: 'Careers', href: '/careers' },
   { label: 'Contact', href: '/contact' },
   { label: 'Blog', href: '/blog' },
