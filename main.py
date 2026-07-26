@@ -3946,6 +3946,8 @@ _HERO_POR_CAT = {
                  "race car pit crew close up"],
     "Tech history": ["classic formula 1 car detail", "vintage race car close up",
                      "historic grand prix car"],
+    "Banned tech": ["classic formula 1 car detail", "race car technical detail",
+                    "historic grand prix car close up"],
 }
 HERO_MINIATURA_SCHEMA = {
     "type": "object",
@@ -4505,6 +4507,35 @@ _TEMAS_TECNICOS = [
      "Williams FW14B active suspension"),
     ("Tech history", "the F-duct and blown diffuser: clever loopholes",
      "formula 1 aerodynamics 2010"),
+    # ── TECNOLOGÍA PROHIBIDA ──────────────────────────────────────────
+    # Los datos mandan: los shorts de "tech that got banned" son los que más
+    # rinden del canal (la suspensión prohibida hizo 1.031 vistas en 48 h).
+    # Pozo dedicado, porque la curiosidad por lo prohibido es imbatible.
+    ("Banned tech", "the Brabham BT46B 'fan car' that won and vanished",
+     "Brabham BT46 formula 1"),
+    ("Banned tech", "the Lotus 88 twin-chassis and why it never raced",
+     "Lotus 88 formula 1"),
+    ("Banned tech", "the mass damper Renault used — and lost",
+     "Renault R26 formula 1"),
+    ("Banned tech", "traction control: the driver aid F1 fought for years",
+     "formula 1 steering wheel electronics"),
+    ("Banned tech", "why F1 outlawed refuelling in the middle of a race",
+     "formula 1 refuelling pit stop"),
+    ("Banned tech", "the flexible wings that bend the rules (literally)",
+     "formula 1 front wing flex"),
+    ("Banned tech", "brake steer: the extra pedal that was too clever",
+     "formula 1 brake pedal cockpit"),
+    ("Banned tech", "ground effect skirts: banned, then brought back",
+     "formula 1 ground effect skirts"),
+    # ── ERAS DE MOTOR (lo pide la audiencia: V10 vs híbrido) ───────────
+    ("Engine", "V10 versus today's hybrid: which is really faster, and why",
+     "formula 1 v10 engine"),
+    ("Engine", "why the screaming V10s were retired",
+     "formula 1 v10 engine 2005"),
+    ("Engine", "V12, V10, V8, V6 turbo: what each era traded away",
+     "formula 1 engine history"),
+    ("Engine", "why modern hybrids are the most efficient engines ever built",
+     "formula 1 power unit hybrid"),
 ]
 _SHORTS_TEMAS_USADOS = "shorts_temas_usados.json"
 
@@ -4533,21 +4564,46 @@ _CLIMAS = [
 ]
 
 
+# Lente CONTRAINTUITIVA: los datos del canal dicen que los ganchos que suenan
+# contradictorios son los que más rinden ("F1 Made Cars SLOWER to Go Faster",
+# "Why F1's Fastest Drivers Brake Early"). Se pide el ángulo paradójico del
+# mismo concepto técnico — sin inventar nada, solo enfocando la sorpresa.
+_PARADOJAS = [
+    "the counter-intuitive truth about {b} — what sounds wrong but is right",
+    "the part of {b} that even experienced fans get backwards",
+    "why the obvious answer about {b} turns out to be the wrong one",
+    "the hidden trade-off in {b}: giving up speed in one place to be faster "
+    "overall",
+    "what most fans get exactly backwards about {b}",
+]
+
+
 def _lente(concepto):
     """Aplica una LENTE al concepto base → (cat, lección enfocada, consulta).
     Distintas dimensiones para que el mismo concepto rinda muchos shorts."""
     cat, base, consulta = concepto
     d = random.random()
-    if d < 0.30:                                   # trazado
+    # Para la paradoja se quita el "why/how" inicial del concepto, si no la
+    # frase queda torpe ("...is faster, with why a Safety Car...").
+    nucleo = re.sub(r"^(why|how)\s+", "", base, flags=re.I)
+    # La tecnología prohibida ya es un gancho por sí sola: solo se le aplica
+    # la lente paradójica o se deja pura (un "fan car en Mónaco" no pega).
+    if cat == "Banned tech":
+        if d < 0.35:
+            return cat, random.choice(_PARADOJAS).format(b=nucleo), consulta
+        return cat, base, consulta
+    if d < 0.26:                                   # PARADOJA (la que gana)
+        return cat, random.choice(_PARADOJAS).format(b=nucleo), consulta
+    if d < 0.48:                                   # trazado
         t, tq = random.choice(_TRAZADOS)
         return cat, f"{base} — and why it matters most at {t}", tq
-    if d < 0.52:                                   # clima
+    if d < 0.62:                                   # clima
         c, cq = random.choice(_CLIMAS)
         return cat, f"{base} — and how it changes {c}", cq
-    if d < 0.68:                                   # filosofía de equipo
+    if d < 0.74:                                   # filosofía de equipo
         return (cat, f"{base} — and why rival teams disagree on how to do it",
                 consulta)
-    if d < 0.80:                                   # comparación/mito
+    if d < 0.86:                                   # comparación/mito
         return cat, f"the biggest myth fans believe about {base}", consulta
     return cat, base, consulta                     # concepto puro
 
@@ -4916,9 +4972,11 @@ def _texto_overlay_short(short):
 # persistente por serie.
 _SERIE_POR_CAT = {
     "en": {"Aero": "AERODYNAMICS", "Engine": "F1 ENGINES", "Tyres": "TYRES",
-           "Strategy": "STRATEGY", "Tech history": "TECH HISTORY"},
+           "Strategy": "STRATEGY", "Tech history": "TECH HISTORY",
+           "Banned tech": "BANNED TECH"},
     "es": {"Aero": "AERODINÁMICA", "Engine": "MOTORES F1", "Tyres": "NEUMÁTICOS",
-           "Strategy": "ESTRATEGIA", "Tech history": "HISTORIA TÉCNICA"},
+           "Strategy": "ESTRATEGIA", "Tech history": "HISTORIA TÉCNICA",
+           "Banned tech": "TECNOLOGÍA PROHIBIDA"},
 }
 _SERIE_CONTADOR = "series_contador.json"
 
