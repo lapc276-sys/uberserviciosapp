@@ -10,6 +10,7 @@ import { services } from '@/lib/config/services';
 
 const nav = [
   { label: 'Services', href: '/services' },
+  { label: 'AI Quote', href: '/quote/video' },
   { label: 'Areas We Serve', href: '/areas' },
   { label: 'How it works', href: '/#how-it-works' },
   { label: 'Pricing', href: '/#pricing' },

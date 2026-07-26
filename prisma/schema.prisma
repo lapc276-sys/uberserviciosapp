@@ -152,6 +152,10 @@ model Booking {
   notes       String?
   createdAt   DateTime      @default(now())
 
+  /** Minutes the pro actually worked. Ground truth for calibrating the AI
+   *  time model — compare against VisionAnalysis.predictedMinutes. */
+  actualMinutes Int?
+
   // Automation lifecycle flags — guard against double-sends.
   remind24Sent      Boolean @default(false)
   remind2Sent       Boolean @default(false)
@@ -164,10 +168,11 @@ model Booking {
   addressId  String?
   pro        Pro?       @relation(fields: [proId], references: [id])
   proId      String?
-  invoice    Invoice?
-  review     Review?
-  photos     Photo[]
-  offers     JobOffer[]
+  invoice        Invoice?
+  review         Review?
+  photos         Photo[]
+  offers         JobOffer[]
+  visionAnalysis VisionAnalysis?
 
   @@index([status])
   @@index([createdAt])
@@ -204,6 +209,36 @@ model Review {
   rating     Int
   comment    String?
   createdAt  DateTime @default(now())
+}
+
+/**
+ * A completed AI walkthrough analysis.
+ *
+ * `predictedMinutes` vs. the linked booking's `actualMinutes` is the training
+ * signal for calibrating lib/vision/model.ts. Without capturing actuals the
+ * time model can never improve, so this relationship is the point of the table.
+ */
+model VisionAnalysis {
+  id               String   @id @default(cuid())
+  serviceSlug      String
+  city             String?
+  frameCount       Int
+  roomCount        Int
+  predictedMinutes Int
+  condition        String
+  confidence       Float
+  source           String // vision-llm | heuristic
+  quoteLow         Int
+  quoteHigh        Int
+  /** Full analysis payload (rooms, objects, soil scores) for auditing. */
+  payload          Json
+  contactEmail     String?
+  createdAt        DateTime @default(now())
+
+  booking   Booking? @relation(fields: [bookingId], references: [id])
+  bookingId String?  @unique
+
+  @@index([createdAt])
 }
 
 // Marketing opt-out list. Checked before any promotional send (CAN-SPAM).

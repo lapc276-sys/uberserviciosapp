@@ -51,7 +51,51 @@ classification.
 that city (lightest load that date first, then rating). First to accept claims
 it; the rest expire. Admins can re-offer or force-assign if a round goes unclaimed.
 
-## What's built (Phases 1–5 + marketplace — live & verified)
+## Vision AI — quote from a video walkthrough
+
+The differentiator: a customer records a 60-second walkthrough and gets a real
+price without an in-person estimate.
+
+```
+video → frames (in-browser) → vision model → rooms + objects + soil scores
+      → time model → crew size + supplies → priced quote → booking
+```
+
+**Design decisions worth knowing:**
+
+- **Frames are extracted in the browser** (`lib/vision/frames.ts`), so the video
+  never leaves the device, there's no ffmpeg in a serverless runtime, and the
+  upload is ~8 small JPEGs instead of hundreds of megabytes.
+- **The vision backend is swappable** (`VisionAnalyzer` in `lib/vision/types.ts`).
+  A hosted multimodal model runs today with no GPU infrastructure; a self-hosted
+  YOLO/SAM/Grounding DINO service can implement the same interface later and drop
+  in at `getAnalyzer()` without touching a single caller.
+- **The model never estimates time or price.** It reports what it sees (rooms,
+  objects, soil 0–100). Minutes and dollars are computed in code
+  (`lib/vision/model.ts`, `estimate.ts`, `pricing.ts`) so the arithmetic is
+  auditable and tunable.
+- **Confidence widens the price band.** A dark or blurry walkthrough produces a
+  wider range and a visible warning, rather than a confident wrong number.
+- **Without an API key the flow still works** in demo mode, labeled as such so it
+  is never mistaken for a real inspection.
+
+> ⚠️ **The time model is a hypothesis until calibrated.** No model knows a greasy
+> kitchen takes 52 minutes. `ROOM_BASE_MINUTES` and the soil weights are starting
+> estimates. Pros must record `actualMinutes` on completed jobs; `/admin/vision`
+> then reports bias, mean absolute error and hit rate so the constants can be
+> tuned per market. **Until that page shows real accuracy data, treat quotes as
+> provisional.**
+
+## What's built (Phases 1–5 + marketplace + vision — live & verified)
+
+**Vision AI** ✅
+- `/quote/video` — record or upload a walkthrough, in-browser frame sampling, live analysis
+- Per-room breakdown: soil scores across 7 dimensions, detected objects, condition, minutes
+- Crew sizing, supply list derived from findings, tax-aware pricing, pro payout vs. platform margin
+- `/admin/vision` — calibration dashboard (predicted vs. actual, bias, error, hit rate)
+- Ground-truth capture via `POST /api/admin/bookings/[ref]/actual`
+
+
 
 **Marketplace** ✅
 - `Pro` model with application → approval → active lifecycle, service areas, ratings

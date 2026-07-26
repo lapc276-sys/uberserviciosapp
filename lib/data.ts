@@ -38,6 +38,7 @@ export interface BookingRecord {
   followUpSent: boolean;
   proId: string | null;
   proName: string | null;
+  actualMinutes: number | null;
 }
 
 export type ProStatus = 'APPLIED' | 'APPROVED' | 'SUSPENDED';
@@ -115,6 +116,7 @@ const memory = {
   leads: [] as (LeadInput & { id: string; createdAt: string })[],
   invoices: [] as { ref: string; amount: number; status: string; stripeId?: string }[],
   optOuts: new Set<string>(),
+  visionAnalyses: [] as VisionAnalysisRecord[],
   // Seeded so dispatch works out of the box without a database.
   pros: [
     { id: 'pro_maria', name: 'Maria G.', email: 'maria@homigo.com', phone: '+15550101001', status: 'APPROVED', rating: 4.9, serviceAreas: ['manhattan-ny', 'brooklyn-ny'], yearsExperience: 6, hasTransport: true, bio: null },
@@ -157,6 +159,7 @@ export async function createBooking(input: NewBookingInput): Promise<BookingReco
     followUpSent: false,
     proId: null,
     proName: null,
+    actualMinutes: null,
   };
 
   if (!isDbConfigured || !prisma) {
@@ -597,6 +600,147 @@ export async function getAnalytics(): Promise<AnalyticsData> {
   };
 }
 
+// ── Vision analyses & calibration ────────────────────────────────────────────
+export interface VisionAnalysisRecord {
+  id: string;
+  serviceSlug: string;
+  city: string | null;
+  roomCount: number;
+  predictedMinutes: number;
+  actualMinutes: number | null;
+  condition: string;
+  confidence: number;
+  source: string;
+  quoteLow: number;
+  quoteHigh: number;
+  createdAt: string;
+}
+
+export async function saveVisionAnalysis(input: {
+  serviceSlug: string;
+  city?: string;
+  frameCount: number;
+  analysis: { rooms: unknown[]; totalMinutes: number; condition: string; confidence: number; source: string };
+  quote: { low: number; high: number };
+  contactEmail?: string;
+}): Promise<string> {
+  const id = `vis_${Date.now().toString(36)}`;
+  const record: VisionAnalysisRecord = {
+    id,
+    serviceSlug: input.serviceSlug,
+    city: input.city ?? null,
+    roomCount: input.analysis.rooms.length,
+    predictedMinutes: input.analysis.totalMinutes,
+    actualMinutes: null,
+    condition: input.analysis.condition,
+    confidence: input.analysis.confidence,
+    source: input.analysis.source,
+    quoteLow: input.quote.low,
+    quoteHigh: input.quote.high,
+    createdAt: new Date().toISOString(),
+  };
+
+  if (!isDbConfigured || !prisma) {
+    memory.visionAnalyses.unshift(record);
+    return id;
+  }
+
+  const row = await prisma.visionAnalysis.create({
+    data: {
+      serviceSlug: input.serviceSlug,
+      city: input.city,
+      frameCount: input.frameCount,
+      roomCount: input.analysis.rooms.length,
+      predictedMinutes: input.analysis.totalMinutes,
+      condition: input.analysis.condition,
+      confidence: input.analysis.confidence,
+      source: input.analysis.source,
+      quoteLow: input.quote.low,
+      quoteHigh: input.quote.high,
+      payload: input.analysis as any,
+      contactEmail: input.contactEmail,
+    },
+  });
+  return row.id;
+}
+
+/** Links an analysis to the booking it produced, so actuals can be compared. */
+export async function attachAnalysisToBooking(analysisId: string, ref: string): Promise<void> {
+  if (!isDbConfigured || !prisma) return;
+  const booking = await prisma.booking.findUnique({ where: { ref } });
+  if (!booking) return;
+  await prisma.visionAnalysis.update({ where: { id: analysisId }, data: { bookingId: booking.id } }).catch(() => {});
+}
+
+/** Ground truth captured when a pro finishes a job. */
+export async function recordActualMinutes(ref: string, minutes: number): Promise<void> {
+  if (!isDbConfigured || !prisma) {
+    const b = memory.bookings.find((x) => x.ref === ref);
+    if (b) b.actualMinutes = minutes;
+    return;
+  }
+  await prisma.booking.update({ where: { ref }, data: { actualMinutes: minutes } });
+}
+
+export interface CalibrationSummary {
+  analyses: number;
+  withActuals: number;
+  /** Mean signed error in minutes; positive means the model over-estimates. */
+  meanBiasMinutes: number;
+  meanAbsErrorMinutes: number;
+  /** Share of jobs where predicted was within 20% of actual. */
+  within20Pct: number;
+  recent: VisionAnalysisRecord[];
+}
+
+export async function getCalibration(): Promise<CalibrationSummary> {
+  let records: VisionAnalysisRecord[];
+
+  if (!isDbConfigured || !prisma) {
+    records = memory.visionAnalyses.slice(0, 200);
+  } else {
+    const rows = await prisma.visionAnalysis.findMany({
+      take: 200,
+      orderBy: { createdAt: 'desc' },
+      include: { booking: true },
+    });
+    records = rows.map((r) => ({
+      id: r.id,
+      serviceSlug: r.serviceSlug,
+      city: r.city,
+      roomCount: r.roomCount,
+      predictedMinutes: r.predictedMinutes,
+      actualMinutes: r.booking?.actualMinutes ?? null,
+      condition: r.condition,
+      confidence: r.confidence,
+      source: r.source,
+      quoteLow: r.quoteLow,
+      quoteHigh: r.quoteHigh,
+      createdAt: r.createdAt.toISOString(),
+    }));
+  }
+
+  const scored = records.filter((r) => r.actualMinutes && r.actualMinutes > 0);
+  const bias = scored.length
+    ? scored.reduce((s, r) => s + (r.predictedMinutes - r.actualMinutes!), 0) / scored.length
+    : 0;
+  const absError = scored.length
+    ? scored.reduce((s, r) => s + Math.abs(r.predictedMinutes - r.actualMinutes!), 0) / scored.length
+    : 0;
+  const close = scored.filter(
+    (r) => Math.abs(r.predictedMinutes - r.actualMinutes!) / r.actualMinutes! <= 0.2,
+  ).length;
+
+  return {
+    analyses: records.length,
+    withActuals: scored.length,
+    meanBiasMinutes: Math.round(bias),
+    meanAbsErrorMinutes: Math.round(absError),
+    within20Pct: scored.length ? Math.round((close / scored.length) * 100) : 0,
+    recent: records.slice(0, 25),
+  };
+}
+
 // ── Marketing opt-outs (CAN-SPAM) ────────────────────────────────────────────
 export async function isUnsubscribed(email: string): Promise<boolean> {
   const key = email.trim().toLowerCase();
@@ -696,6 +840,7 @@ function mapRow(b: any): BookingRecord {
     followUpSent: b.followUpSent,
     proId: b.proId ?? null,
     proName: b.pro?.name ?? null,
+    actualMinutes: b.actualMinutes ?? null,
   };
 }
 
