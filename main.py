@@ -2510,8 +2510,6 @@ Real laughter breaks into the sentence: "oh— hahaha no way,", "pfff—", \
 "hah! fair enough." It should read like it escaped, not like a line read.
 - They get annoyed at bad strategy ("Oh come on, why would they box him \
 NOW?"), they tease each other. Everyday colloquial language.
-- {ANALISTA} is proactive: she may interrupt mid-thought ("Wait — look at \
-the gap.").
 - Add insight, don't just describe: tyre strategy, likely undercuts, what \
 a move forces rivals to do.
 - They sometimes disagree, with arguments. Gentle tension is good.
@@ -2556,6 +2554,28 @@ excitement, questions for real questions.
 - Short sentences. Vary the rhythm: a quick burst, then a longer thought. \
 Interjections are welcome: "Oh!", "Wow,", "Right,", "Hang on...".
 - Never write a long unbroken sentence — the voice needs to breathe."""
+
+
+# Reglas EXCLUSIVAS del directo. El video-reseña usa SYSTEM_DUO a secas
+# porque ahí sí se busca un ida y vuelta parejo entre los dos.
+SYSTEM_DUO_VIVO = SYSTEM_DUO + f"""
+
+LIVE BROADCAST — WHO TALKS, AND HOW MUCH:
+- This is {NARRADOR}'s broadcast. Roughly THREE out of every FOUR lines are \
+his. Many segments are HIM ALONE. {ANALISTA} is not a co-host chatting \
+along: she drops in for ONE short, surgical point and hands it straight \
+back. She never speaks twice in the same segment, and most segments she \
+does not speak at all.
+- {NARRADOR} LIVES THE RACE. His job is the ON-TRACK action happening RIGHT \
+NOW: who is closing on whom and by how much, the move into the corner, who \
+is defending, who just set the fastest lap, who is dropping away, who is \
+about to be caught. He calls positions and battles as they happen instead \
+of musing about the sport in general. Prefer "he's got him — down the \
+inside into turn one!" over abstract commentary. When the data shows a gap \
+shrinking, he is ON it.
+- {ANALISTA} earns her line: she speaks only when there is something the \
+picture does NOT explain — a strategy read, a degradation trend, why a pit \
+call was made. One point, then out."""
 
 
 DUO_SCHEMA = {
@@ -2636,7 +2656,7 @@ async def narrar_apertura(client: anthropic.AsyncAnthropic):
             f"\nCHAMPIONSHIP RIGHT NOW (real, for a quick data-driven "
             f"'what's at stake' beat): {linea}.")
     response = await client.messages.create(
-        model=modelo_actual(), max_tokens=500, system=SYSTEM_DUO,
+        model=modelo_actual(), max_tokens=500, system=SYSTEM_DUO_VIVO,
         output_config={"format": {"type": "json_schema",
                                   "schema": DUO_SCHEMA}},
         messages=[{"role": "user", "content": (
@@ -2676,7 +2696,7 @@ async def narrar_cierre(client: anthropic.AsyncAnthropic):
         top3 = ", ".join(f"{f['pos']}. {f['nombre']}" for f in tabla)
         resultado = f"\nFINAL RESULT (real, quotable): {top3}."
     response = await client.messages.create(
-        model=modelo_actual(), max_tokens=400, system=SYSTEM_DUO,
+        model=modelo_actual(), max_tokens=400, system=SYSTEM_DUO_VIVO,
         output_config={"format": {"type": "json_schema",
                                   "schema": DUO_SCHEMA}},
         messages=[{"role": "user", "content": (
@@ -2811,7 +2831,7 @@ async def narrar_datos(client: anthropic.AsyncAnthropic, eventos):
     response = await client.messages.create(
         model=modelo_actual(),
         max_tokens=500,
-        system=SYSTEM_DUO,
+        system=SYSTEM_DUO_VIVO,
         output_config={"format": {"type": "json_schema",
                                   "schema": DUO_SCHEMA}},
         messages=[{
