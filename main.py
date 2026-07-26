@@ -1846,11 +1846,34 @@ function pintarMapa(d) {
     // proporcional a la velocidad (azul = lento, rojo = rápido).
     ctx.lineJoin = 'round'; ctx.lineCap = 'round';
     const pt = linea.map(([x, y]) => [px(x), py(y)]);
-    if (pt.length > 1 && (pt[0][0] !== pt[pt.length-1][0]
-                          || pt[0][1] !== pt[pt.length-1][1])) pt.push(pt[0]);
+    // Separación entre muestras consecutivas
+    const sep = [];
+    for (let i = 0; i < pt.length - 1; i++)
+      sep.push(Math.hypot(pt[i+1][0]-pt[i][0], pt[i+1][1]-pt[i][1]));
+    // SALTOS: si a un coche le faltan muestras (boxes, corte de señal) dos
+    // puntos consecutivos quedan lejísimos y se dibujaría una RECTA cruzando
+    // el circuito. Se parte la línea en tramos y esos saltos no se pintan.
+    const ordS = sep.slice().sort((a,b) => a-b);
+    const med = ordS[Math.floor(ordS.length/2)] || 1;
+    const LIM = Math.max(med * 6, 1e-6);
+    const tramos = [];
+    let cur = [pt[0]], curIdx = [];
+    for (let i = 1; i < pt.length; i++) {
+      if (sep[i-1] > LIM) { tramos.push([cur, curIdx]); cur = [pt[i]]; curIdx = []; }
+      else { cur.push(pt[i]); curIdx.push(i-1); }
+    }
+    tramos.push([cur, curIdx]);
+    // Cerrar el circuito SOLO si el final cae cerca del principio (si no, el
+    // cierre sería otra recta atravesando el mapa).
+    const ult = pt[pt.length-1];
+    if (pt.length > 2 && Math.hypot(ult[0]-pt[0][0], ult[1]-pt[0][1]) <= LIM
+        && tramos.length === 1) tramos[0][0].push(pt[0]);
     const trazar = () => {
       ctx.beginPath();
-      pt.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y));
+      for (const [tr] of tramos) {
+        if (tr.length < 2) continue;
+        tr.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y));
+      }
     };
     // 1) Glow rojo suave por debajo
     ctx.save();
@@ -1864,12 +1887,11 @@ function pintarMapa(d) {
     trazar();
     ctx.strokeStyle = 'rgba(18,21,29,.98)';
     ctx.lineWidth = grande ? 22 : 9; ctx.stroke();
-    // 3) Línea de color por velocidad (suavizada por ventana)
-    const sep = [];
-    for (let i = 0; i < pt.length - 1; i++)
-      sep.push(Math.hypot(pt[i+1][0]-pt[i][0], pt[i+1][1]-pt[i][1]));
-    const suave = sep.map((_, i) => {
-      const v = sep.slice(Math.max(0, i-2), i+3);
+    // 3) Línea de color por velocidad (suavizada por ventana). Los SALTOS se
+    // excluyen del cálculo: si no, falsearían la escala hacia arriba.
+    const sepOk = sep.map(v => v > LIM ? med : v);
+    const suave = sepOk.map((_, i) => {
+      const v = sepOk.slice(Math.max(0, i-2), i+3);
       return v.reduce((a,b) => a+b, 0) / v.length;
     });
     const ord = suave.slice().sort((a,b) => a-b);
@@ -1891,6 +1913,7 @@ function pintarMapa(d) {
     };
     ctx.lineWidth = grande ? 9 : 4;
     for (let i = 0; i < pt.length - 1; i++) {
+      if (sep[i] > LIM) continue;          // salto de datos: no se pinta
       ctx.beginPath();
       ctx.moveTo(pt[i][0], pt[i][1]); ctx.lineTo(pt[i+1][0], pt[i+1][1]);
       ctx.strokeStyle = colVel((suave[i] - lo) / rg);
@@ -4156,16 +4179,26 @@ def _trazado_png(puntos, salida, lado=620, grosor=26, por_velocidad=True):
         # Y invertida: en pantalla crece hacia abajo
         xy = [(ox + (x - mnx) * esc, lado - oy - (y - mny) * esc)
               for x, y in pts]
-        if xy[0] != xy[-1]:
-            xy.append(xy[0])
 
-        # Velocidad relativa por segmento (suavizada) → 0..1 por percentiles
+        # Separación entre muestras y detección de SALTOS (huecos de datos:
+        # boxes, cortes de señal). Un salto dibujado sería una recta cruzando
+        # el circuito, así que se parte la línea en tramos y no se pinta.
         d = [((xy[i + 1][0] - xy[i][0]) ** 2
               + (xy[i + 1][1] - xy[i][1]) ** 2) ** 0.5
              for i in range(len(xy) - 1)]
+        med = sorted(d)[len(d) // 2] or 1.0
+        lim = max(med * 6, 1e-6)
+        # Cerrar el circuito solo si el final cae cerca del principio
+        if d and ((xy[-1][0] - xy[0][0]) ** 2
+                  + (xy[-1][1] - xy[0][1]) ** 2) ** 0.5 <= lim:
+            xy.append(xy[0])
+            d.append(0.0)
+        # Los saltos se neutralizan para el color: si no, falsearían la escala
+        # de velocidad hacia arriba y todo lo demás saldría azul.
+        d_ok = [med if v > lim else v for v in d]
         suave = []
-        for i in range(len(d)):
-            v = d[max(0, i - 2):i + 3]
+        for i in range(len(d_ok)):
+            v = d_ok[max(0, i - 2):i + 3]
             suave.append(sum(v) / len(v))
         if por_velocidad:
             orden = sorted(suave)
@@ -4178,20 +4211,41 @@ def _trazado_png(puntos, salida, lado=620, grosor=26, por_velocidad=True):
             n = max(1, len(suave) - 1)
             norm = [0.25 + 0.75 * (i / n) for i in range(len(suave))]
 
+        # Tramos continuos: la línea se PARTE en cada salto de datos, para no
+        # dibujar rectas que crucen el circuito.
+        tramos = []
+        actual = [xy[0]]
+        for i in range(len(xy) - 1):
+            if d[i] > lim:
+                if len(actual) > 1:
+                    tramos.append(actual)
+                actual = [xy[i + 1]]
+            else:
+                actual.append(xy[i + 1])
+        if len(actual) > 1:
+            tramos.append(actual)
+        if not tramos:
+            return None
+
         capa = Image.new("RGBA", (lado, lado), (0, 0, 0, 0))
         cd = ImageDraw.Draw(capa)
         # 1) Glow
         glow = Image.new("RGBA", (lado, lado), (0, 0, 0, 0))
         gd = ImageDraw.Draw(glow)
-        gd.line(xy, fill=(255, 60, 20, 150), width=grosor + 16, joint="curve")
+        for tr in tramos:
+            gd.line(tr, fill=(255, 60, 20, 150), width=grosor + 16,
+                    joint="curve")
         glow = glow.filter(ImageFilter.GaussianBlur(16))
         capa = Image.alpha_composite(capa, glow)
         cd = ImageDraw.Draw(capa)
         # 2) Casing oscuro (la "pista")
-        cd.line(xy, fill=(16, 19, 27, 255), width=grosor, joint="curve")
-        # 3) Línea de color por velocidad
+        for tr in tramos:
+            cd.line(tr, fill=(16, 19, 27, 255), width=grosor, joint="curve")
+        # 3) Línea de color por velocidad (saltando los huecos)
         ancho = max(5, grosor // 2 - 1)
         for i in range(len(xy) - 1):
+            if d[i] > lim:
+                continue
             c = _color_velocidad(norm[i])
             cd.line([xy[i], xy[i + 1]], fill=c + (255,), width=ancho)
             cd.ellipse([xy[i + 1][0] - ancho / 2, xy[i + 1][1] - ancho / 2,
