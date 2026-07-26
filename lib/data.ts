@@ -98,6 +98,7 @@ const memory = {
   bookings: [] as BookingRecord[],
   leads: [] as (LeadInput & { id: string; createdAt: string })[],
   invoices: [] as { ref: string; amount: number; status: string; stripeId?: string }[],
+  optOuts: new Set<string>(),
   // Seeded so dispatch works out of the box without a database.
   employees: [
     { id: 'emp_maria', name: 'Maria G.', email: 'maria@homigo.com', phone: '+15550101001', rating: 4.9, active: true },
@@ -295,22 +296,20 @@ const KIND_FIELD: Record<ReminderKind, 'remind24Sent' | 'remind2Sent' | 'reviewR
   followup: 'followUpSent',
 };
 
-export async function bookingsDueFor(kind: ReminderKind, today: string, weekAgo: string, tomorrow: string): Promise<BookingRecord[]> {
+/**
+ * Bookings whose local date falls in [fromDate, toDate]. Callers then decide
+ * what's actually due using the market's timezone — never by comparing a
+ * stored date string against a UTC "today".
+ */
+export async function bookingsBetween(fromDate: string, toDate: string): Promise<BookingRecord[]> {
   if (!isDbConfigured || !prisma) {
-    return memory.bookings.filter((b) => matches(b, kind, today, weekAgo, tomorrow));
+    return memory.bookings.filter((b) => b.date >= fromDate && b.date <= toDate);
   }
-  const inc = { customer: true, address: true, employee: true } as const;
-  if (kind === '24h') {
-    return (await prisma.booking.findMany({ where: { status: 'SCHEDULED', date: tomorrow, remind24Sent: false }, include: inc })).map(mapRow);
-  }
-  if (kind === '2h') {
-    return (await prisma.booking.findMany({ where: { status: 'SCHEDULED', date: today, remind2Sent: false }, include: inc })).map(mapRow);
-  }
-  if (kind === 'review') {
-    return (await prisma.booking.findMany({ where: { date: { lt: today }, reviewRequestSent: false }, include: inc })).map(mapRow);
-  }
-  // followup: booking a week or more in the past, review already handled.
-  return (await prisma.booking.findMany({ where: { date: { lte: weekAgo }, followUpSent: false }, include: inc })).map(mapRow);
+  const rows = await prisma.booking.findMany({
+    where: { date: { gte: fromDate, lte: toDate } },
+    include: { customer: true, address: true, employee: true },
+  });
+  return rows.map(mapRow);
 }
 
 export async function markReminderSent(ref: string, kind: ReminderKind): Promise<void> {
@@ -321,13 +320,6 @@ export async function markReminderSent(ref: string, kind: ReminderKind): Promise
     return;
   }
   await prisma.booking.update({ where: { ref }, data: { [field]: true } });
-}
-
-function matches(b: BookingRecord, kind: ReminderKind, today: string, weekAgo: string, tomorrow: string): boolean {
-  if (kind === '24h') return b.status === 'SCHEDULED' && b.date === tomorrow && !b.remind24Sent;
-  if (kind === '2h') return b.status === 'SCHEDULED' && b.date === today && !b.remind2Sent;
-  if (kind === 'review') return b.date < today && !b.reviewRequestSent;
-  return b.date <= weekAgo && !b.followUpSent;
 }
 
 // ── Employees, dispatch & CRM (Phase 4) ──────────────────────────────────────
@@ -431,6 +423,23 @@ export async function getAnalytics(): Promise<AnalyticsData> {
     byCity: [...byCityMap.entries()].map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count),
     source: isDbConfigured ? 'db' : 'memory',
   };
+}
+
+// ── Marketing opt-outs (CAN-SPAM) ────────────────────────────────────────────
+export async function isUnsubscribed(email: string): Promise<boolean> {
+  const key = email.trim().toLowerCase();
+  if (!isDbConfigured || !prisma) return memory.optOuts.has(key);
+  const row = await prisma.optOut.findUnique({ where: { email: key } });
+  return Boolean(row);
+}
+
+export async function unsubscribe(email: string): Promise<void> {
+  const key = email.trim().toLowerCase();
+  if (!isDbConfigured || !prisma) {
+    memory.optOuts.add(key);
+    return;
+  }
+  await prisma.optOut.upsert({ where: { email: key }, update: {}, create: { email: key } });
 }
 
 export async function countLeads(): Promise<number> {

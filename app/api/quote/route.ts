@@ -10,6 +10,7 @@ const schema = z.object({
   bathrooms: z.coerce.number().min(0).max(10),
   sqft: z.coerce.number().min(0).max(20000).optional(),
   frequency: z.enum(['one_time', 'weekly', 'biweekly', 'monthly']).optional(),
+  city: z.string().max(120).optional(),
 });
 
 export async function POST(req: Request) {

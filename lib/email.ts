@@ -12,12 +12,31 @@ interface EmailInput {
   subject: string;
   html: string;
   replyTo?: string;
+  /**
+   * Marks promotional mail. Marketing sends honor the opt-out list (CAN-SPAM);
+   * transactional mail (confirmations, reminders) is always delivered.
+   */
+  marketing?: boolean;
 }
 
-export async function sendEmail({ to, subject, html, replyTo }: EmailInput): Promise<boolean> {
+/**
+ * `suppressed` = recipient opted out of marketing (never send).
+ * `skipped`    = no provider configured (dry-run).
+ */
+export type EmailOutcome = 'sent' | 'suppressed' | 'skipped' | 'failed';
+
+export async function sendEmail({ to, subject, html, replyTo, marketing }: EmailInput): Promise<EmailOutcome> {
+  if (marketing) {
+    const { isUnsubscribed } = await import('./data');
+    if (await isUnsubscribed(to)) {
+      if (process.env.NODE_ENV !== 'production') console.log(`[email] suppressed (opted out) → ${to}`);
+      return 'suppressed';
+    }
+  }
+
   if (!isEmailConfigured) {
     if (process.env.NODE_ENV !== 'production') console.log(`[email] (dry-run) → ${to}: ${subject}`);
-    return false;
+    return 'skipped';
   }
   try {
     const res = await fetch('https://api.resend.com/emails', {
@@ -36,26 +55,40 @@ export async function sendEmail({ to, subject, html, replyTo }: EmailInput): Pro
     });
     if (!res.ok) {
       console.error('[email] send failed', res.status, await res.text().catch(() => ''));
-      return false;
+      return 'failed';
     }
-    return true;
+    return 'sent';
   } catch (err) {
     console.error('[email] send error', err);
-    return false;
+    return 'failed';
   }
 }
 
 // ── Templates ────────────────────────────────────────────────────────────────
-function shell(inner: string): string {
+/**
+ * @param unsubscribeFor  Recipient address. Present only on promotional mail,
+ *   which CAN-SPAM requires to carry a physical postal address and a working
+ *   opt-out link. Transactional mail omits both.
+ */
+function shell(inner: string, unsubscribeFor?: string): string {
+  const { street, city, region, postalCode } = site.address;
+  const footer = unsubscribeFor
+    ? `<p style="text-align:center;color:#9ca3af;font-size:12px;margin-top:20px;line-height:1.6">
+         ${site.legalName}<br>${street}, ${city}, ${region} ${postalCode}<br>
+         <a href="${site.url}/unsubscribe?e=${encodeURIComponent(unsubscribeFor)}" style="color:#9ca3af">Unsubscribe</a>
+         · <a href="${site.url}" style="color:#9ca3af">${site.url.replace('https://', '')}</a>
+       </p>`
+    : `<p style="text-align:center;color:#9ca3af;font-size:12px;margin-top:20px">
+         ${site.legalName} · <a href="${site.url}" style="color:#9ca3af">${site.url.replace('https://', '')}</a> · ${site.phone}
+       </p>`;
+
   return `<div style="font-family:ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;max-width:520px;margin:0 auto;color:#0a0a0b">
     <div style="padding:24px 0;text-align:center">
       <span style="display:inline-block;background:#1b6ff5;color:#fff;width:36px;height:36px;line-height:36px;border-radius:9px;font-weight:700">H</span>
       <span style="font-weight:600;font-size:18px;margin-left:8px;vertical-align:middle">${site.name}</span>
     </div>
     <div style="border:1px solid #e5e7eb;border-radius:18px;padding:28px">${inner}</div>
-    <p style="text-align:center;color:#9ca3af;font-size:12px;margin-top:20px">
-      ${site.legalName} · <a href="${site.url}" style="color:#9ca3af">${site.url.replace('https://', '')}</a> · ${site.phone}
-    </p>
+    ${footer}
   </div>`;
 }
 
@@ -119,15 +152,18 @@ export function reviewRequestEmail(p: { name: string; serviceName: string }): { 
   };
 }
 
-export function winbackEmail(p: { name: string }): { subject: string; html: string } {
+export function winbackEmail(p: { name: string; email: string }): { subject: string; html: string } {
   return {
     subject: `We miss you, ${p.name.split(' ')[0]} — here's 15% off`,
-    html: shell(`
+    html: shell(
+      `
       <h1 style="font-size:20px;margin:0 0 8px">Ready for another spotless day? ✨</h1>
       <p style="color:#4b5563;margin:0 0 20px">It's been a little while. Come back and take <strong>15% off</strong> your next cleaning — our thanks for being a ${site.name} customer.</p>
       <a href="${site.url}/book" style="display:inline-block;background:#1b6ff5;color:#fff;text-decoration:none;padding:12px 22px;border-radius:999px;font-weight:600;font-size:14px">Book &amp; save 15%</a>
       <p style="color:#9ca3af;font-size:12px;margin-top:16px">Offer applied automatically at checkout for a limited time.</p>
-    `),
+    `,
+      p.email,
+    ),
   };
 }
 

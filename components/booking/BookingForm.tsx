@@ -42,8 +42,8 @@ export function BookingForm() {
   }, [params]);
 
   const quote = useMemo(
-    () => calculateQuote({ serviceSlug, bedrooms, bathrooms, sqft, frequency }),
-    [serviceSlug, bedrooms, bathrooms, sqft, frequency],
+    () => calculateQuote({ serviceSlug, bedrooms, bathrooms, sqft, frequency, city: contact.city }),
+    [serviceSlug, bedrooms, bathrooms, sqft, frequency, contact.city],
   );
 
   const service = services.find((s) => s.slug === serviceSlug)!;
@@ -137,6 +137,19 @@ export function BookingForm() {
         {step === 1 && (
           <div className="space-y-6">
             <h2 className="text-xl font-semibold">Tell us about your space</h2>
+            <div>
+              <label className="text-sm font-medium">Where is it?</label>
+              <select
+                value={contact.city}
+                onChange={(e) => setContact({ ...contact, city: e.target.value })}
+                className="mt-2 w-full rounded-xl border bg-white px-4 py-3 text-sm outline-none focus:border-brand-400 dark:bg-white/5"
+              >
+                {cities.map((c) => (
+                  <option key={c.slug}>{c.name}</option>
+                ))}
+              </select>
+              <p className="mt-1.5 text-xs text-slate-400">Determines availability and applicable sales tax.</p>
+            </div>
             <Stepper label="Bedrooms" value={bedrooms} setValue={setBedrooms} min={0} max={8} />
             <Stepper label="Bathrooms" value={bathrooms} setValue={setBathrooms} min={0} max={8} />
             <div>
@@ -196,14 +209,9 @@ export function BookingForm() {
               <Field label="Full name" value={contact.name} onChange={(v) => setContact({ ...contact, name: v })} />
               <Field label="Email" type="email" value={contact.email} onChange={(v) => setContact({ ...contact, email: v })} />
               <Field label="Phone" type="tel" value={contact.phone} onChange={(v) => setContact({ ...contact, phone: v })} />
-              <div>
-                <label className="text-sm font-medium">City</label>
-                <select value={contact.city} onChange={(e) => setContact({ ...contact, city: e.target.value })} className="mt-2 w-full rounded-xl border bg-white px-4 py-3 text-sm outline-none focus:border-brand-400 dark:bg-white/5">
-                  {cities.map((c) => <option key={c.slug}>{c.name}</option>)}
-                </select>
-              </div>
+              <Field label="Address" value={contact.address} onChange={(v) => setContact({ ...contact, address: v })} />
             </div>
-            <Field label="Address" value={contact.address} onChange={(v) => setContact({ ...contact, address: v })} />
+            <p className="text-xs text-slate-400">Service in {contact.city}. Change it in the previous step if that’s not right.</p>
             <div>
               <label className="text-sm font-medium">Notes (optional)</label>
               <textarea value={contact.notes} onChange={(e) => setContact({ ...contact, notes: e.target.value })} rows={3} className="mt-2 w-full rounded-xl border bg-white px-4 py-3 text-sm outline-none focus:border-brand-400 dark:bg-white/5" placeholder="Pets, entry instructions, focus areas…" />
@@ -246,8 +254,11 @@ export function BookingForm() {
       <aside className="h-fit rounded-3xl border bg-white p-6 shadow-soft lg:sticky lg:top-24 dark:bg-white/[0.03]">
         <p className="text-sm text-slate-500 dark:text-slate-400">Your instant quote</p>
         <p className="mt-1 text-3xl font-semibold">
-          {quote ? `${formatCurrency(quote.low)}–${formatCurrency(quote.high)}` : '—'}
+          {quote ? `${formatCurrency(quote.totalLow)}–${formatCurrency(quote.totalHigh)}` : '—'}
         </p>
+        {quote && quote.taxRate > 0 && (
+          <p className="mt-1 text-xs text-slate-400">Includes {(quote.taxRate * 100).toFixed(3).replace(/\.?0+$/, '')}% sales tax</p>
+        )}
         {quote && quote.frequencyDiscountPct > 0 && (
           <span className="mt-2 inline-block rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
             {quote.frequencyDiscountPct}% recurring discount applied
@@ -259,6 +270,13 @@ export function BookingForm() {
           <Row label="Bathrooms" value={String(bathrooms)} />
           <Row label="Size" value={`${sqft.toLocaleString()} sqft`} />
           <Row label="Est. time" value={quote?.estimatedHours ?? '—'} />
+          <Row label="City" value={contact.city} />
+          {quote && quote.taxRate > 0 && (
+            <>
+              <Row label="Subtotal" value={`${formatCurrency(quote.low)}–${formatCurrency(quote.high)}`} />
+              <Row label="Sales tax" value={`~${formatCurrency(quote.taxAmount)}`} />
+            </>
+          )}
           {date && <Row label="Date" value={date} />}
           {step >= 2 && <Row label="Time" value={time} />}
         </div>

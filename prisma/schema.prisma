@@ -156,6 +156,13 @@ model Review {
   createdAt  DateTime @default(now())
 }
 
+// Marketing opt-out list. Checked before any promotional send (CAN-SPAM).
+model OptOut {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  createdAt DateTime @default(now())
+}
+
 // Every quote/chat/contact intent is captured as a Lead for follow-up.
 model Lead {
   id        String   @id @default(cuid())
