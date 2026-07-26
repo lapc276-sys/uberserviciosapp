@@ -5520,6 +5520,7 @@ async def bucle_mapa():
         return
     tele_trazada = None
     ultimo_guardado = 0.0
+    prox_intento_trazado = 0.0   # no repreguntar el trazado cada 2 s
     while True:
         await asyncio.sleep(2)
         t = estado.tele
@@ -5534,8 +5535,11 @@ async def bucle_mapa():
         if time.time() - ultimo_guardado >= 10:
             ultimo_guardado = time.time()
             _guardar_pos_replay(t.sesion.get("session_key"), t.fecha_actual)
-        # Precargar el trazado COMPLETO del circuito una sola vez por sesión
-        if t is not tele_trazada:
+        # Precargar el trazado COMPLETO del circuito. Al principio de una
+        # sesión todavía no hay una vuelta rodada, así que se reintenta —
+        # pero cada 60 s, no cada 2 (si no, se martillea la API).
+        if t is not tele_trazada and time.time() >= prox_intento_trazado:
+            prox_intento_trazado = time.time() + 60
             try:
                 trazado = await t.trazado_circuito()
             except Exception:

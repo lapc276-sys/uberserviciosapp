@@ -17,6 +17,7 @@ darle contexto al narrador.
 import asyncio
 import datetime as dt
 import logging
+import math
 import os
 import random
 import time
@@ -389,11 +390,18 @@ class Telemetria:
             inicio = _fecha(self.sesion["date_start"])
         except Exception:
             return []
-        # Ventana AMPLIA bien dentro de la sesión (coches rodando varias
-        # vueltas, no en garaje). Se prueban varios pilotos: alguno pudo estar
-        # parado en esa ventana, así que no dependemos de uno solo.
-        desde = (inicio + dt.timedelta(minutes=15)).isoformat()
-        hasta = (inicio + dt.timedelta(minutes=23)).isoformat()
+        # Ventana de datos. ADAPTATIVA: se pide el tramo MÁS RECIENTE que ya
+        # ocurrió (los últimos ~10 min del replay), no una ventana fija en los
+        # minutos 15-23 de la sesión: al empezar la carrera esos datos aún no
+        # existen y el trazado nunca llegaba a dibujarse. Si el replay lleva
+        # poco recorrido, se cae a la ventana fija (llegará más adelante).
+        ahora_rep = getattr(self, "fecha_actual", None)
+        if ahora_rep and (ahora_rep - inicio) >= dt.timedelta(minutes=8):
+            desde = (ahora_rep - dt.timedelta(minutes=10)).isoformat()
+            hasta = ahora_rep.isoformat()
+        else:
+            desde = (inicio + dt.timedelta(minutes=15)).isoformat()
+            hasta = (inicio + dt.timedelta(minutes=23)).isoformat()
 
         def _limites(vals):
             v = sorted(vals)
@@ -401,6 +409,31 @@ class Telemetria:
             q1, q3 = v[n // 4], v[(3 * n) // 4]
             iqr = (q3 - q1) or 1
             return q1 - 3 * iqr, q3 + 3 * iqr
+
+        def _es_vuelta(pts):
+            """Descarta trazas DEGENERADAS: coches en parrilla, en el pit lane
+            o dando una recta producen puntos casi COLINEALES, y dibujarlos
+            deja el mapa como una raya. Se mide la dispersión perpendicular a
+            la dirección dominante (ejes principales), así funciona en
+            cualquier orientación — también en diagonal."""
+            n = len(pts)
+            if n < 20:
+                return False
+            mx = sum(p[0] for p in pts) / n
+            my = sum(p[1] for p in pts) / n
+            sxx = sum((p[0] - mx) ** 2 for p in pts) / n
+            syy = sum((p[1] - my) ** 2 for p in pts) / n
+            sxy = sum((p[0] - mx) * (p[1] - my) for p in pts) / n
+            # Autovalores de la matriz de covarianza 2x2
+            tr = sxx + syy
+            det = math.sqrt(max(0.0, (sxx - syy) ** 2 + 4 * sxy * sxy))
+            lmax, lmin = (tr + det) / 2, (tr - det) / 2
+            if lmax <= 0:
+                return False
+            # Relación entre el ancho del trazo y su largo. Un circuito real
+            # (incluso uno alargado como Monza) queda muy por encima de 0.12;
+            # una parrilla o un pit lane, muy por debajo.
+            return math.sqrt(max(0.0, lmin) / lmax) >= 0.12
 
         for num in list(self.pilotos)[:5]:
             try:
@@ -429,6 +462,10 @@ class Telemetria:
             puntos = [(x, y) for x, y in puntos
                       if xlo <= x <= xhi and ylo <= y <= yhi]
             if len(puntos) < 50:
+                continue
+            if not _es_vuelta(puntos):
+                log.info("Trazado: piloto %s dio una traza plana (¿parrilla o "
+                         "pit lane?) — se descarta", num)
                 continue
             paso = max(1, len(puntos) // 500)
             return [{"x": x, "y": y} for x, y in puntos[::paso]]
