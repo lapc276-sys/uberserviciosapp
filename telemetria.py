@@ -73,8 +73,8 @@ def _seg(valor):
         return ""
     m, s = divmod(float(valor), 60)
     if m >= 1:
-        return f"{int(m)} minuto{'s' if m >= 2 else ''} {s:.1f} segundos"
-    return f"{s:.1f} segundos"
+        return f"{int(m)} minute{'s' if m >= 2 else ''} {s:.1f} seconds"
+    return f"{s:.1f} seconds"
 
 
 def _pendiente(puntos):
@@ -322,7 +322,7 @@ class Telemetria:
         for d in drivers:
             self.pilotos[d["driver_number"]] = {
                 "nombre": d.get("full_name") or d.get("broadcast_name")
-                or f"el piloto número {d['driver_number']}",
+                or f"car number {d['driver_number']}",
                 "equipo": d.get("team_name") or "",
                 "acronimo": d.get("name_acronym")
                 or str(d["driver_number"]),
@@ -517,7 +517,7 @@ class Telemetria:
 
     def _nombre(self, numero):
         return self.pilotos.get(numero, {}).get(
-            "nombre", f"el piloto número {numero}")
+            "nombre", f"car number {numero}")
 
     def descripcion(self):
         s = self.sesion
@@ -527,13 +527,13 @@ class Telemetria:
     def resumen(self):
         """Contexto compacto para el narrador."""
         orden = sorted(self.posiciones.items(), key=lambda kv: kv[1])
-        top = ", ".join(f"{pos}º {self._nombre(n)}" for n, pos in orden[:6])
+        top = ", ".join(f"P{pos} {self._nombre(n)}" for n, pos in orden[:6])
         s = self.sesion
-        vueltas = (f"Vuelta {self.vuelta} de {self.total_vueltas}"
-                   if self.total_vueltas else f"Vuelta {self.vuelta}")
-        return (f"Gran Premio de {s.get('country_name', '?')} en "
+        vueltas = (f"Lap {self.vuelta} of {self.total_vueltas}"
+                   if self.total_vueltas else f"Lap {self.vuelta}")
+        return (f"{s.get('country_name', '?')} Grand Prix at "
                 f"{s.get('circuit_short_name', '?')}. {vueltas}. "
-                f"Posiciones: {top or 'aún sin datos'}.")
+                f"Order: {top or 'no data yet'}.")
 
     # ---------- replay ----------
 
@@ -574,12 +574,12 @@ class Telemetria:
                 if self.mejor_vuelta is None or dur < self.mejor_vuelta[0]:
                     self.mejor_vuelta = (dur, dato["driver_number"])
                     if self.vuelta > 2:  # evitar ruido de las primeras vueltas
-                        return (f"VUELTA RÁPIDA: {self._nombre(dato['driver_number'])} "
-                                f"marca la vuelta más rápida, {_seg(dur)}")
+                        return (f"FASTEST LAP: {self._nombre(dato['driver_number'])} "
+                                f"sets the fastest lap of the race, {_seg(dur)}")
             return None
         if tipo == "pit":
             dur = dato.get("pit_duration")
-            extra = f", parada de {_seg(dur)}" if dur else ""
+            extra = f", stop of {_seg(dur)}" if dur else ""
             self.ultimo_pit = {"vuelta": dato.get("lap_number", self.vuelta),
                                "nombre": self._nombre(dato["driver_number"])}
             vuelta_pit = dato.get("lap_number") or self.vuelta
@@ -587,8 +587,8 @@ class Telemetria:
                 dato["driver_number"], set()).add(vuelta_pit)
             self._pits.append({"numero": dato["driver_number"],
                                "vuelta": vuelta_pit})
-            return (f"BOXES: {self._nombre(dato['driver_number'])} entra a "
-                    f"boxes en la vuelta {dato.get('lap_number', '?')}{extra}")
+            return (f"PIT STOP: {self._nombre(dato['driver_number'])} boxes on "
+                    f"lap {dato.get('lap_number', '?')}{extra}")
         if tipo == "intervalo":
             n = dato["driver_number"]
             anterior = self.gaps.get(n)
@@ -679,27 +679,27 @@ class Telemetria:
                           if p == detras["pos"]), None)
             anterior = self.gaps_anteriores.get(numero) if numero else None
             tendencia = 0.0
-            razon_tendencia = "sin lectura anterior para medir tendencia"
+            razon_tendencia = "no previous reading to measure the trend"
             if isinstance(anterior, (int, float)) and anterior > 0:
                 cierre = (anterior - gap) / anterior  # >0 se acerca
                 tendencia = max(-30.0, min(30.0, cierre * 30.0))
                 if cierre > 0.02:
-                    razon_tendencia = (f"cerrando el hueco "
+                    razon_tendencia = (f"closing the gap "
                                       f"({anterior:.2f}s → {gap:.2f}s)")
                 elif cierre < -0.02:
-                    razon_tendencia = (f"el hueco se abre "
+                    razon_tendencia = (f"gap opening up "
                                       f"({anterior:.2f}s → {gap:.2f}s)")
                 else:
-                    razon_tendencia = f"hueco estable en {gap:.2f}s"
+                    razon_tendencia = f"gap steady at {gap:.2f}s"
             score = round(max(0.0, min(100.0, cercania + tendencia)))
             resultados.append({
                 "entre": f"{delante['acr']} vs {detras['acr']}",
                 "score": score,
                 "pos_delante": delante["pos"],
                 "pos_detras": detras["pos"],
-                "razon": f"gap de {gap:.2f}s ({round(cercania)} pts de "
-                        f"cercanía) — {razon_tendencia} "
-                        f"({round(tendencia):+d} pts de tendencia)",
+                "razon": f"{gap:.2f}s gap ({round(cercania)} pts for "
+                        f"closeness) — {razon_tendencia} "
+                        f"({round(tendencia):+d} pts trend)",
             })
         resultados.sort(key=lambda r: -r["score"])
         # A los duelos más calientes se les añade la lectura de estrategia
@@ -777,16 +777,16 @@ class Telemetria:
             return ""
         def parte(num, d):
             acr = self.pilotos.get(num, {}).get("acronimo", str(num))
-            return (f"{acr} {d['pendiente']:+.2f}s/v "
+            return (f"{acr} {d['pendiente']:+.2f}s/lap "
                     f"({d['compuesto'] or '?'}×{d['edad']}, "
-                    f"{d['muestras']} vueltas limpias)")
-        texto = f"Ritmo del stint: {parte(delante, dd)} · {parte(detras, dt_)}"
+                    f"{d['muestras']} clean laps)")
+        texto = f"Stint pace: {parte(delante, dd)} · {parte(detras, dt_)}"
         dif = dd["pendiente"] - dt_["pendiente"]
         if abs(dif) >= 0.05:
             quien = (self.pilotos.get(delante if dif > 0 else detras, {})
                      .get("acronimo", "?"))
-            texto += (f" — el neumático de {quien} cae "
-                      f"{abs(dif):.2f}s/v más rápido")
+            texto += (f" — {quien}'s tyres dropping off "
+                      f"{abs(dif):.2f}s/lap faster")
         return texto
 
     def estrategia_resumen(self):
