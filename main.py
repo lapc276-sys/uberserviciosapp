@@ -1840,16 +1840,65 @@ function pintarMapa(d) {
   const px = x => offX + (x - minX) * s, py = y => h - offY - (y - minY) * s;
   ctx.clearRect(0, 0, w, h);
   if (trazado.length) {
-    // Pista como cinta continua: trazo ancho oscuro + línea clara encima
+    // Pista con el estilo del canal: glow + cinta oscura + línea coloreada
+    // por VELOCIDAD relativa. Las muestras de posición vienen a intervalos
+    // regulares, así que la separación entre puntos consecutivos es
+    // proporcional a la velocidad (azul = lento, rojo = rápido).
     ctx.lineJoin = 'round'; ctx.lineCap = 'round';
-    ctx.beginPath();
-    linea.forEach(([x, y], i) =>
-      i ? ctx.lineTo(px(x), py(y)) : ctx.moveTo(px(x), py(y)));
-    ctx.closePath();
-    ctx.strokeStyle = 'rgba(70,80,100,.9)';
+    const pt = linea.map(([x, y]) => [px(x), py(y)]);
+    if (pt.length > 1 && (pt[0][0] !== pt[pt.length-1][0]
+                          || pt[0][1] !== pt[pt.length-1][1])) pt.push(pt[0]);
+    const trazar = () => {
+      ctx.beginPath();
+      pt.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y));
+    };
+    // 1) Glow rojo suave por debajo
+    ctx.save();
+    ctx.shadowColor = 'rgba(255,60,20,.85)';
+    ctx.shadowBlur = grande ? 26 : 10;
+    trazar();
+    ctx.strokeStyle = 'rgba(120,20,10,.55)';
+    ctx.lineWidth = grande ? 26 : 11; ctx.stroke();
+    ctx.restore();
+    // 2) Cinta oscura (el asfalto)
+    trazar();
+    ctx.strokeStyle = 'rgba(18,21,29,.98)';
     ctx.lineWidth = grande ? 22 : 9; ctx.stroke();
-    ctx.strokeStyle = 'rgba(230,235,245,.85)';
-    ctx.lineWidth = grande ? 3 : 1.5; ctx.stroke();
+    // 3) Línea de color por velocidad (suavizada por ventana)
+    const sep = [];
+    for (let i = 0; i < pt.length - 1; i++)
+      sep.push(Math.hypot(pt[i+1][0]-pt[i][0], pt[i+1][1]-pt[i][1]));
+    const suave = sep.map((_, i) => {
+      const v = sep.slice(Math.max(0, i-2), i+3);
+      return v.reduce((a,b) => a+b, 0) / v.length;
+    });
+    const ord = suave.slice().sort((a,b) => a-b);
+    const lo = ord[Math.floor(ord.length*0.08)] || 0;
+    const hi = ord[Math.floor(ord.length*0.92)] || 1;
+    const rg = (hi - lo) || 1;
+    const colVel = t => {
+      t = Math.max(0, Math.min(1, t));
+      const ps = [[0,[40,90,220]],[0.4,[0,200,210]],[0.72,[250,205,0]],
+                  [1,[235,30,15]]];
+      for (let i = 0; i < ps.length-1; i++) {
+        if (t <= ps[i+1][0]) {
+          const k = (t - ps[i][0]) / ((ps[i+1][0] - ps[i][0]) || 1);
+          const a = ps[i][1], b = ps[i+1][1];
+          return 'rgb(' + a.map((v,j) => Math.round(v + (b[j]-v)*k)).join(',') + ')';
+        }
+      }
+      return 'rgb(235,30,15)';
+    };
+    ctx.lineWidth = grande ? 9 : 4;
+    for (let i = 0; i < pt.length - 1; i++) {
+      ctx.beginPath();
+      ctx.moveTo(pt[i][0], pt[i][1]); ctx.lineTo(pt[i+1][0], pt[i+1][1]);
+      ctx.strokeStyle = colVel((suave[i] - lo) / rg);
+      ctx.stroke();
+    }
+    // 4) Marca de meta
+    ctx.beginPath(); ctx.arc(pt[0][0], pt[0][1], grande ? 7 : 3.5, 0, 7);
+    ctx.fillStyle = '#fff'; ctx.fill();
   } else {
     // Respaldo (aún sin trazado): puntitos acumulados
     ctx.fillStyle = 'rgba(210,220,240,.5)';
