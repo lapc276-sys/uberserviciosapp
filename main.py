@@ -4525,7 +4525,23 @@ async def poner_interludio():
     }
 
 
-SHORTS_HORARIOS = [6, 12, 18, 23]  # Horas UTC para generar shorts (4/día)
+# Horas UTC a las que se genera un short. En Shorts cada video es un billete
+# de lotería independiente (el algoritmo distribuye uno por uno), así que
+# subir la frecuencia sube las oportunidades. Ajustable con el Secret
+# SHORTS_HORAS, p. ej. "0,3,6,9,12,15,18,21" para 8 al día.
+# OJO: la cuota gratis de la API de YouTube permite ~6 subidas diarias; lo que
+# no entre se reintenta solo al día siguiente, no se pierde.
+def _horas_shorts():
+    crudo = os.environ.get("SHORTS_HORAS", "")
+    horas = []
+    for t in crudo.replace(";", ",").split(","):
+        t = t.strip()
+        if t.isdigit() and 0 <= int(t) <= 23:
+            horas.append(int(t))
+    return sorted(set(horas)) or [6, 12, 18, 23]
+
+
+SHORTS_HORARIOS = _horas_shorts()
 _shorts_reintento = [0.0]  # último reintento con la bandera sin-créditos
 DURACION_SHORT_MIN = 1  # Duración objetivo de un short (minutos)
 
