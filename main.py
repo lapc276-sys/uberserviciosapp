@@ -5544,6 +5544,7 @@ async def bucle_mapa():
                 trazado = await t.trazado_circuito()
             except Exception:
                 trazado = []
+            circuito = t.sesion.get("circuit_short_name") or ""
             if trazado:
                 estado.mapa_trazado = trazado
                 tele_trazada = t
@@ -5551,8 +5552,18 @@ async def bucle_mapa():
                          len(trazado))
                 # Guardarlo por circuito: sirve luego para dibujar el trazado
                 # REAL (a color) en las miniaturas, ya sin sesión en vivo.
-                _guardar_trazado_cache(
-                    t.sesion.get("circuit_short_name") or "", trazado)
+                _guardar_trazado_cache(circuito, trazado)
+            elif not estado.mapa_trazado:
+                # Todavía no hay vueltas rodadas en ESTA sesión (previa,
+                # parrilla). Si ya guardamos el trazado de este circuito en una
+                # sesión anterior (libres/clasificación), se usa ese: el mapa
+                # muestra la pista desde el primer momento en vez de una raya.
+                guardado = _cargar_trazado_cache(circuito)
+                if guardado:
+                    estado.mapa_trazado = guardado
+                    log.info("🗺️  Trazado de %s tomado del caché (%d puntos) "
+                             "— aún sin vuelta rodada en esta sesión",
+                             circuito, len(guardado))
         try:
             pos = await t.posiciones_pista()
         except Exception:
