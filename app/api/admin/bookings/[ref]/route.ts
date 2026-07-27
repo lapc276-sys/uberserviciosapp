@@ -28,8 +28,21 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ ref: s
   const parsed = schema.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) return NextResponse.json({ error: 'Invalid input' }, { status: 422 });
 
+  let payout: { paid: boolean; amount: number; reason?: string } | undefined;
+
   if (parsed.data.status) {
     await updateBookingStatus(ref, parsed.data.status);
+
+    // Completing a job is what triggers the pro's earnings. issuePayout is
+    // idempotent, so re-marking a job complete never pays twice.
+    if (parsed.data.status === 'COMPLETED') {
+      const booking = await getBookingByRef(ref);
+      if (booking) {
+        const { issuePayout } = await import('@/lib/payouts');
+        const result = await issuePayout(booking);
+        payout = { paid: result.paid, amount: result.amount, reason: result.reason };
+      }
+    }
   }
 
   if (parsed.data.action) {
@@ -54,5 +67,5 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ ref: s
     return NextResponse.json({ ok: true, offeredTo: result.offered.map((p) => p.name) });
   }
 
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ ok: true, payout });
 }

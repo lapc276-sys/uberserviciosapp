@@ -108,6 +108,7 @@ model Pro {
 
   bookings Booking[]
   offers   JobOffer[]
+  payouts  Payout[]
 
   @@index([status])
 }
@@ -173,6 +174,7 @@ model Booking {
   photos         Photo[]
   offers         JobOffer[]
   visionAnalysis VisionAnalysis?
+  payout         Payout?
 
   @@index([status])
   @@index([createdAt])
@@ -239,6 +241,43 @@ model VisionAnalysis {
   bookingId String?  @unique
 
   @@index([createdAt])
+}
+
+enum PayoutStatus {
+  PENDING
+  PAID
+  FAILED
+}
+
+/**
+ * A pro's earnings for one job. Created when the booking completes and
+ * reconciled against Stripe. Unique per booking so a job can only ever
+ * generate one payout, however many times completion is triggered.
+ */
+model Payout {
+  id              String       @id @default(cuid())
+  booking         Booking      @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  bookingId       String       @unique
+  pro             Pro          @relation(fields: [proId], references: [id])
+  proId           String
+  amount          Int          // cents
+  status          PayoutStatus @default(PENDING)
+  stripeTransferId String?
+  failureReason   String?
+  createdAt       DateTime     @default(now())
+  paidAt          DateTime?
+
+  @@index([status])
+  @@index([proId])
+}
+
+/** Spent magic-link tokens, so a sign-in link can only be used once. */
+model UsedToken {
+  jti       String   @id
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([expiresAt])
 }
 
 // Marketing opt-out list. Checked before any promotional send (CAN-SPAM).

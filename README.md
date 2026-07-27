@@ -97,6 +97,13 @@ video → frames (in-browser) → vision model → rooms + objects + soil scores
 
 
 
+**Pro accounts & payouts** ✅
+- Passwordless magic-link sign-in (`/pros/login`) — separate cookie and JWT audience from admin, so a token can never cross surfaces
+- Links are single-use (`UsedToken`) and expire in 15 minutes; the request endpoint never reveals whether an email belongs to a pro
+- `/pros` dashboard: open offers, schedule, earnings — `/pros/payouts` runs Stripe Connect Express onboarding so Stripe holds bank and tax details, not us
+- Payouts issue on job completion, once per booking (unique constraint + Stripe idempotency key derived from the ref)
+- Claiming a job is authorized server-side: a pro can only accept work actually offered to them (403 otherwise), and the address plus customer contact appear only after claiming
+
 **Marketplace** ✅
 - `Pro` model with application → approval → active lifecycle, service areas, ratings
 - Public `/pros/apply` — supply-side acquisition page with SEO + FAQ schema
@@ -115,9 +122,9 @@ video → frames (in-browser) → vision model → rooms + objects + soil scores
 
 
 **Phase 4 — Operations & lifecycle** ✅
-- **Dispatch engine** (`lib/dispatch.ts`): auto-assigns the best pro on booking — active only, load-balanced by date, tie-broken by rating — and SMS-notifies them
-- **Admin CRM**: `/admin/bookings` (assign pros + manage status), `/admin/customers` (with lifetime value), `/admin/employees` (roster + job counts)
-- **Protected admin API** (`/api/admin/bookings/[ref]`): status updates + auto-assign, gated by RBAC permission
+- **Dispatch engine** (`lib/dispatch.ts`) — since superseded by the marketplace offer/accept model above
+- **Admin CRM**: `/admin/bookings` (dispatch + manage status), `/admin/customers` (with lifetime value), `/admin/pros` (roster + approvals)
+- **Protected admin API** (`/api/admin/bookings/[ref]`): status updates, re-offer and force-assign, gated by RBAC permission
 - **One-week win-back** email (15% off) added to the cron lifecycle
 - **Dashboard** gains average customer LTV; Prisma gains `Photo` model + `followUpSent` flag
 - Verified: 3 bookings load-balanced 1-per-pro; status change via API 200; unauthenticated API 401
@@ -193,7 +200,7 @@ _Remaining polish: customer-facing auth/portal, DB migrations in CI, MDX/CMS blo
 
 ### Phase 3 — Payments & messaging automation ✅
 Stripe invoices + webhook reconciliation, Resend transactional email, Twilio SMS, and cron-driven 24h/2h reminders + review requests.
-_Remaining: recurring billing subscriptions, Google Calendar sync + employee dispatch (Phase 4)._
+_Remaining: recurring billing subscriptions, Google Calendar sync._
 
 ### Phase 4 — Ops & lifecycle automation ✅
 Dispatch/pro-matching engine, admin CRM (bookings, customers w/ LTV, team), protected admin API, one-week win-back automation.

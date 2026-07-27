@@ -1,8 +1,11 @@
 import type { Metadata } from 'next';
-import { notFound } from 'next/navigation';
-import { MapPin, Clock, Home, Bath } from 'lucide-react';
+import Link from 'next/link';
+import { notFound, redirect } from 'next/navigation';
+import { cookies } from 'next/headers';
+import { MapPin, Clock, Home, Bath, ArrowLeft } from 'lucide-react';
 import { buildMetadata } from '@/lib/seo';
-import { getBookingByRef, pendingOfferProIds, listPros } from '@/lib/data';
+import { PRO_SESSION_COOKIE, verifyProSession } from '@/lib/pro-auth';
+import { getBookingByRef, pendingOfferProIds } from '@/lib/data';
 import { formatCurrency } from '@/lib/utils';
 import { JobOfferActions } from '@/components/pros/JobOfferActions';
 
@@ -10,33 +13,46 @@ export const metadata: Metadata = buildMetadata({ title: 'Job offer | Homigo Pro
 export const dynamic = 'force-dynamic';
 
 /**
- * Pro-facing job offer. Shows what the pro needs to decide — pay, time,
- * neighborhood and scope — while withholding the exact street address until
- * the job is claimed.
+ * Pro-facing job view. Shows what the pro needs to decide — pay, time,
+ * neighborhood, scope — but withholds the street address and customer contact
+ * until they've claimed the job.
  */
 export default async function JobOfferPage({ params }: { params: Promise<{ ref: string }> }) {
+  const jar = await cookies();
+  const session = await verifyProSession(jar.get(PRO_SESSION_COOKIE)?.value);
+  if (!session) redirect(`/pros/login?next=/pros/jobs/${(await params).ref}`);
+
   const { ref } = await params;
   const booking = await getBookingByRef(ref);
   if (!booking) notFound();
 
-  const claimed = Boolean(booking.proId);
-  const [pendingIds, pros] = await Promise.all([pendingOfferProIds(ref), listPros('APPROVED')]);
-  const offered = pros.filter((p) => pendingIds.includes(p.id));
+  const pendingIds = await pendingOfferProIds(ref);
+  const isMine = booking.proId === session.proId;
+  const hasOffer = pendingIds.includes(session.proId);
+  const claimedByOther = Boolean(booking.proId) && !isMine;
 
-  // Pro take-home before platform fee — shown up front so there are no surprises.
+  // A pro with no relationship to this job sees nothing about it.
+  if (!isMine && !hasOffer && !claimedByOther) notFound();
+
   const payout = booking.quoteLow ? Math.round(booking.quoteLow * 0.75) : null;
 
   return (
     <section className="border-b">
-      <div className="container py-12 sm:py-16">
+      <div className="container py-10 sm:py-14">
         <div className="mx-auto max-w-lg">
-          <div className="rounded-3xl border bg-white p-7 shadow-lift dark:bg-ink-soft">
+          <Link href="/pros" className="inline-flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-900 dark:hover:text-white">
+            <ArrowLeft className="h-4 w-4" /> My jobs
+          </Link>
+
+          <div className="mt-6 rounded-3xl border bg-white p-7 shadow-lift dark:bg-ink-soft">
             <div className="flex items-start justify-between gap-4">
               <div>
-                <p className="text-xs uppercase tracking-wide text-slate-400">Job offer · {booking.ref}</p>
+                <p className="text-xs uppercase tracking-wide text-slate-400">
+                  {isMine ? 'Your job' : 'Job offer'} · {booking.ref}
+                </p>
                 <h1 className="mt-1 text-2xl font-semibold tracking-tight">{booking.serviceName}</h1>
               </div>
-              {claimed && (
+              {claimedByOther && (
                 <span className="shrink-0 rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600 dark:bg-white/5 dark:text-slate-300">
                   Claimed
                 </span>
@@ -50,19 +66,22 @@ export default async function JobOfferPage({ params }: { params: Promise<{ ref: 
                   {formatCurrency(payout)}
                 </p>
                 <p className="mt-1 text-xs text-brand-700/80 dark:text-brand-300/80">
-                  Paid after the job is completed and confirmed.
+                  Paid to your account after the job is completed.
                 </p>
               </div>
             )}
 
             <div className="mt-6 space-y-3 text-sm">
               <Row icon={<Clock className="h-4 w-4" />} label="When" value={`${booking.date} · ${booking.time}`} />
-              <Row icon={<MapPin className="h-4 w-4" />} label="Where" value={booking.city} />
+              <Row
+                icon={<MapPin className="h-4 w-4" />}
+                label="Where"
+                value={isMine ? `${booking.address}, ${booking.city}` : booking.city}
+              />
               <Row icon={<Home className="h-4 w-4" />} label="Bedrooms" value={String(booking.bedrooms)} />
               <Row icon={<Bath className="h-4 w-4" />} label="Bathrooms" value={String(booking.bathrooms)} />
-              {booking.sqft > 0 && (
-                <Row icon={<Home className="h-4 w-4" />} label="Size" value={`${booking.sqft.toLocaleString()} sqft`} />
-              )}
+              {booking.sqft > 0 && <Row label="Size" value={`${booking.sqft.toLocaleString()} sqft`} />}
+              {isMine && <Row label="Customer" value={`${booking.customerName} · ${booking.customerPhone}`} />}
             </div>
 
             {booking.notes && (
@@ -72,41 +91,45 @@ export default async function JobOfferPage({ params }: { params: Promise<{ ref: 
               </div>
             )}
 
-            <p className="mt-5 text-xs text-slate-400">
-              The full address and customer contact are shared as soon as you accept.
-            </p>
+            {!isMine && !claimedByOther && (
+              <p className="mt-5 text-xs text-slate-400">
+                The exact address and customer contact are shared as soon as you accept.
+              </p>
+            )}
 
             <div className="mt-6">
-              {claimed ? (
-                <p className="rounded-xl bg-slate-50 px-4 py-3 text-center text-sm text-slate-500 dark:bg-white/5 dark:text-slate-400">
-                  This job has already been accepted by another pro.
+              {isMine ? (
+                <p className="rounded-xl bg-emerald-50 px-4 py-3 text-center text-sm text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300">
+                  This job is yours. See you there!
                 </p>
-              ) : offered.length === 0 ? (
+              ) : claimedByOther ? (
                 <p className="rounded-xl bg-slate-50 px-4 py-3 text-center text-sm text-slate-500 dark:bg-white/5 dark:text-slate-400">
-                  This offer is no longer open.
+                  Another pro accepted this one first.
                 </p>
               ) : (
-                <JobOfferActions refId={booking.ref} pros={offered.map((p) => ({ id: p.id, name: p.name }))} />
+                <JobOfferActions refId={booking.ref} />
               )}
             </div>
           </div>
 
-          <p className="mt-5 text-center text-xs text-slate-400">
-            Accepting is optional — declining never affects future offers.
-          </p>
+          {!isMine && !claimedByOther && (
+            <p className="mt-5 text-center text-xs text-slate-400">
+              Accepting is optional — passing never affects future offers.
+            </p>
+          )}
         </div>
       </div>
     </section>
   );
 }
 
-function Row({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
+function Row({ icon, label, value }: { icon?: React.ReactNode; label: string; value: string }) {
   return (
-    <div className="flex items-center justify-between border-b border-dashed pb-2.5">
-      <span className="inline-flex items-center gap-2 text-slate-500 dark:text-slate-400">
+    <div className="flex items-center justify-between gap-4 border-b border-dashed pb-2.5">
+      <span className="inline-flex shrink-0 items-center gap-2 text-slate-500 dark:text-slate-400">
         {icon} {label}
       </span>
-      <span className="font-medium">{value}</span>
+      <span className="text-right font-medium">{value}</span>
     </div>
   );
 }

@@ -117,6 +117,7 @@ const memory = {
   invoices: [] as { ref: string; amount: number; status: string; stripeId?: string }[],
   optOuts: new Set<string>(),
   visionAnalyses: [] as VisionAnalysisRecord[],
+  usedTokens: new Set<string>(),
   // Seeded so dispatch works out of the box without a database.
   pros: [
     { id: 'pro_maria', name: 'Maria G.', email: 'maria@homigo.com', phone: '+15550101001', status: 'APPROVED', rating: 4.9, serviceAreas: ['manhattan-ny', 'brooklyn-ny'], yearsExperience: 6, hasTransport: true, bio: null },
@@ -416,6 +417,42 @@ export async function createProApplication(input: ProApplicationInput): Promise<
   return { ok: true };
 }
 
+export async function getProByEmail(email: string): Promise<ProRecord | null> {
+  const key = email.trim().toLowerCase();
+  if (!isDbConfigured || !prisma) {
+    return memory.pros.find((p) => p.email === key) ?? null;
+  }
+  const row = await prisma.pro.findUnique({ where: { email: key } });
+  return row ? toProRecord(row) : null;
+}
+
+export async function getProById(id: string): Promise<ProRecord | null> {
+  if (!isDbConfigured || !prisma) {
+    return memory.pros.find((p) => p.id === id) ?? null;
+  }
+  const row = await prisma.pro.findUnique({ where: { id } });
+  return row ? toProRecord(row) : null;
+}
+
+/**
+ * Marks a magic-link token as spent. Returns false if it was already used,
+ * making sign-in links genuinely single-use — a link sitting in an inbox or
+ * SMS history can't be replayed.
+ */
+export async function consumeMagicToken(jti: string, expiresAt: Date): Promise<boolean> {
+  if (!isDbConfigured || !prisma) {
+    if (memory.usedTokens.has(jti)) return false;
+    memory.usedTokens.add(jti);
+    return true;
+  }
+  try {
+    await prisma.usedToken.create({ data: { jti, expiresAt } });
+    return true;
+  } catch {
+    return false; // unique constraint → already consumed
+  }
+}
+
 export async function setProStatus(id: string, status: ProStatus): Promise<void> {
   if (!isDbConfigured || !prisma) {
     const p = memory.pros.find((x) => x.id === id);
@@ -466,6 +503,11 @@ export async function acceptJobOffer(ref: string, proId: string): Promise<{ ok: 
     if (booking.proId) return { ok: false, reason: 'already_claimed' };
     const pro = memory.pros.find((p) => p.id === proId);
     if (!pro || pro.status !== 'APPROVED') return { ok: false, reason: 'not_eligible' };
+    // A pro may only claim work actually offered to them — otherwise anyone
+    // who guesses a booking ref could snipe jobs outside their service area
+    // and bypass the ranking entirely.
+    const offer = memory.offers.find((o) => o.bookingRef === ref && o.proId === proId && o.status === 'PENDING');
+    if (!offer) return { ok: false, reason: 'not_offered' };
     booking.proId = pro.id;
     booking.proName = pro.name;
     for (const o of memory.offers.filter((x) => x.bookingRef === ref)) {
@@ -480,6 +522,14 @@ export async function acceptJobOffer(ref: string, proId: string): Promise<{ ok: 
 
   const pro = await prisma.pro.findUnique({ where: { id: proId } });
   if (!pro || pro.status !== 'APPROVED') return { ok: false, reason: 'not_eligible' };
+
+  // A pro may only claim work actually offered to them — otherwise anyone who
+  // guesses a booking ref could snipe jobs outside their service area and
+  // bypass the ranking entirely.
+  const offer = await prisma.jobOffer.findUnique({
+    where: { bookingId_proId: { bookingId: booking.id, proId } },
+  });
+  if (!offer || offer.status !== 'PENDING') return { ok: false, reason: 'not_offered' };
 
   // Conditional update guards the race: only claims if still unassigned.
   const claimed = await prisma.booking.updateMany({
@@ -768,6 +818,35 @@ export async function getBookingByRef(ref: string): Promise<BookingRecord | null
     include: { customer: true, address: true, pro: true },
   });
   return row ? mapRow(row) : null;
+}
+
+/** Jobs a pro has claimed, newest first. */
+export async function bookingsForPro(proId: string, limit = 50): Promise<BookingRecord[]> {
+  if (!isDbConfigured || !prisma) {
+    return memory.bookings.filter((b) => b.proId === proId).slice(0, limit);
+  }
+  const rows = await prisma.booking.findMany({
+    where: { proId },
+    take: limit,
+    orderBy: { date: 'desc' },
+    include: { customer: true, address: true, pro: true },
+  });
+  return rows.map(mapRow);
+}
+
+/** Open offers waiting on a pro's response. */
+export async function openOffersForPro(proId: string): Promise<BookingRecord[]> {
+  if (!isDbConfigured || !prisma) {
+    const refs = memory.offers.filter((o) => o.proId === proId && o.status === 'PENDING').map((o) => o.bookingRef);
+    return memory.bookings.filter((b) => refs.includes(b.ref) && !b.proId);
+  }
+  const offers = await prisma.jobOffer.findMany({
+    where: { proId, status: 'PENDING' },
+    include: {
+      booking: { include: { customer: true, address: true, pro: true } },
+    },
+  });
+  return offers.filter((o) => !o.booking.proId).map((o) => mapRow(o.booking));
 }
 
 /** Pros currently holding a pending offer for a booking. */

@@ -5,15 +5,11 @@ import { useRouter } from 'next/navigation';
 import { Check, X, Loader2, PartyPopper } from 'lucide-react';
 
 /**
- * Accept / decline controls for a job offer.
- *
- * The pro picker is an interim stand-in for real pro authentication — the SMS
- * link identifies the job, not the pro. Replace with a magic-link session
- * before launch (tracked as the pro-auth milestone).
+ * Accept / decline controls for a job offer. The pro is identified by their
+ * session cookie server-side — the link itself confers no authority.
  */
-export function JobOfferActions({ refId, pros }: { refId: string; pros: { id: string; name: string }[] }) {
+export function JobOfferActions({ refId }: { refId: string }) {
   const router = useRouter();
-  const [proId, setProId] = useState(pros[0]?.id ?? '');
   const [busy, setBusy] = useState<'accept' | 'decline' | null>(null);
   const [error, setError] = useState('');
   const [accepted, setAccepted] = useState(false);
@@ -26,7 +22,7 @@ export function JobOfferActions({ refId, pros }: { refId: string; pros: { id: st
       const res = await fetch(`/api/pros/jobs/${refId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ proId, action }),
+        body: JSON.stringify({ action }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -50,7 +46,7 @@ export function JobOfferActions({ refId, pros }: { refId: string; pros: { id: st
         <PartyPopper className="mx-auto h-6 w-6 text-emerald-600" />
         <p className="mt-2 font-semibold text-emerald-900 dark:text-emerald-200">The job is yours</p>
         <p className="mt-1 text-sm text-emerald-800/80 dark:text-emerald-300/80">
-          We just texted you the full address and customer details.
+          The full address and customer details are now on your job list.
         </p>
       </div>
     );
@@ -66,23 +62,11 @@ export function JobOfferActions({ refId, pros }: { refId: string; pros: { id: st
 
   return (
     <div>
-      {pros.length > 1 && (
-        <div className="mb-4">
-          <label className="text-sm font-medium">Who’s responding?</label>
-          <select
-            value={proId}
-            onChange={(e) => setProId(e.target.value)}
-            className="mt-2 w-full rounded-xl border bg-white px-4 py-3 text-sm outline-none focus:border-brand-400 dark:bg-white/5"
-          >
-            {pros.map((p) => (
-              <option key={p.id} value={p.id}>{p.name}</option>
-            ))}
-          </select>
-        </div>
+      {error && (
+        <p className="mb-3 rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-700 dark:bg-amber-950/30 dark:text-amber-300">
+          {error}
+        </p>
       )}
-
-      {error && <p className="mb-3 rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-700 dark:bg-amber-950/30 dark:text-amber-300">{error}</p>}
-
       <div className="flex gap-3">
         <button
           onClick={() => respond('accept')}

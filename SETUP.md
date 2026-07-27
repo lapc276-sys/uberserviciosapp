@@ -73,6 +73,19 @@ Cada pieza se activa sola al pegar su variable de entorno en Vercel — no hay q
 
 ✅ **Resultado:** cada reserva genera una **factura de Stripe** automática; al pagarse se marca PAID en tu panel.
 
+### 4b. Activar pagos a los pros (Stripe Connect)
+
+Para que la plataforma **le pague a los limpiadores** automáticamente:
+
+1. En Stripe: **Connect → Get started** → elige **Platform or marketplace**.
+2. Completa el perfil de la plataforma (nombre, sitio web, descripción del negocio).
+3. Activa el tipo de cuenta **Express** — Stripe se encarga de verificar identidad, datos bancarios y de emitir los **1099** de tus pros, que es justo lo que no quieres manejar tú.
+4. No hace falta ninguna variable extra: usa la misma `STRIPE_SECRET_KEY`.
+
+Después, cada pro entra a `tudominio.com/pros/payouts` y completa su registro en ~3 minutos. Cuando marcas un trabajo como **COMPLETED**, el pago se transfiere solo.
+
+> Si Connect no está activo, la plataforma sigue funcionando: las ganancias quedan registradas como *pendientes* y el pro ve un aviso claro de que falta configurar sus datos bancarios.
+
 > 💰 Con los pasos 1–4 el negocio ya **recibe reservas y cobra**. Lo que sigue es crecimiento.
 
 ---
