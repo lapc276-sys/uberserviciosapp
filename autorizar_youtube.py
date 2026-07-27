@@ -26,10 +26,12 @@ import os
 import sys
 
 # upload = subir videos y fijar miniaturas; readonly = listar los videos ya
-# subidos para re-generarles la miniatura. Si ya te habías autorizado antes
-# solo con upload, vuelve a correr este script para conceder también lectura.
+# subidos para re-generarles la miniatura; force-ssl = leer y responder los
+# comentarios del canal. Si ya te habías autorizado antes con menos permisos,
+# vuelve a correr este script para concederlos todos y actualiza el Secret.
 SCOPES = ["https://www.googleapis.com/auth/youtube.upload",
-          "https://www.googleapis.com/auth/youtube.readonly"]
+          "https://www.googleapis.com/auth/youtube.readonly",
+          "https://www.googleapis.com/auth/youtube.force-ssl"]
 
 
 def main():

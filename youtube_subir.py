@@ -37,6 +37,10 @@ SCOPES_SUBIR = ["https://www.googleapis.com/auth/youtube.upload"]
 # la miniatura. Requiere re-autorizar (autorizar_youtube.py) una vez.
 SCOPES_LECTURA = ["https://www.googleapis.com/auth/youtube.upload",
                   "https://www.googleapis.com/auth/youtube.readonly"]
+# force-ssl hace falta para LEER y RESPONDER comentarios del propio canal.
+SCOPES_COMENTARIOS = ["https://www.googleapis.com/auth/youtube.upload",
+                      "https://www.googleapis.com/auth/youtube.readonly",
+                      "https://www.googleapis.com/auth/youtube.force-ssl"]
 # User-Agent conforme a la política de Wikimedia (identificable + contacto);
 # sin esto, upload.wikimedia.org responde 429 a IPs compartidas como Replit
 _UA = {"User-Agent":
@@ -1066,6 +1070,75 @@ def listar_mis_videos(max_n=50):
         log.warning("No se pudieron listar los videos (¿falta el permiso de "
                     "lectura? re-autoriza con autorizar_youtube.py) — %s", e)
         return None
+
+
+# ---------------------- comentarios del canal ----------------------
+
+def _comentarios_sync(max_n):
+    """Hilos de comentarios recientes del canal. Devuelve
+    [{'id','texto','autor','video_id','respuestas'}]. `respuestas` es cuántas
+    respuestas tiene ya el hilo (si es > 0, alguien —normalmente el dueño— ya
+    contestó y no hay que volver a hacerlo)."""
+    from googleapiclient.discovery import build
+    yt = build("youtube", "v3", credentials=_credenciales(SCOPES_COMENTARIOS),
+               cache_discovery=False)
+    ch = yt.channels().list(part="id", mine=True).execute()
+    items = ch.get("items", [])
+    if not items:
+        return []
+    canal = items[0]["id"]
+    r = yt.commentThreads().list(
+        part="snippet,replies", allThreadsRelatedToChannelId=canal,
+        maxResults=min(100, max_n), order="time",
+        textFormat="plainText").execute()
+    fuera = []
+    for it in r.get("items", []):
+        sn = it["snippet"]
+        top = sn["topLevelComment"]["snippet"]
+        # No contestarnos a nosotros mismos
+        if (top.get("authorChannelId") or {}).get("value") == canal:
+            continue
+        fuera.append({
+            "id": it["id"],
+            "texto": top.get("textOriginal") or top.get("textDisplay") or "",
+            "autor": top.get("authorDisplayName") or "",
+            "video_id": sn.get("videoId") or "",
+            "respuestas": int(sn.get("totalReplyCount") or 0),
+        })
+    return fuera
+
+
+def listar_comentarios(max_n=50):
+    """Envoltura segura: None si no se pudo (sin lanzar)."""
+    if not oauth_configurado():
+        return None
+    try:
+        return _comentarios_sync(max_n)
+    except Exception as e:
+        log.warning("No se pudieron leer los comentarios (¿falta el permiso "
+                    "force-ssl? re-autoriza con autorizar_youtube.py) — %s", e)
+        return None
+
+
+def _responder_sync(comentario_id, texto):
+    from googleapiclient.discovery import build
+    yt = build("youtube", "v3", credentials=_credenciales(SCOPES_COMENTARIOS),
+               cache_discovery=False)
+    yt.comments().insert(part="snippet", body={"snippet": {
+        "parentId": comentario_id, "textOriginal": texto}}).execute()
+
+
+async def responder_comentario(comentario_id, texto):
+    """Publica una respuesta a un comentario. True si se publicó. No lanza."""
+    if not (comentario_id and texto):
+        return False
+    try:
+        await asyncio.to_thread(_responder_sync, comentario_id, texto)
+        log.info("💬 Respondido el comentario %s", comentario_id)
+        return True
+    except Exception as e:
+        log.warning("No se pudo responder el comentario (%s)", e)
+        return False
 
 
 def _subir_sync(video_path, titulo, descripcion, tags, privacidad):
