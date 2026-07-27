@@ -4617,6 +4617,25 @@ _TEMAS_TECNICOS = [
      "formula 1 brake pedal cockpit"),
     ("Banned tech", "ground effect skirts: banned, then brought back",
      "formula 1 ground effect skirts"),
+    # Segunda tanda: los dos primeros shorts de esta serie (el fan car de
+    # Brabham y el repostaje) fueron los mejores arranques del canal, así que
+    # el pozo se amplía para que la serie aguante sin repetirse.
+    ("Banned tech", "the double diffuser that split the paddock in two",
+     "formula 1 diffuser 2009"),
+    ("Banned tech", "the J-damper: the 'secret' device that ended in court",
+     "formula 1 suspension detail"),
+    ("Banned tech", "beryllium engines: banned for being too good",
+     "formula 1 engine block"),
+    ("Banned tech", "why launch control was taken away from the drivers",
+     "formula 1 start line"),
+    ("Banned tech", "the second brake pedal that steered the car",
+     "formula 1 cockpit pedals"),
+    ("Banned tech", "why F1 banned tyre warmers — and the fight over it",
+     "formula 1 tyre blankets"),
+    ("Banned tech", "the wings that were mounted on stilts, then outlawed",
+     "formula 1 1968 high wings"),
+    ("Banned tech", "why in-race team orders were banned (and came back)",
+     "formula 1 pit wall team"),
     # ── ERAS DE MOTOR (lo pide la audiencia: V10 vs híbrido) ───────────
     ("Engine", "V10 versus today's hybrid: which is really faster, and why",
      "formula 1 v10 engine"),
@@ -4815,6 +4834,30 @@ def _tema_tecnico_siguiente():
     usados recientemente. El espacio combinatorio es enorme → prácticamente
     no repite en todo el año. Si hay una OLA de GP sembrada, ese tema manda."""
     prioritario = _tema_prioritario()
+    return _tema_tecnico_impl(prioritario)
+
+
+# Peso de la serie "Banned tech" en el sorteo. Los datos del canal la señalan
+# como la que más rinde (los dos mejores arranques salieron de ahí), pero se
+# deja por debajo de la mitad para no volver el canal monotemático ni agotar
+# el pozo. Ajustable con el Secret PESO_BANNED (0 = sin preferencia).
+try:
+    PESO_BANNED = max(0.0, min(0.8, float(os.environ.get("PESO_BANNED",
+                                                         "0.35"))))
+except ValueError:
+    PESO_BANNED = 0.35
+
+
+def _concepto_ponderado():
+    """Concepto base del sorteo, con preferencia por la serie que más rinde."""
+    prohibidos = [c for c in _TEMAS_TECNICOS if c[0] == "Banned tech"]
+    if prohibidos and random.random() < PESO_BANNED:
+        return random.choice(prohibidos)
+    resto = [c for c in _TEMAS_TECNICOS if c[0] != "Banned tech"]
+    return random.choice(resto or _TEMAS_TECNICOS)
+
+
+def _tema_tecnico_impl(prioritario):
     if prioritario:
         return prioritario
     usados = []
@@ -4823,12 +4866,12 @@ def _tema_tecnico_siguiente():
             usados = json.load(f)
     elegido = None
     for _ in range(10):
-        cand = _lente(random.choice(_TEMAS_TECNICOS))
+        cand = _lente(_concepto_ponderado())
         if cand[1] not in usados:
             elegido = cand
             break
     if elegido is None:                            # rarísimo: todo repetido
-        elegido = _lente(random.choice(_TEMAS_TECNICOS))
+        elegido = _lente(_concepto_ponderado())
     usados.append(elegido[1])
     with contextlib.suppress(Exception):
         with open(_SHORTS_TEMAS_USADOS, "w") as f:

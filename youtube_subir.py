@@ -653,7 +653,11 @@ def _aplicar_cta(video_in, texto, dur, w, h, fps):
                            "cta_overlay.png")
         if not _cta_overlay(w, h, png, texto):
             return False
-        desde = max(0.5, dur - 3.5)
+        # La píldora aparece a MITAD del short, no en los últimos segundos:
+        # la retención media ronda el 55-60%, así que un CTA pegado al final
+        # no lo ve casi nadie. Desde la mitad lo alcanza la mayoría, y sigue
+        # lo bastante tarde como para no estorbar el gancho de entrada.
+        desde = max(0.5, min(dur * 0.5, dur - 3.0))
         salida = video_in + ".cta.mp4"
         args = [_ffmpeg(), "-y", "-i", video_in,
                 "-loop", "1", "-framerate", str(fps), "-i", png,
