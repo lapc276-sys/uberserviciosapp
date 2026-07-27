@@ -123,7 +123,22 @@ Después, cada pro entra a `tudominio.com/pros/payouts` y completa su registro e
    - `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_PHONE_NUMBER` (formato `+1XXXXXXXXXX`)
 5. Redeploy.
 
-✅ **Resultado:** SMS de confirmación y recordatorios + notificación al empleado asignado.
+✅ **Resultado:** SMS de confirmación y recordatorios + notificación al pro asignado.
+
+### 7b. Activar el agente de voz IA
+
+Para que la IA **conteste el teléfono**:
+
+1. En Twilio: **Phone Numbers → Manage → Active numbers** → clic en tu número.
+2. En **Voice & Fax → A call comes in**: elige **Webhook**, pega `https://TU-URL/api/voice/incoming`, método **HTTP POST**.
+3. En **Call status changes**: pega `https://TU-URL/api/voice/status`, método **HTTP POST**.
+4. **Save.**
+
+Opcional en Vercel:
+- `VOICE_TRANSFER_NUMBER` = tu celular, para cuando el cliente pida hablar con una persona.
+- `TWILIO_VOICE` = otra voz de la lista de Twilio (por defecto `Polly.Joanna-Neural`).
+
+✅ **Resultado:** llama a tu número y la IA contesta, califica, cotiza con tus precios reales y te manda por SMS el link para reservar.
 
 > ⚠️ Para volumen en EE. UU. te pedirán registro **A2P 10DLC** (Twilio te guía; tarda unos días). Empieza igual — los primeros SMS salen.
 

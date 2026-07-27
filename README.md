@@ -97,6 +97,21 @@ video → frames (in-browser) → vision model → rooms + objects + soil scores
 
 
 
+**Voice AI agent** ✅
+- Answers calls on your Twilio number and runs the conversation: qualify → quote → text a booking link → transfer to a human on request
+- Runs on the **same assistant brain** as web chat and WhatsApp, so a phone quote matches the website to the dollar (verified: $308–$393 on both channels)
+- Prices come from `calculateQuote`, never from the model — a caller can't be told an invented number
+- Speech is rewritten for synthesis (`speakable()`): amounts are spoken as dollars, URLs are texted rather than read aloud
+- Twilio request signatures are verified (403 without a valid one), so learning the webhook URL doesn't let anyone drive your phone agent
+- Unintelligible turns retry twice then exit gracefully with an SMS link; every call is captured as a lead, including hang-ups before quoting
+
+> **On "completely natural":** this uses Twilio speech recognition plus a neural
+> TTS voice — it is a turn-based agent, so there's a beat between the caller
+> finishing and the reply. True interruptible, real-time conversation needs a
+> streaming voice model over a persistent WebSocket, which doesn't fit
+> serverless. The turn-based agent handles the qualify-and-quote job well; treat
+> streaming as a later upgrade, not a missing feature.
+
 **Pro accounts & payouts** ✅
 - Passwordless magic-link sign-in (`/pros/login`) — separate cookie and JWT audience from admin, so a token can never cross surfaces
 - Links are single-use (`UsedToken`) and expire in 15 minutes; the request endpoint never reveals whether an email belongs to a pro
