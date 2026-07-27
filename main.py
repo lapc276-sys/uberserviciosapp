@@ -3252,7 +3252,13 @@ _FOTO_MALA = ("simulator", "sim rig", "office", "computer", "keyboard",
               # sobre otra" en el video — fuera.
               "collage", "montage", "mosaic", "composite", "poster",
               "scanned", "magazine", "newspaper", "infographic",
-              "screen shot", "banner", "wallpaper")
+              "screen shot", "banner", "wallpaper",
+              # Stock de oficina: Pexels tiene poco material real de F1, así
+              # que ante una consulta técnica ("power unit", "engine detail")
+              # devuelve gente en escritorios y tecnología genérica.
+              "desk", "meeting", "business", "workspace", "coworking",
+              "startup", "server", "monitor", "typing", "notebook",
+              "whiteboard", "boardroom", "colleagues", "workshop table")
 
 
 def _foto_sospechosa(url):
@@ -3438,8 +3444,15 @@ async def _jpeg_para_vision(src):
 
 
 async def _foto_aprobada_vision(client, src, tema):
-    """True si la foto pasa la mirada del editor (o si no se puede validar
-    — degradación al filtro de texto). Veredicto cacheado por URL/ruta."""
+    """Veredicto del editor con visión. TRI-ESTADO:
+        True  → aprobada
+        False → rechazada
+        None  → NO se pudo verificar (no se pudo bajar la foto, error de API)
+
+    Antes, "no se pudo verificar" devolvía True y la foto entraba al video sin
+    revisar: por ahí se colaban las fotos de oficinas cuando Wikimedia daba
+    429 o la API fallaba. Ahora el llamador decide (usa las sin verificar solo
+    si se quedaría sin fotos)."""
     if not VALIDAR_FOTOS:
         return True
     veredictos = _cargar_veredictos()
@@ -3448,7 +3461,7 @@ async def _foto_aprobada_vision(client, src, tema):
         return bool(veredictos[clave])
     b64 = await _jpeg_para_vision(src)
     if not b64:
-        return True
+        return None
     try:
         r = await client.messages.create(
             model=MODELO_AHORRO, max_tokens=150, system=SYSTEM_VISION_FOTO,
@@ -3472,9 +3485,9 @@ async def _foto_aprobada_vision(client, src, tema):
         _guardar_veredictos()
         return apta
     except Exception as e:
-        log.info("Validación con visión no disponible (%s) — la foto pasa "
-                 "con el filtro de texto", e)
-        return True
+        log.info("Validación con visión no disponible (%s) — foto SIN "
+                 "verificar", e)
+        return None
 
 
 async def _filtrar_con_vision(candidatas, tema, n):
@@ -3486,15 +3499,26 @@ async def _filtrar_con_vision(candidatas, tema, n):
         return list(candidatas)[:n]
     client = anthropic.AsyncAnthropic()
     veredictos = _cargar_veredictos()
-    aprobadas = []
+    aprobadas, sin_verificar = [], []
     for src in candidatas:
         en_cache = str(src) in veredictos
-        if await _foto_aprobada_vision(client, src, tema):
+        veredicto = await _foto_aprobada_vision(client, src, tema)
+        if veredicto is True:
             aprobadas.append(src)
+        elif veredicto is None:
+            sin_verificar.append(src)     # no se pudo mirar: a la reserva
         if len(aprobadas) >= n:
             break
         if not en_cache:
             await asyncio.sleep(1.5)   # pacing: no ametrallar a Wikimedia
+    # Las que NO se pudieron verificar solo se usan si nos quedaríamos sin
+    # fotos: es preferible una genérica de carreras a un video vacío, pero
+    # nunca deben desplazar a las aprobadas (por ahí entraban las oficinas).
+    if len(aprobadas) < n and sin_verificar:
+        faltan = n - len(aprobadas)
+        log.info("👁️  %d foto(s) sin verificar usadas como relleno (visión no "
+                 "disponible)", min(faltan, len(sin_verificar)))
+        aprobadas += sin_verificar[:faltan]
     # Si la visión tumbó casi todo, completar con las restantes sin validar
     # es peor que quedarse corto: mejor pocas fotos buenas que collages.
     return aprobadas
