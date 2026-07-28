@@ -288,6 +288,48 @@ model Payout {
 }
 
 /**
+ * A labeled capture from a real job — the training asset.
+ *
+ * The valuable record is not the footage, it is the PAIR: what the model
+ * predicted and what the person standing in the room corrected it to, plus how
+ * long the work actually took. That pair is the only thing that improves the
+ * model, and it can't be bought or scraped.
+ *
+ * `consent*` is mandatory, not decorative: footage of someone's home without
+ * recorded permission is a liability, never an asset.
+ */
+model TrainingSample {
+  id           String @id @default(cuid())
+  capturedBy   String // pro id or admin email
+  serviceSlug  String
+  city         String?
+  propertyType String @default("residential")
+
+  // Consent record — who agreed, and when.
+  consentName String
+  consentAt   DateTime
+  /** Whether the customer agreed the footage may improve the model. */
+  consentTraining Boolean @default(false)
+
+  frameCount Int
+  /** The model's raw analysis. */
+  predicted  Json
+  /** The human-corrected analysis — the label. */
+  corrected  Json
+
+  predictedMinutes Int
+  actualMinutes    Int
+  /** Mean absolute soil-score correction across all rooms, 0-100. */
+  correctionMagnitude Float @default(0)
+
+  notes     String?
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([serviceSlug])
+}
+
+/**
  * Spent magic-link tokens, so a sign-in link can only be used once.
  */
 model UsedToken {

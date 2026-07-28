@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { buildMetadata } from '@/lib/seo';
 import { getCalibration } from '@/lib/data';
+import { getTrainingReport } from '@/lib/vision/training';
 import { formatDuration } from '@/lib/vision/estimate';
 import { formatCurrency } from '@/lib/utils';
 
@@ -13,7 +14,7 @@ export const dynamic = 'force-dynamic';
  * the AI is over- or under-estimating, and by how much.
  */
 export default async function VisionAdminPage() {
-  const c = await getCalibration();
+  const [c, training] = await Promise.all([getCalibration(), getTrainingReport()]);
 
   const biasLabel =
     c.withActuals === 0
@@ -59,6 +60,63 @@ export default async function VisionAdminPage() {
             <p className="mt-0.5 text-xs text-slate-400">{t.sub}</p>
           </div>
         ))}
+      </div>
+
+      {/* Field training samples — the only thing that improves the model */}
+      <div className="mt-8 rounded-2xl border bg-white shadow-soft dark:bg-white/[0.03]">
+        <div className="border-b p-5">
+          <h2 className="font-semibold">Field training</h2>
+          <p className="text-xs text-slate-400">
+            Captured at <a href="/pilot" className="text-brand-600 underline">/pilot</a> on real jobs. Each sample pairs
+            the model&apos;s guess with a human correction — that pair is what makes the engine better.
+          </p>
+        </div>
+
+        {training.samples === 0 ? (
+          <div className="p-10 text-center text-sm text-slate-400">
+            No labeled samples yet. Capture your next job at{' '}
+            <a href="/pilot" className="text-brand-600 underline">/pilot</a> to start the training set.
+          </div>
+        ) : (
+          <div className="p-5">
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <MiniTile label="Labeled samples" value={String(training.samples)} />
+              <MiniTile
+                label="Time bias"
+                value={training.timeBias > 0 ? `+${training.timeBias} min` : `${training.timeBias} min`}
+                sub={training.timeBias > 0 ? 'over-estimating' : training.timeBias < 0 ? 'under-estimating' : 'on target'}
+              />
+              <MiniTile label="Mean abs. error" value={`${training.timeMeanAbsError} min`} />
+              <MiniTile label="Avg. correction" value={`${training.avgCorrectionMagnitude} pts`} sub="how wrong per dimension" />
+            </div>
+
+            <h3 className="mt-8 text-sm font-semibold">Where the model is weakest</h3>
+            <p className="text-xs text-slate-400">
+              Sorted by how far off it is. Positive bias means it over-scores that dimension — fix the worst ones first.
+            </p>
+            <div className="mt-4 space-y-3">
+              {training.dimensions.filter((d) => d.samples > 0).map((d) => (
+                <div key={d.dimension}>
+                  <div className="mb-1 flex items-center justify-between text-sm">
+                    <span className="capitalize text-slate-600 dark:text-slate-300">{d.dimension}</span>
+                    <span className="text-slate-500 dark:text-slate-400">
+                      ±{d.meanAbsError}
+                      <span className={`ml-2 ${d.bias > 0 ? 'text-amber-600' : d.bias < 0 ? 'text-brand-600' : 'text-slate-400'}`}>
+                        ({d.bias > 0 ? '+' : ''}{d.bias} bias)
+                      </span>
+                    </span>
+                  </div>
+                  <div className="h-2 overflow-hidden rounded-full bg-slate-100 dark:bg-white/5">
+                    <div
+                      className="h-full rounded-full bg-brand-600 dark:bg-brand-500"
+                      style={{ width: `${Math.min(100, d.meanAbsError * 2)}%` }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="mt-8 rounded-2xl border bg-white shadow-soft dark:bg-white/[0.03]">
@@ -130,5 +188,15 @@ export default async function VisionAdminPage() {
         )}
       </div>
     </section>
+  );
+}
+
+function MiniTile({ label, value, sub }: { label: string; value: string; sub?: string }) {
+  return (
+    <div className="rounded-xl border bg-slate-50/50 p-4 dark:bg-white/[0.02]">
+      <p className="text-xs text-slate-500 dark:text-slate-400">{label}</p>
+      <p className="mt-1 text-xl font-semibold">{value}</p>
+      {sub && <p className="mt-0.5 text-xs text-slate-400">{sub}</p>}
+    </div>
   );
 }
