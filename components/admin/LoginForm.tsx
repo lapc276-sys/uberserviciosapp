@@ -29,7 +29,10 @@ export function LoginForm() {
         setError(data.error ?? 'Sign in failed');
         return;
       }
-      router.replace(next.startsWith('/admin') ? next : '/admin');
+      // Only follow same-origin internal paths, so `next` can't be used to
+      // bounce a freshly authenticated user to an attacker's site.
+      const safeNext = /^\/(admin|pilot)(\/|$|\?)/.test(next) ? next : '/admin';
+      router.replace(safeNext);
       router.refresh();
     } catch {
       setError('Network error. Please try again.');

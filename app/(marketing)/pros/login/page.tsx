@@ -21,10 +21,14 @@ const ERRORS: Record<string, string> = {
 export default async function ProLoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ error?: string }>;
+  searchParams: Promise<{ error?: string; next?: string }>;
 }) {
-  const { error } = await searchParams;
+  const { error, next } = await searchParams;
   const message = error ? ERRORS[error] ?? ERRORS.invalid : null;
+
+  // Staff reach pro-only tools (like /pilot) through the admin password login,
+  // not a magic link — they have no Pro record to send one to.
+  const adminHref = next ? `/admin/login?next=${encodeURIComponent(next)}` : '/admin/login';
 
   return (
     <section className="border-b">
@@ -45,6 +49,10 @@ export default async function ProLoginPage({
           <p className="mt-6 text-center text-sm text-slate-500 dark:text-slate-400">
             Not a Homigo Pro yet?{' '}
             <Link href="/pros/apply" className="text-brand-600 underline">Apply to join</Link>
+          </p>
+          <p className="mt-2 text-center text-sm text-slate-500 dark:text-slate-400">
+            Owner or staff?{' '}
+            <Link href={adminHref} className="text-brand-600 underline">Sign in with your password</Link>
           </p>
         </div>
       </div>
