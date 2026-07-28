@@ -5275,6 +5275,46 @@ def _chip_serie(short):
     return None
 
 
+# ── Animaciones propias intercaladas en los shorts ───────────────────────
+# Los clips los dibuja el canal (animaciones.py): legales, con identidad
+# propia y sin depender de fotos ajenas. Se mezclan con las fotos — el
+# ensamblador ya sabe intercalar video con imágenes.
+ANIMACIONES_ON = os.environ.get("ANIMACIONES", "on").lower() not in (
+    "off", "0", "", "no")
+
+
+async def animaciones_para_short(short):
+    """Clips propios que ilustran el tema del short. Lista (posiblemente
+    vacía) de rutas a MP4. Nunca lanza: si algo falla, el short se arma con
+    fotos como siempre."""
+    if not ANIMACIONES_ON:
+        return []
+    cat = (short.get("categoria") or "").strip()
+    texto = f"{short.get('consulta','')} {short.get('guion','')}".lower()
+    clips = []
+    try:
+        import animaciones
+        # Aerodinámica: flujo de aire sobre el alerón. Si el tema habla del
+        # DRS, se generan las dos tomas (cerrado y abierto) para que el
+        # contraste se VEA, que es justo lo que explica el guion.
+        if cat == "Aero" or any(k in texto for k in (
+                "aero", "wing", "downforce", "drs", "diffuser", "airflow",
+                "dirty air", "ground effect")):
+            if "drs" in texto:
+                for abierto in (False, True):
+                    c = await animaciones.clip_flujo_aire(drs=abierto)
+                    if c:
+                        clips.append(c)
+            else:
+                c = await animaciones.clip_flujo_aire(
+                    suelo="ground effect" in texto or "floor" in texto)
+                if c:
+                    clips.append(c)
+    except Exception as e:
+        log.info("Animaciones no disponibles (%s) — se usan solo fotos", e)
+    return clips
+
+
 # ── Tarjetas de comparación (estilo viral, con datos REALES) ─────────────
 # Formato que engancha: dos stats gigantes sobre fotos, un badge con la
 # diferencia. Los números salen de la clasificación REAL (Jolpica), nunca
@@ -5611,6 +5651,18 @@ async def bucle_youtube():
                         fotos += await _fotos_variadas(short, n=6 - len(fotos))
                 else:
                     fotos = await _fotos_variadas(short)
+
+                # 2b) Intercalar animaciones propias (aero, DRS…): entran en
+                # la misma lista que las fotos. Van tras la primera imagen,
+                # para que el short abra con una foto real y el movimiento
+                # llegue enseguida.
+                if not short.get("sin_overlay"):
+                    clips = await animaciones_para_short(short)
+                    for j, c in enumerate(clips[:2]):
+                        fotos.insert(min(1 + j * 2, len(fotos)), c)
+                    if clips:
+                        log.info("🎬 %d animación(es) propia(s) en el short %s",
+                                 len(clips[:2]), sid)
 
                 # 3) Armar video vertical: rótulo grande estilo F1 Shorts (solo
                 # el gancho limpio, sin hashtags), chip de serie arriba y
