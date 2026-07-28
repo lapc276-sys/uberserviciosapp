@@ -3,7 +3,7 @@
 import { useRef, useState } from 'react';
 import {
   Upload, Loader2, Check, ArrowRight, ArrowLeft, ShieldCheck,
-  Clock, AlertTriangle, Plus, Trash2, Sparkles,
+  Clock, AlertTriangle, Plus, Trash2, Sparkles, Mic,
 } from 'lucide-react';
 import { extractFrames, readImages, DEFAULT_FRAME_COUNT } from '@/lib/vision/frames';
 import { formatDuration } from '@/lib/vision/estimate';
@@ -11,6 +11,8 @@ import {
   SOIL_DIMENSIONS, ROOM_TYPES, ROOM_LABELS, EMPTY_SOIL,
   type PropertyAnalysis, type RoomAnalysis, type RoomType,
 } from '@/lib/vision/types';
+import { VoiceControl } from '@/components/pilot/VoiceControl';
+import type { VoiceCommand } from '@/lib/vision/voice-commands';
 import { services } from '@/lib/config/services';
 import { cities } from '@/lib/config/cities';
 
@@ -54,6 +56,7 @@ export function PilotCapture({ capturedBy }: { capturedBy: string }) {
   const [frameCount, setFrameCount] = useState(0);
   const [predicted, setPredicted] = useState<PropertyAnalysis | null>(null);
   const [rooms, setRooms] = useState<RoomAnalysis[]>([]);
+  const [activeRoom, setActiveRoom] = useState(0);
   const [afterAnalysis, setAfterAnalysis] = useState<PropertyAnalysis | null>(null);
   const [quality, setQuality] = useState<{ score: number; verdict: string; summary: string } | null>(null);
   const [actualMinutes, setActualMinutes] = useState('');
@@ -93,6 +96,7 @@ export function PilotCapture({ capturedBy }: { capturedBy: string }) {
         setPredicted(data.analysis);
         // Deep copy so corrections never mutate the prediction we compare against.
         setRooms(JSON.parse(JSON.stringify(data.analysis.rooms)));
+        setActiveRoom(0);
         setStep('correct');
       }
     } catch (err) {
@@ -131,6 +135,42 @@ export function PilotCapture({ capturedBy }: { capturedBy: string }) {
 
   function removeRoom(index: number) {
     setRooms((prev) => prev.filter((_, i) => i !== index));
+    setActiveRoom((a) => Math.max(0, a >= index ? a - 1 : a));
+  }
+
+  /**
+   * Applies a spoken command. Commands with no room named act on the room
+   * currently in focus, so you can walk through a house saying levels without
+   * naming the room every time.
+   */
+  function handleVoice(command: VoiceCommand) {
+    setRooms((prev) => {
+      const targetIndex =
+        'roomType' in command && command.roomType
+          ? prev.findIndex((r) => r.type === command.roomType)
+          : activeRoom;
+      const index = targetIndex >= 0 ? targetIndex : activeRoom;
+
+      if (command.kind === 'set') {
+        if (index !== activeRoom) setActiveRoom(index);
+        return prev.map((r, i) =>
+          i === index ? { ...r, soil: { ...r.soil, [command.dimension]: command.value } } : r,
+        );
+      }
+      if (command.kind === 'clearRoom') {
+        if (index !== activeRoom) setActiveRoom(index);
+        return prev.map((r, i) => (i === index ? { ...r, soil: { ...EMPTY_SOIL } } : r));
+      }
+      if (command.kind === 'remove') {
+        setActiveRoom((a) => Math.max(0, Math.min(a, prev.length - 2)));
+        return prev.filter((_, i) => i !== index);
+      }
+      return prev;
+    });
+
+    if (command.kind === 'next') setActiveRoom((a) => Math.min(a + 1, rooms.length - 1));
+    if (command.kind === 'prev') setActiveRoom((a) => Math.max(a - 1, 0));
+    if (command.kind === 'done' && rooms.length > 0) setStep('after');
   }
 
   async function submit() {
@@ -185,6 +225,7 @@ export function PilotCapture({ capturedBy }: { capturedBy: string }) {
     setConsentTraining(false);
     setPredicted(null);
     setRooms([]);
+    setActiveRoom(0);
     setAfterAnalysis(null);
     setQuality(null);
     setActualMinutes('');
@@ -415,10 +456,24 @@ export function PilotCapture({ capturedBy }: { capturedBy: string }) {
               </div>
             )}
 
+            <VoiceControl onCommand={handleVoice} currentRoomLabel={rooms[activeRoom]?.label} />
+
             {rooms.map((room, i) => {
               const original = predicted.rooms[i];
+              const isActive = i === activeRoom;
               return (
-                <div key={i} className="rounded-2xl border p-4">
+                <div
+                  key={i}
+                  onClick={() => setActiveRoom(i)}
+                  className={`rounded-2xl border p-4 transition-colors ${
+                    isActive ? 'border-brand-400 bg-brand-50/30 dark:bg-brand-950/10' : ''
+                  }`}
+                >
+                  {isActive && (
+                    <p className="mb-2 inline-flex items-center gap-1.5 rounded-full bg-brand-100 px-2.5 py-0.5 text-xs font-medium text-brand-700 dark:bg-brand-950/50 dark:text-brand-300">
+                      <Mic className="h-3 w-3" /> Voice targets this room
+                    </p>
+                  )}
                   <div className="flex items-center gap-2">
                     <select
                       value={room.type}
