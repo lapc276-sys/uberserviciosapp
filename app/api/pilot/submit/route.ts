@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { PRO_SESSION_COOKIE, verifyProSession } from '@/lib/pro-auth';
 import { SESSION_COOKIE, verifySessionToken } from '@/lib/auth';
 import { saveTrainingSample } from '@/lib/vision/training';
+import { assessQuality } from '@/lib/vision/quality';
 import { services } from '@/lib/config/services';
 
 export const runtime = 'nodejs';
@@ -29,7 +30,13 @@ const schema = z.object({
   frameCount: z.number().min(1).max(50),
   predicted: analysisSchema,
   corrected: analysisSchema,
+  afterAnalysis: analysisSchema.optional(),
   actualMinutes: z.coerce.number().int().min(1).max(1440),
+  // Operator context — optional, but the most differentiated signal we collect.
+  jobSequence: z.coerce.number().int().min(1).max(20).optional(),
+  hoursWorkedToday: z.coerce.number().min(0).max(24).optional(),
+  crewSize: z.coerce.number().int().min(1).max(10).optional(),
+  startHour: z.coerce.number().int().min(0).max(23).optional(),
   notes: z.string().max(1000).optional(),
 });
 
@@ -61,6 +68,14 @@ export async function POST(req: Request) {
   }
 
   const data = parsed.data;
+
+  // Quality is derived server-side from the corrected before-state and the
+  // after-walkthrough, so the score can't be inflated by the client.
+  let quality: ReturnType<typeof assessQuality> | null = null;
+  if (data.afterAnalysis) {
+    quality = assessQuality(data.corrected as never, data.afterAnalysis as never);
+  }
+
   const id = await saveTrainingSample({
     capturedBy,
     serviceSlug: data.serviceSlug,
@@ -71,9 +86,15 @@ export async function POST(req: Request) {
     frameCount: data.frameCount,
     predicted: data.predicted as never,
     corrected: data.corrected as never,
+    afterAnalysis: data.afterAnalysis as never,
+    qualityScore: quality?.score,
     actualMinutes: data.actualMinutes,
+    jobSequence: data.jobSequence,
+    hoursWorkedToday: data.hoursWorkedToday,
+    crewSize: data.crewSize,
+    startHour: data.startHour,
     notes: data.notes,
   });
 
-  return NextResponse.json({ ok: true, id });
+  return NextResponse.json({ ok: true, id, quality });
 }

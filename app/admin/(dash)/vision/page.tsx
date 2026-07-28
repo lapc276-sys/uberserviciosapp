@@ -87,8 +87,49 @@ export default async function VisionAdminPage() {
                 sub={training.timeBias > 0 ? 'over-estimating' : training.timeBias < 0 ? 'under-estimating' : 'on target'}
               />
               <MiniTile label="Mean abs. error" value={`${training.timeMeanAbsError} min`} />
-              <MiniTile label="Avg. correction" value={`${training.avgCorrectionMagnitude} pts`} sub="how wrong per dimension" />
+              <MiniTile
+                label="Avg. quality"
+                value={training.qualitySamples ? `${training.avgQualityScore}/100` : '—'}
+                sub={training.qualitySamples ? `${training.qualitySamples} with after-scan` : 'no after-scans yet'}
+              />
             </div>
+
+            {/* Fatigue — the signal only an operator can collect */}
+            {training.fatigue.length > 0 && (
+              <div className="mt-8">
+                <h3 className="text-sm font-semibold">Does fatigue matter?</h3>
+                <p className="text-xs text-slate-400">
+                  Actual time as a percentage of predicted, by how far into the worker&apos;s day the job was.
+                  Rising numbers mean later jobs run long — and that belongs in the time model.
+                </p>
+                <div className="mt-4 space-y-3">
+                  {training.fatigue.map((b) => (
+                    <div key={b.label}>
+                      <div className="mb-1 flex items-center justify-between text-sm">
+                        <span className="text-slate-600 dark:text-slate-300">
+                          {b.label}
+                          <span className="ml-2 text-xs text-slate-400">({b.samples} {b.samples === 1 ? 'job' : 'jobs'})</span>
+                        </span>
+                        <span className={b.actualVsPredictedPct > 110 ? 'font-medium text-amber-600' : 'text-slate-500 dark:text-slate-400'}>
+                          {b.actualVsPredictedPct}% of predicted
+                        </span>
+                      </div>
+                      <div className="h-2 overflow-hidden rounded-full bg-slate-100 dark:bg-white/5">
+                        <div
+                          className="h-full rounded-full bg-brand-600 dark:bg-brand-500"
+                          style={{ width: `${Math.min(100, b.actualVsPredictedPct / 2)}%` }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {training.fatigue.length < 2 && (
+                  <p className="mt-3 text-xs text-slate-400">
+                    Capture jobs at different points in the day to see whether the effect is real.
+                  </p>
+                )}
+              </div>
+            )}
 
             <h3 className="mt-8 text-sm font-semibold">Where the model is weakest</h3>
             <p className="text-xs text-slate-400">

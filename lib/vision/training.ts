@@ -9,7 +9,19 @@ import { SOIL_DIMENSIONS, type PropertyAnalysis, type SoilDimension } from './ty
  * teaches nothing.
  */
 
-export interface TrainingSampleInput {
+/**
+ * Operator context — the variance pure vision can never explain.
+ * The same room at the same soil level is not the same job on someone's
+ * fourth stop of the day as it is on their first.
+ */
+export interface OperatorContext {
+  jobSequence?: number;
+  hoursWorkedToday?: number;
+  crewSize?: number;
+  startHour?: number;
+}
+
+export interface TrainingSampleInput extends OperatorContext {
   capturedBy: string;
   serviceSlug: string;
   city?: string;
@@ -19,6 +31,8 @@ export interface TrainingSampleInput {
   frameCount: number;
   predicted: PropertyAnalysis;
   corrected: PropertyAnalysis;
+  afterAnalysis?: PropertyAnalysis;
+  qualityScore?: number;
   actualMinutes: number;
   notes?: string;
 }
@@ -32,6 +46,10 @@ export interface TrainingSampleRecord {
   actualMinutes: number;
   correctionMagnitude: number;
   frameCount: number;
+  jobSequence: number | null;
+  hoursWorkedToday: number | null;
+  crewSize: number;
+  qualityScore: number | null;
   createdAt: string;
 }
 
@@ -66,6 +84,10 @@ export async function saveTrainingSample(input: TrainingSampleInput): Promise<st
     actualMinutes: input.actualMinutes,
     correctionMagnitude: magnitude,
     frameCount: input.frameCount,
+    jobSequence: input.jobSequence ?? null,
+    hoursWorkedToday: input.hoursWorkedToday ?? null,
+    crewSize: input.crewSize ?? 1,
+    qualityScore: input.qualityScore ?? null,
     createdAt: new Date().toISOString(),
   };
 
@@ -89,6 +111,12 @@ export async function saveTrainingSample(input: TrainingSampleInput): Promise<st
       predictedMinutes: input.predicted.totalMinutes,
       actualMinutes: input.actualMinutes,
       correctionMagnitude: magnitude,
+      jobSequence: input.jobSequence,
+      hoursWorkedToday: input.hoursWorkedToday,
+      crewSize: input.crewSize ?? 1,
+      startHour: input.startHour,
+      afterAnalysis: input.afterAnalysis as unknown as object | undefined,
+      qualityScore: input.qualityScore,
       notes: input.notes,
     },
   });
@@ -103,6 +131,47 @@ export interface DimensionError {
   samples: number;
 }
 
+export interface FatigueBucket {
+  label: string;
+  samples: number;
+  /** Mean signed minutes error. Negative means the job ran longer than predicted. */
+  timeBias: number;
+  /** Actual minutes as a percentage of predicted. Over 100 = slower than predicted. */
+  actualVsPredictedPct: number;
+}
+
+/**
+ * Groups samples by how far into the worker's day the job was.
+ *
+ * If later jobs consistently run longer than predicted, fatigue is real and
+ * belongs in the time model. This is the cheapest way to test that hypothesis
+ * — it needs a handful of samples, not a training run.
+ */
+export function fatigueBuckets(records: TrainingSampleRecord[]): FatigueBucket[] {
+  const buckets: { label: string; match: (r: TrainingSampleRecord) => boolean }[] = [
+    { label: '1st job of day', match: (r) => r.jobSequence === 1 },
+    { label: '2nd job', match: (r) => r.jobSequence === 2 },
+    { label: '3rd job', match: (r) => r.jobSequence === 3 },
+    { label: '4th or later', match: (r) => (r.jobSequence ?? 0) >= 4 },
+  ];
+
+  return buckets
+    .map(({ label, match }) => {
+      const inBucket = records.filter((r) => match(r) && r.actualMinutes > 0 && r.predictedMinutes > 0);
+      if (inBucket.length === 0) return { label, samples: 0, timeBias: 0, actualVsPredictedPct: 0 };
+      const bias = inBucket.reduce((s, r) => s + (r.predictedMinutes - r.actualMinutes), 0) / inBucket.length;
+      const ratio =
+        inBucket.reduce((s, r) => s + r.actualMinutes / r.predictedMinutes, 0) / inBucket.length;
+      return {
+        label,
+        samples: inBucket.length,
+        timeBias: Math.round(bias),
+        actualVsPredictedPct: Math.round(ratio * 100),
+      };
+    })
+    .filter((b) => b.samples > 0);
+}
+
 export interface TrainingReport {
   samples: number;
   /** Signed minutes error: positive means the model over-estimates time. */
@@ -112,6 +181,10 @@ export interface TrainingReport {
   avgCorrectionMagnitude: number;
   /** Per-dimension error, worst first — tells you what to fix in the prompt. */
   dimensions: DimensionError[];
+  fatigue: FatigueBucket[];
+  /** Mean quality score across samples that captured an after-walkthrough. */
+  avgQualityScore: number;
+  qualitySamples: number;
   recent: TrainingSampleRecord[];
   source: 'db' | 'memory';
 }
@@ -135,6 +208,10 @@ export async function getTrainingReport(): Promise<TrainingReport> {
         actualMinutes: r.actualMinutes,
         correctionMagnitude: r.correctionMagnitude,
         frameCount: r.frameCount,
+        jobSequence: r.jobSequence,
+        hoursWorkedToday: r.hoursWorkedToday,
+        crewSize: r.crewSize,
+        qualityScore: r.qualityScore,
         createdAt: r.createdAt.toISOString(),
       },
     }));
@@ -163,6 +240,7 @@ export async function getTrainingReport(): Promise<TrainingReport> {
   const timeAbs = withTime.length
     ? withTime.reduce((s, r) => s + Math.abs(r.record.predictedMinutes - r.record.actualMinutes), 0) / withTime.length
     : 0;
+  const withQuality = rows.filter((r) => typeof r.record.qualityScore === 'number');
   const close = withTime.filter(
     (r) => Math.abs(r.record.predictedMinutes - r.record.actualMinutes) / r.record.actualMinutes <= 0.2,
   ).length;
@@ -181,6 +259,11 @@ export async function getTrainingReport(): Promise<TrainingReport> {
       meanAbsError: totals[dimension].n ? Number((totals[dimension].abs / totals[dimension].n).toFixed(1)) : 0,
       samples: totals[dimension].n,
     })).sort((a, b) => b.meanAbsError - a.meanAbsError),
+    fatigue: fatigueBuckets(rows.map((r) => r.record)),
+    avgQualityScore: withQuality.length
+      ? Math.round(withQuality.reduce((s, r) => s + (r.record.qualityScore ?? 0), 0) / withQuality.length)
+      : 0,
+    qualitySamples: withQuality.length,
     recent: rows.slice(0, 25).map((r) => r.record),
     source: isDbConfigured ? 'db' : 'memory',
   };

@@ -23,18 +23,20 @@ import { cities } from '@/lib/config/cities';
  * one-handed, standing in someone's kitchen.
  */
 
-type Step = 'setup' | 'consent' | 'capture' | 'correct' | 'time' | 'done';
+type Step = 'setup' | 'consent' | 'capture' | 'correct' | 'after' | 'wrap' | 'done';
 
 const STEPS: { id: Step; label: string }[] = [
   { id: 'setup', label: 'Job' },
   { id: 'consent', label: 'Consent' },
   { id: 'capture', label: 'Scan' },
   { id: 'correct', label: 'Correct' },
-  { id: 'time', label: 'Time' },
+  { id: 'after', label: 'After' },
+  { id: 'wrap', label: 'Wrap' },
 ];
 
 export function PilotCapture({ capturedBy }: { capturedBy: string }) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const afterInputRef = useRef<HTMLInputElement>(null);
 
   const [step, setStep] = useState<Step>('setup');
   const [serviceSlug, setServiceSlug] = useState('deep-cleaning');
@@ -52,11 +54,16 @@ export function PilotCapture({ capturedBy }: { capturedBy: string }) {
   const [frameCount, setFrameCount] = useState(0);
   const [predicted, setPredicted] = useState<PropertyAnalysis | null>(null);
   const [rooms, setRooms] = useState<RoomAnalysis[]>([]);
+  const [afterAnalysis, setAfterAnalysis] = useState<PropertyAnalysis | null>(null);
+  const [quality, setQuality] = useState<{ score: number; verdict: string; summary: string } | null>(null);
   const [actualMinutes, setActualMinutes] = useState('');
+  const [jobSequence, setJobSequence] = useState('1');
+  const [hoursWorkedToday, setHoursWorkedToday] = useState('0');
+  const [crewSize, setCrewSize] = useState('1');
   const [notes, setNotes] = useState('');
   const [savedId, setSavedId] = useState('');
 
-  async function handleFiles(files: FileList | null) {
+  async function handleFiles(files: FileList | null, phase: 'before' | 'after' = 'before') {
     if (!files?.length) return;
     setError('');
     try {
@@ -66,7 +73,7 @@ export function PilotCapture({ capturedBy }: { capturedBy: string }) {
         ? await extractFrames(list[0], { onProgress: (done, total) => setProgress({ done, total }) })
         : await readImages(list);
 
-      setFrameCount(frames.length);
+      if (phase === 'before') setFrameCount(frames.length);
       setBusy('analyzing');
 
       const res = await fetch('/api/vision/analyze', {
@@ -79,10 +86,15 @@ export function PilotCapture({ capturedBy }: { capturedBy: string }) {
         setError(data.error ?? 'Analysis failed.');
         return;
       }
-      setPredicted(data.analysis);
-      // Deep copy so corrections never mutate the prediction we're comparing to.
-      setRooms(JSON.parse(JSON.stringify(data.analysis.rooms)));
-      setStep('correct');
+      if (phase === 'after') {
+        setAfterAnalysis(data.analysis);
+        setStep('wrap');
+      } else {
+        setPredicted(data.analysis);
+        // Deep copy so corrections never mutate the prediction we compare against.
+        setRooms(JSON.parse(JSON.stringify(data.analysis.rooms)));
+        setStep('correct');
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong.');
     } finally {
@@ -142,7 +154,12 @@ export function PilotCapture({ capturedBy }: { capturedBy: string }) {
           frameCount,
           predicted,
           corrected: { ...predicted, rooms },
+          afterAnalysis: afterAnalysis ?? undefined,
           actualMinutes: minutes,
+          jobSequence: Number(jobSequence) || undefined,
+          hoursWorkedToday: Number(hoursWorkedToday) || undefined,
+          crewSize: Number(crewSize) || 1,
+          startHour: new Date().getHours(),
           notes: notes || undefined,
         }),
       });
@@ -152,6 +169,7 @@ export function PilotCapture({ capturedBy }: { capturedBy: string }) {
         return;
       }
       setSavedId(data.id);
+      if (data.quality) setQuality(data.quality);
       setStep('done');
     } catch {
       setError('Network error. Please try again.');
@@ -167,6 +185,8 @@ export function PilotCapture({ capturedBy }: { capturedBy: string }) {
     setConsentTraining(false);
     setPredicted(null);
     setRooms([]);
+    setAfterAnalysis(null);
+    setQuality(null);
     setActualMinutes('');
     setNotes('');
     setSavedId('');
@@ -203,8 +223,14 @@ export function PilotCapture({ capturedBy }: { capturedBy: string }) {
             value={`${Math.abs((predicted?.totalMinutes ?? 0) - Number(actualMinutes))} min`}
           />
           <Row label="Your corrections" value={`${magnitude} pts avg`} />
+          {quality && <Row label="Quality score" value={`${quality.score}/100`} />}
           <Row label="Sample" value={savedId} />
         </div>
+        {quality && (
+          <p className="mt-4 rounded-xl bg-brand-50 px-4 py-3 text-left text-sm text-brand-900 dark:bg-brand-950/30 dark:text-brand-200">
+            {quality.summary}
+          </p>
+        )}
         <button
           onClick={resetForNextJob}
           className="mt-6 inline-flex h-12 w-full items-center justify-center gap-2 rounded-full bg-brand-600 text-sm font-medium text-white hover:bg-brand-700"
@@ -452,15 +478,75 @@ export function PilotCapture({ capturedBy }: { capturedBy: string }) {
 
             <div className="flex gap-3">
               <BackButton onClick={() => setStep('capture')} />
-              <NextButton onClick={() => setStep('time')} disabled={rooms.length === 0} />
+              <NextButton onClick={() => setStep('after')} disabled={rooms.length === 0} />
             </div>
           </div>
         )}
 
-        {/* ── Time ──────────────────────────────────────────────────────── */}
-        {step === 'time' && (
+        {/* ── After ─────────────────────────────────────────────────────── */}
+        {step === 'after' && (
+          <div className="space-y-5">
+            <div>
+              <h2 className="text-xl font-semibold">Scan the finished job</h2>
+              <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                Same rooms, same order if you can. This measures how much actually improved — proof for the
+                customer, and a quality score you can’t fake.
+              </p>
+            </div>
+
+            <input
+              ref={afterInputRef}
+              type="file"
+              accept="video/*,image/*"
+              multiple
+              capture="environment"
+              className="hidden"
+              onChange={(e) => handleFiles(e.target.files, 'after')}
+            />
+
+            {busy ? (
+              <div className="py-10 text-center">
+                <Loader2 className="mx-auto h-8 w-8 animate-spin text-brand-600" />
+                <p className="mt-4 font-medium">
+                  {busy === 'frames' ? `Reading frame ${progress.done} of ${progress.total}` : 'Analyzing…'}
+                </p>
+              </div>
+            ) : (
+              <>
+                <button
+                  onClick={() => afterInputRef.current?.click()}
+                  className="w-full rounded-2xl border-2 border-dashed p-10 text-center transition-colors hover:border-brand-400"
+                >
+                  <Upload className="mx-auto h-8 w-8 text-brand-600" />
+                  <span className="mt-3 block font-medium">Record the after</span>
+                  <span className="mt-1 block text-sm text-slate-500 dark:text-slate-400">
+                    Walk the same route once you’re done
+                  </span>
+                </button>
+                <div className="flex gap-3">
+                  <BackButton onClick={() => setStep('correct')} />
+                  <button
+                    onClick={() => setStep('wrap')}
+                    className="inline-flex h-12 flex-1 items-center justify-center rounded-full border text-sm font-medium text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-white/5"
+                  >
+                    Skip for now
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* ── Wrap up ───────────────────────────────────────────────────── */}
+        {step === 'wrap' && (
           <div className="space-y-5">
             <h2 className="text-xl font-semibold">How long did it take?</h2>
+
+            {afterAnalysis && (
+              <p className="rounded-xl bg-emerald-50 px-4 py-3 text-sm text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300">
+                After-walkthrough captured — quality score will be calculated on save.
+              </p>
+            )}
             <div className="rounded-2xl bg-slate-50 p-4 text-sm dark:bg-white/5">
               <span className="inline-flex items-center gap-2 text-slate-500 dark:text-slate-400">
                 <Sparkles className="h-4 w-4" /> The AI predicted
@@ -486,6 +572,24 @@ export function PilotCapture({ capturedBy }: { capturedBy: string }) {
                 Total person-minutes. Two cleaners for an hour is 120.
               </p>
             </div>
+
+            {/*
+              Operator context. Cheap to answer, and it captures variance that
+              no amount of looking at the room can explain — the same bathroom
+              is a different job on your fourth stop of the day.
+            */}
+            <div className="rounded-2xl border p-4">
+              <p className="text-sm font-medium">About this shift</p>
+              <p className="mt-0.5 text-xs text-slate-400">
+                Takes five seconds and explains a lot of the timing difference.
+              </p>
+              <div className="mt-4 grid grid-cols-3 gap-3">
+                <SmallField label="Job # today" value={jobSequence} onChange={setJobSequence} min={1} max={20} />
+                <SmallField label="Hrs worked" value={hoursWorkedToday} onChange={setHoursWorkedToday} min={0} max={16} step="0.5" />
+                <SmallField label="Cleaners" value={crewSize} onChange={setCrewSize} min={1} max={10} />
+              </div>
+            </div>
+
             <div>
               <label className="text-sm font-medium">Notes (optional)</label>
               <textarea
@@ -498,7 +602,7 @@ export function PilotCapture({ capturedBy }: { capturedBy: string }) {
             </div>
             {error && <p className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-600 dark:bg-red-950/30">{error}</p>}
             <div className="flex gap-3">
-              <BackButton onClick={() => setStep('correct')} />
+              <BackButton onClick={() => setStep('after')} />
               <button
                 onClick={submit}
                 disabled={busy === 'saving'}
@@ -511,7 +615,7 @@ export function PilotCapture({ capturedBy }: { capturedBy: string }) {
           </div>
         )}
 
-        {error && step !== 'time' && (
+        {error && step !== 'wrap' && (
           <p className="mt-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-600 dark:bg-red-950/30">{error}</p>
         )}
       </div>
@@ -541,6 +645,28 @@ function BackButton({ onClick }: { onClick: () => void }) {
     >
       <ArrowLeft className="h-4 w-4" /> Back
     </button>
+  );
+}
+
+function SmallField({
+  label, value, onChange, min, max, step,
+}: {
+  label: string; value: string; onChange: (v: string) => void; min: number; max: number; step?: string;
+}) {
+  return (
+    <div>
+      <label className="text-xs text-slate-500 dark:text-slate-400">{label}</label>
+      <input
+        type="number"
+        inputMode="decimal"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="mt-1 w-full rounded-lg border bg-white px-3 py-2.5 text-base outline-none focus:border-brand-400 dark:bg-white/5"
+      />
+    </div>
   );
 }
 

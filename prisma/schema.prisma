@@ -322,11 +322,34 @@ model TrainingSample {
   /** Mean absolute soil-score correction across all rooms, 0-100. */
   correctionMagnitude Float @default(0)
 
+  /**
+   * Operator context — the signal nobody outside the operation can collect.
+   *
+   * The same bathroom at the same soil level does not take the same time at
+   * 9am as it does on someone's fourth job of the day. Capturing who worked,
+   * how far into their day they were, and how many hands were on the job is
+   * what lets the time model explain variance that pure vision never will.
+   */
+  /** 1 = first job of that worker's day, 2 = second, etc. */
+  jobSequence      Int?
+  /** Hours already worked before starting this job. */
+  hoursWorkedToday Float?
+  /** People on the job. actualMinutes is person-minutes, so this is separate. */
+  crewSize         Int    @default(1)
+  /** Local hour the job started, 0-23. */
+  startHour        Int?
+
+  /** Post-service analysis, for quality scoring. */
+  afterAnalysis Json?
+  /** 0-100 improvement score derived from before vs. after. */
+  qualityScore  Float?
+
   notes     String?
   createdAt DateTime @default(now())
 
   @@index([createdAt])
   @@index([serviceSlug])
+  @@index([jobSequence])
 }
 
 /**
