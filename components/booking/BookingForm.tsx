@@ -33,6 +33,8 @@ export function BookingForm() {
   const [date, setDate] = useState('');
   const [time, setTime] = useState(TIMES[1]);
   const [contact, setContact] = useState({ name: '', email: '', phone: '', address: '', city: cities[0].name, notes: '' });
+  const [promoCode, setPromoCode] = useState(params.get('promo') ?? '');
+  const [promoResult, setPromoResult] = useState<{ ok: boolean; message: string; discount: number } | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<{ bookingId: string; message: string } | null>(null);
   const [error, setError] = useState('');
@@ -48,6 +50,22 @@ export function BookingForm() {
 
   const service = services.find((s) => s.slug === serviceSlug)!;
 
+  async function applyPromo() {
+    const code = promoCode.trim();
+    if (!code) return;
+    try {
+      const res = await fetch('/api/promo/validate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code, serviceSlug, bedrooms, bathrooms, sqft, frequency, city: contact.city }),
+      });
+      const data = await res.json();
+      setPromoResult({ ok: Boolean(data.ok), message: data.message, discount: data.discount ?? 0 });
+    } catch {
+      setPromoResult({ ok: false, message: 'Could not check that code. Try again.', discount: 0 });
+    }
+  }
+
   async function submit() {
     setSubmitting(true);
     setError('');
@@ -55,7 +73,17 @@ export function BookingForm() {
       const res = await fetch('/api/book', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ serviceSlug, bedrooms, bathrooms, sqft, frequency, date, time, ...contact }),
+        body: JSON.stringify({
+          serviceSlug,
+          bedrooms,
+          bathrooms,
+          sqft,
+          frequency,
+          date,
+          time,
+          ...contact,
+          promoCode: promoCode.trim() || undefined,
+        }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -213,6 +241,39 @@ export function BookingForm() {
             </div>
             <p className="text-xs text-slate-400">Service in {contact.city}. Change it in the previous step if that’s not right.</p>
             <div>
+              <label className="text-sm font-medium">Promo code (optional)</label>
+              <div className="mt-2 flex gap-2">
+                <input
+                  value={promoCode}
+                  onChange={(e) => {
+                    setPromoCode(e.target.value.toUpperCase());
+                    setPromoResult(null);
+                  }}
+                  placeholder="WELCOME20"
+                  className="flex-1 rounded-xl border bg-white px-4 py-3 text-sm uppercase outline-none focus:border-brand-400 dark:bg-white/5"
+                />
+                <button
+                  type="button"
+                  onClick={applyPromo}
+                  disabled={!promoCode.trim()}
+                  className="rounded-xl border px-5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-40 dark:text-slate-200 dark:hover:bg-white/5"
+                >
+                  Apply
+                </button>
+              </div>
+              {promoResult && (
+                <p
+                  className={`mt-2 text-sm ${
+                    promoResult.ok ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'
+                  }`}
+                >
+                  {promoResult.ok
+                    ? `${promoResult.message} — ${formatCurrency(promoResult.discount)} off`
+                    : promoResult.message}
+                </p>
+              )}
+            </div>
+            <div>
               <label className="text-sm font-medium">Notes (optional)</label>
               <textarea value={contact.notes} onChange={(e) => setContact({ ...contact, notes: e.target.value })} rows={3} className="mt-2 w-full rounded-xl border bg-white px-4 py-3 text-sm outline-none focus:border-brand-400 dark:bg-white/5" placeholder="Pets, entry instructions, focus areas…" />
             </div>
@@ -276,6 +337,9 @@ export function BookingForm() {
               <Row label="Subtotal" value={`${formatCurrency(quote.low)}–${formatCurrency(quote.high)}`} />
               <Row label="Sales tax" value={`~${formatCurrency(quote.taxAmount)}`} />
             </>
+          )}
+          {promoResult?.ok && (
+            <Row label={`Promo ${promoCode}`} value={`−${formatCurrency(promoResult.discount)}`} />
           )}
           {date && <Row label="Date" value={date} />}
           {step >= 2 && <Row label="Time" value={time} />}

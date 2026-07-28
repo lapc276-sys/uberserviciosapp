@@ -97,6 +97,13 @@ video → frames (in-browser) → vision model → rooms + objects + soil scores
 
 
 
+**Marketing automation** ✅
+- **First-touch attribution**: UTM tags, `gclid`/`fbclid` and referrer inference captured in middleware and carried onto the booking. `/admin/marketing` reports bookings, booked value and **max CAC** per channel — the number that says whether a campaign pays for itself
+- **Promo codes** (`lib/marketing/promos.ts`): percent or flat, with service, city, minimum-spend and first-time rules. Re-validated server-side on every booking, so a code typed into the form never gets the discount it claims
+- **Lifecycle campaigns**: customers auto-segment into lapsed / one-time / loyal / high-value from booking history, each with its own message and cooldown. Runs weekly by cron, honors the opt-out list, and every send carries the CAN-SPAM footer
+- **Messenger + Instagram DMs** answered by the same assistant brain as web, WhatsApp and voice
+- `?dryRun=1` on the campaign cron reports who *would* be emailed before anything goes out
+
 **Voice AI agent** ✅
 - Answers calls on your Twilio number and runs the conversation: qualify → quote → text a booking link → transfer to a human on request
 - Runs on the **same assistant brain** as web chat and WhatsApp, so a phone quote matches the website to the dollar (verified: $308–$393 on both channels)

@@ -39,6 +39,11 @@ export interface BookingRecord {
   proId: string | null;
   proName: string | null;
   actualMinutes: number | null;
+  promoCode: string | null;
+  discount: number | null;
+  utmSource: string | null;
+  utmMedium: string | null;
+  utmCampaign: string | null;
 }
 
 export type ProStatus = 'APPLIED' | 'APPROVED' | 'SUSPENDED';
@@ -93,6 +98,11 @@ export interface NewBookingInput {
   phone: string;
   address: string;
   city: string;
+  promoCode?: string;
+  discount?: number;
+  utmSource?: string;
+  utmMedium?: string;
+  utmCampaign?: string;
 }
 
 export interface LeadInput {
@@ -161,6 +171,11 @@ export async function createBooking(input: NewBookingInput): Promise<BookingReco
     proId: null,
     proName: null,
     actualMinutes: null,
+    promoCode: input.promoCode ?? null,
+    discount: input.discount ?? null,
+    utmSource: input.utmSource ?? null,
+    utmMedium: input.utmMedium ?? null,
+    utmCampaign: input.utmCampaign ?? null,
   };
 
   if (!isDbConfigured || !prisma) {
@@ -197,6 +212,11 @@ export async function createBooking(input: NewBookingInput): Promise<BookingReco
       quoteLow: input.quoteLow ?? null,
       quoteHigh: input.quoteHigh ?? null,
       notes: input.notes,
+      promoCode: input.promoCode,
+      discount: input.discount,
+      utmSource: input.utmSource,
+      utmMedium: input.utmMedium,
+      utmCampaign: input.utmCampaign,
       customerId: customer.id,
       addressId: address.id,
     },
@@ -860,6 +880,57 @@ export async function pendingOfferProIds(ref: string): Promise<string[]> {
   return rows.map((o) => o.proId);
 }
 
+// ── Attribution reporting ────────────────────────────────────────────────────
+export interface ChannelPerformance {
+  channel: string;
+  source: string;
+  medium: string | null;
+  bookings: number;
+  revenue: number; // USD, booked value
+  avgTicket: number;
+  /** What you could spend per booking and still break even at 100% margin. */
+  maxCac: number;
+}
+
+/**
+ * Bookings and booked value grouped by first-touch channel.
+ * This is what turns ad spend from a guess into a decision.
+ */
+export async function getChannelPerformance(): Promise<ChannelPerformance[]> {
+  const bookings = await listBookings(1000);
+  const groups = new Map<string, { source: string; medium: string | null; count: number; revenue: number }>();
+
+  for (const b of bookings) {
+    const source = b.utmSource ?? 'direct';
+    const medium = b.utmMedium ?? null;
+    const key = `${source}|${medium ?? ''}`;
+    const value =
+      b.quoteLow && b.quoteHigh ? Math.round((b.quoteLow + b.quoteHigh) / 2) : (b.quoteLow ?? 0);
+    const existing = groups.get(key);
+    if (existing) {
+      existing.count += 1;
+      existing.revenue += value;
+    } else {
+      groups.set(key, { source, medium, count: 1, revenue: value });
+    }
+  }
+
+  const { channelLabel } = await import('./marketing/attribution');
+
+  return [...groups.values()]
+    .map((g) => ({
+      channel: channelLabel({ source: g.source, medium: g.medium }),
+      source: g.source,
+      medium: g.medium,
+      bookings: g.count,
+      revenue: g.revenue,
+      avgTicket: g.count ? Math.round(g.revenue / g.count) : 0,
+      // Platform take is ~25%, so break-even CAC is a quarter of the ticket.
+      maxCac: g.count ? Math.round((g.revenue / g.count) * 0.25) : 0,
+    }))
+    .sort((a, b) => b.revenue - a.revenue);
+}
+
 export async function countLeads(): Promise<number> {
   if (!isDbConfigured || !prisma) return memory.leads.length;
   return prisma.lead.count();
@@ -920,6 +991,11 @@ function mapRow(b: any): BookingRecord {
     proId: b.proId ?? null,
     proName: b.pro?.name ?? null,
     actualMinutes: b.actualMinutes ?? null,
+    promoCode: b.promoCode ?? null,
+    discount: b.discount ?? null,
+    utmSource: b.utmSource ?? null,
+    utmMedium: b.utmMedium ?? null,
+    utmCampaign: b.utmCampaign ?? null,
   };
 }
 

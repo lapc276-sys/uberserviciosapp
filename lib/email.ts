@@ -152,6 +152,15 @@ export function reviewRequestEmail(p: { name: string; serviceName: string }): { 
   };
 }
 
+/**
+ * Wraps promotional content in the branded shell **with** the CAN-SPAM footer
+ * (postal address + working unsubscribe). Any marketing send must go through
+ * this — raw HTML bodies would ship without the required footer.
+ */
+export function marketingShell(inner: string, recipientEmail: string): string {
+  return shell(inner, recipientEmail);
+}
+
 export function winbackEmail(p: { name: string; email: string }): { subject: string; html: string } {
   return {
     subject: `We miss you, ${p.name.split(' ')[0]} — here's 15% off`,

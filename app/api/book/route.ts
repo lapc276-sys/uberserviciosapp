@@ -19,6 +19,7 @@ const schema = z.object({
   address: z.string().min(4).max(240),
   city: z.string().min(2).max(120),
   notes: z.string().max(1000).optional(),
+  promoCode: z.string().max(40).optional(),
 });
 
 /**
@@ -49,6 +50,34 @@ export async function POST(req: Request) {
   const quote = calculateQuote(data);
   const bookingId = `HMG-${Date.now().toString(36).toUpperCase()}`;
 
+  // Promo codes are re-validated server-side — the discount a form claims is
+  // never trusted.
+  let discount = 0;
+  let appliedPromo: string | undefined;
+  if (data.promoCode && quote) {
+    const { evaluatePromo } = await import('@/lib/marketing/promos');
+    const { getCityByName } = await import('@/lib/config/cities');
+    const evaluation = evaluatePromo(data.promoCode, {
+      subtotal: Math.round((quote.low + quote.high) / 2),
+      serviceSlug: data.serviceSlug,
+      citySlug: getCityByName(data.city)?.slug,
+    });
+    if (evaluation.ok) {
+      discount = evaluation.discount;
+      appliedPromo = evaluation.promo!.code;
+    }
+  }
+
+  // First-touch attribution rides along on a cookie set by middleware.
+  const { decodeAttribution, ATTRIBUTION_COOKIE } = await import('@/lib/marketing/attribution');
+  const cookieHeader = req.headers.get('cookie') ?? '';
+  const attrValue = cookieHeader
+    .split(';')
+    .map((c) => c.trim())
+    .find((c) => c.startsWith(`${ATTRIBUTION_COOKIE}=`))
+    ?.split('=')[1];
+  const attribution = decodeAttribution(attrValue);
+
   // Persist the booking (Prisma when DATABASE_URL is set, else in-memory).
   const { createBooking, createLead } = await import('@/lib/data');
   try {
@@ -70,8 +99,18 @@ export async function POST(req: Request) {
       phone: data.phone,
       address: data.address,
       city: data.city,
+      promoCode: appliedPromo,
+      discount: discount || undefined,
+      utmSource: attribution?.source,
+      utmMedium: attribution?.medium,
+      utmCampaign: attribution?.campaign,
     });
-    await createLead({ name: data.name, email: data.email, phone: data.phone, source: 'booking' });
+    await createLead({
+      name: data.name,
+      email: data.email,
+      phone: data.phone,
+      source: attribution?.source ? `booking:${attribution.source}` : 'booking',
+    });
   } catch (err) {
     console.error('[book] persistence error', err);
     return NextResponse.json({ error: 'Could not save booking. Please try again.' }, { status: 500 });
@@ -86,6 +125,7 @@ export async function POST(req: Request) {
     bookingId,
     service: service.name,
     quote,
+    promo: appliedPromo ? { code: appliedPromo, discount } : undefined,
     message: `Booking confirmed. A confirmation was sent to ${data.email}.`,
   });
 }

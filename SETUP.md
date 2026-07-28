@@ -185,6 +185,18 @@ Opcional en Vercel:
 1. **[analytics.google.com](https://analytics.google.com)** → crea propiedad → copia el ID `G-XXXXXXX`.
 2. En Vercel: `NEXT_PUBLIC_GA_ID` = `G-XXXXXXX`.
 
+**Messenger + Instagram DM automáticos** (opcional):
+1. En la misma app de Meta que creaste para WhatsApp: **Add Product → Messenger → Settings**.
+2. Conecta tu página de Facebook y genera un **Page Access Token** → `META_PAGE_TOKEN`.
+3. Inventa un texto secreto → `META_VERIFY_TOKEN`. Copia el **App Secret** → `META_APP_SECRET`.
+4. En **Webhooks**: URL `https://TU-URL/api/meta/messenger`, pega el verify token, suscríbete a **messages**.
+5. Para Instagram: conecta tu cuenta profesional de IG a la página y repite la suscripción.
+
+**Etiquetar tus anuncios** (importante para saber qué funciona):
+Cuando pongas anuncios, agrega parámetros UTM al link de destino. Ejemplo:
+`https://tudominio.com/?utm_source=google&utm_medium=cpc&utm_campaign=nyc-deep-clean`
+El panel **Marketing** te dirá cuántas reservas y cuánto dinero trajo cada canal, y el **CAC máximo** que puedes pagar por reserva.
+
 **Meta Pixel** (para anuncios de Facebook/Instagram después):
 1. **Events Manager** en business.facebook.com → crea Pixel → copia el ID numérico.
 2. En Vercel: `NEXT_PUBLIC_META_PIXEL_ID` = ese ID.
@@ -207,5 +219,6 @@ Opcional en Vercel:
 | 8 | WhatsApp | `WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_APP_SECRET` | ☐ |
 | 9 | OpenAI | `OPENAI_API_KEY` | ☐ |
 | 10 | GA4 / Pixel / Cron | `NEXT_PUBLIC_GA_ID`, `NEXT_PUBLIC_META_PIXEL_ID`, `CRON_SECRET` | ☐ |
+| 10b | Messenger / Instagram | `META_VERIFY_TOKEN`, `META_PAGE_TOKEN`, `META_APP_SECRET` | ☐ |
 
 **¿Dudas al hacer un paso?** Pídeme ayuda con el paso exacto y te guío en detalle.

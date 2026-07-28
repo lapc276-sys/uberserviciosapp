@@ -51,11 +51,11 @@ model User {
 }
 
 model Customer {
-  id        String     @id @default(cuid())
+  id        String    @id @default(cuid())
   name      String
-  email     String     @unique
+  email     String    @unique
   phone     String
-  createdAt DateTime   @default(now())
+  createdAt DateTime  @default(now())
   addresses Address[]
   bookings  Booking[]
   reviews   Review[]
@@ -83,7 +83,6 @@ enum ProStatus {
 
 /**
  * An independent service professional on the marketplace.
- *
  * Deliberately NOT called "Employee": pros are independent contractors who
  * apply, choose their own service areas, and are free to accept or decline
  * each job offer. That right to decline is modeled explicitly via JobOffer —
@@ -97,12 +96,16 @@ model Pro {
   phone           String?
   status          ProStatus @default(APPLIED)
   rating          Float     @default(5)
-  /** City slugs this pro serves, e.g. ["manhattan-ny","brooklyn-ny"]. */
+  /**
+   * City slugs this pro serves, e.g. ["manhattan-ny","brooklyn-ny"].
+   */
   serviceAreas    String[]  @default([])
   yearsExperience Int       @default(0)
   hasTransport    Boolean   @default(false)
   bio             String?
-  /** Stripe Connect account for payouts (Phase 7). */
+  /**
+   * Stripe Connect account for payouts (Phase 7).
+   */
   stripeAccountId String?
   createdAt       DateTime  @default(now())
 
@@ -120,7 +123,9 @@ enum OfferStatus {
   EXPIRED
 }
 
-/** A job offered to a pro. First to accept wins; the rest expire. */
+/**
+ * A job offered to a pro. First to accept wins; the rest expire.
+ */
 model JobOffer {
   id          String      @id @default(cuid())
   booking     Booking     @relation(fields: [bookingId], references: [id], onDelete: Cascade)
@@ -153,9 +158,18 @@ model Booking {
   notes       String?
   createdAt   DateTime      @default(now())
 
-  /** Minutes the pro actually worked. Ground truth for calibrating the AI
-   *  time model — compare against VisionAnalysis.predictedMinutes. */
+  /**
+   * Minutes the pro actually worked. Ground truth for calibrating the AI
+   * time model — compare against VisionAnalysis.predictedMinutes.
+   */
   actualMinutes Int?
+
+  // Marketing attribution (first touch) and applied offer.
+  utmSource   String?
+  utmMedium   String?
+  utmCampaign String?
+  promoCode   String?
+  discount    Int? // USD off the subtotal
 
   // Automation lifecycle flags — guard against double-sends.
   remind24Sent      Boolean @default(false)
@@ -163,12 +177,12 @@ model Booking {
   reviewRequestSent Boolean @default(false)
   followUpSent      Boolean @default(false)
 
-  customer   Customer   @relation(fields: [customerId], references: [id])
-  customerId String
-  address    Address?   @relation(fields: [addressId], references: [id])
-  addressId  String?
-  pro        Pro?       @relation(fields: [proId], references: [id])
-  proId      String?
+  customer       Customer        @relation(fields: [customerId], references: [id])
+  customerId     String
+  address        Address?        @relation(fields: [addressId], references: [id])
+  addressId      String?
+  pro            Pro?            @relation(fields: [proId], references: [id])
+  proId          String?
   invoice        Invoice?
   review         Review?
   photos         Photo[]
@@ -180,6 +194,7 @@ model Booking {
   @@index([createdAt])
   @@index([date])
   @@index([proId])
+  @@index([utmSource])
 }
 
 // Before/after service photos (stored in Supabase Storage / S3; URL kept here).
@@ -215,7 +230,6 @@ model Review {
 
 /**
  * A completed AI walkthrough analysis.
- *
  * `predictedMinutes` vs. the linked booking's `actualMinutes` is the training
  * signal for calibrating lib/vision/model.ts. Without capturing actuals the
  * time model can never improve, so this relationship is the point of the table.
@@ -232,7 +246,9 @@ model VisionAnalysis {
   source           String // vision-llm | heuristic
   quoteLow         Int
   quoteHigh        Int
-  /** Full analysis payload (rooms, objects, soil scores) for auditing. */
+  /**
+   * Full analysis payload (rooms, objects, soil scores) for auditing.
+   */
   payload          Json
   contactEmail     String?
   createdAt        DateTime @default(now())
@@ -255,23 +271,25 @@ enum PayoutStatus {
  * generate one payout, however many times completion is triggered.
  */
 model Payout {
-  id              String       @id @default(cuid())
-  booking         Booking      @relation(fields: [bookingId], references: [id], onDelete: Cascade)
-  bookingId       String       @unique
-  pro             Pro          @relation(fields: [proId], references: [id])
-  proId           String
-  amount          Int          // cents
-  status          PayoutStatus @default(PENDING)
+  id               String       @id @default(cuid())
+  booking          Booking      @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  bookingId        String       @unique
+  pro              Pro          @relation(fields: [proId], references: [id])
+  proId            String
+  amount           Int // cents
+  status           PayoutStatus @default(PENDING)
   stripeTransferId String?
-  failureReason   String?
-  createdAt       DateTime     @default(now())
-  paidAt          DateTime?
+  failureReason    String?
+  createdAt        DateTime     @default(now())
+  paidAt           DateTime?
 
   @@index([status])
   @@index([proId])
 }
 
-/** Spent magic-link tokens, so a sign-in link can only be used once. */
+/**
+ * Spent magic-link tokens, so a sign-in link can only be used once.
+ */
 model UsedToken {
   jti       String   @id
   expiresAt DateTime
