@@ -734,6 +734,15 @@ async def control_ola(trazado: str):
     return JSONResponse({"ok": True, "gp": tr[0], "shorts_en_cola": n})
 
 
+@app.get("/datos/carreras")
+async def datos_carreras(limite: int = 50):
+    """Histórico de datos MEDIDOS carrera a carrera (degradación por piloto,
+    coste real de parada, clima, resultado). La base para el modelo propio de
+    estrategia."""
+    regs = cargar_datos_carreras(min(max(1, limite), 200))
+    return JSONResponse({"total": len(regs), "carreras": regs})
+
+
 @app.post("/control/tarjeta")
 async def control_tarjeta():
     """Genera al instante un short de TARJETA DE COMPARACIÓN con datos reales
@@ -5943,6 +5952,96 @@ _RESUMEN_SESIONES = os.environ.get(
     "RESUMEN_SESIONES", "Race,Sprint,Qualifying").split(",")
 
 
+# ── Registro histórico de datos medidos, carrera a carrera ───────────────
+# El resumen de sesión se consume al generar el video-reseña; estos datos, en
+# cambio, se GUARDAN PARA SIEMPRE. Con varias carreras acumuladas se pueden
+# comparar cosas que hoy se pierden: qué equipo degrada menos en calor, cuánto
+# cuesta una parada en cada circuito, qué compuesto aguanta más y dónde.
+# Regla de la casa: aquí solo entra lo MEDIDO, nunca una estimación.
+DATOS_DIR = os.path.join("datos", "carreras")
+DATOS_VERSION = 1
+
+
+def _guardar_datos_carrera(s):
+    """Escribe el registro permanente de la sesión (degradación por piloto,
+    coste real de parada, clima, resultado). Nunca lanza."""
+    t = estado.tele
+    if t is None:
+        return
+    try:
+        tabla = t.tabla()
+        # posición → número de coche (tabla no trae el número)
+        nums = {p: n for n, p in t.posiciones.items()}
+        pilotos = []
+        for f in tabla:
+            num = nums.get(f["pos"])
+            if num is None:
+                continue
+            info = t.pilotos.get(num, {})
+            deg = t.degradacion(num)
+            pilotos.append({
+                "numero": num,
+                "acr": f.get("acr"),
+                "nombre": f.get("nombre"),
+                "equipo": info.get("equipo", ""),
+                "pos_final": f.get("pos"),
+                # Degradación MEDIDA (None si no hubo vueltas limpias que medir)
+                "degradacion_s_vuelta": (round(deg["pendiente"], 4)
+                                         if deg else None),
+                "compuesto": (deg or {}).get("compuesto"),
+                "edad_neumatico": (deg or {}).get("edad"),
+                "vueltas_limpias": (deg or {}).get("muestras"),
+            })
+        pit = t.perdida_pit() or {}
+        mejor = None
+        if t.mejor_vuelta:
+            mejor = round(float(t.mejor_vuelta[0]), 3)
+        registro = {
+            "version": DATOS_VERSION,
+            "guardado": dt.datetime.now(dt.timezone.utc).isoformat(),
+            "session_key": t.sesion.get("session_key"),
+            "sesion": s.get("sesion"),
+            "pais": s.get("pais"),
+            "circuito": s.get("circuito"),
+            "anio": t.sesion.get("year"),
+            "vueltas_totales": t.total_vueltas,
+            "clima": t.clima,                       # {"aire", "pista"}
+            "mejor_vuelta_s": mejor,
+            "parada_segundos": (round(pit["segundos"], 2)
+                                if pit.get("segundos") else None),
+            "parada_muestras": pit.get("muestras"),
+            "incidentes": len(t.incidentes),
+            "pilotos": pilotos,
+        }
+        os.makedirs(DATOS_DIR, exist_ok=True)
+        clave = _clave_circuito(s.get("circuito") or s.get("pais") or "gp")
+        ses = _clave_circuito(s.get("sesion") or "sesion")
+        nombre = (f"{dt.datetime.now(dt.timezone.utc):%Y%m%d}_{clave}_{ses}"
+                  f".json")
+        with open(os.path.join(DATOS_DIR, nombre), "w") as f:
+            json.dump(registro, f, ensure_ascii=False, indent=2)
+        medidos = sum(1 for p in pilotos
+                      if p["degradacion_s_vuelta"] is not None)
+        log.info("📊 Datos de %s guardados (%d pilotos, %d con degradación "
+                 "medida) → %s", s.get("sesion"), len(pilotos), medidos,
+                 nombre)
+    except Exception as e:
+        log.warning("No se pudieron guardar los datos de la carrera (%s)", e)
+
+
+def cargar_datos_carreras(limite=200):
+    """Todos los registros guardados, del más nuevo al más viejo."""
+    salida = []
+    with contextlib.suppress(Exception):
+        for a in sorted(os.listdir(DATOS_DIR), reverse=True)[:limite]:
+            if not a.endswith(".json"):
+                continue
+            with contextlib.suppress(Exception):
+                with open(os.path.join(DATOS_DIR, a)) as f:
+                    salida.append(json.load(f))
+    return salida
+
+
 def _guardar_resumen_sesion(s):
     """Guarda una foto de la sesión (resultado, incidentes, clima) al
     terminar, para luego generar el video-reseña. tele aún está viva."""
@@ -7406,6 +7505,11 @@ async def bucle_programacion():
                     # Guardar el resumen de la sesión (tele aún vive) para
                     # que se genere el video-reseña con el dúo debatiendo
                     _guardar_resumen_sesion(s)
+                    # Y el registro PERMANENTE de datos medidos. Va aparte
+                    # porque el resumen se consume al montar el video y
+                    # porque esto interesa de TODAS las sesiones (los libres
+                    # también dan degradación), no solo de las que van al aire.
+                    _guardar_datos_carrera(s)
         else:
             # Fuera de sesión: cerrar cualquier sesión en curso
             if estado.sesion_actual is not None:
