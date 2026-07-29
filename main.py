@@ -539,6 +539,11 @@ class Estado:
         self.mapa: list = []             # coches en pista (x, y) para el mapa
         self.mapa_trazado: list = []     # trazado completo del circuito (fijo)
         self.curvas: list = []           # curvas detectadas del trazado
+        # Adelantamientos MEDIDOS en esta sesión, repartidos por zona:
+        # {numero_de_curva: cuántos}. Es el dato que convierte "aquí cuesta
+        # adelantar" de geometría en hecho comprobado.
+        self.pases: dict[int, int] = {}
+        self.pases_total: int = 0        # incluidos los que no caen en curva
         self.modo_calidad: str = "auto"    # auto | max | ahorro (botón del panel)
         self.off_air_manual: bool = False  # botón OFF AIR: silencio total, sin gasto
         self.segmento_id: int = 0      # id del último segmento con audio
@@ -743,6 +748,20 @@ async def datos_carreras(limite: int = 50):
     estrategia."""
     regs = cargar_datos_carreras(min(max(1, limite), 200))
     return JSONResponse({"total": len(regs), "carreras": regs})
+
+
+@app.get("/datos/pases")
+async def datos_pases(circuito: str = ""):
+    """Dónde se adelanta de verdad, según NUESTRO conteo acumulado.
+
+    Sin `circuito` suma todas las carreras guardadas; con él, solo las de ese
+    trazado. Devuelve 404 mientras no haya nada contado todavía."""
+    h = historial_pases(circuito or None)
+    if not h:
+        return JSONResponse(
+            {"ok": False, "error": "Todavía no hay adelantamientos contados. "
+             "Se llenan solos durante las carreras."}, status_code=404)
+    return JSONResponse({"ok": True, "circuito": circuito or "todos", **h})
 
 
 @app.post("/control/tarjeta")
@@ -1348,6 +1367,9 @@ async def apex():
         "mapa": estado.mapa,
         "mapa_trazado": estado.mapa_trazado,
         "curvas": estado.curvas,
+        # Adelantamientos contados en esta sesión, por número de curva
+        "pases": {str(k): v for k, v in estado.pases.items()},
+        "pases_total": estado.pases_total,
     })
 
 
@@ -1796,6 +1818,19 @@ let trazoMapa = [], mapaSuave = {};
 // Curva destacada: va rotando sola para que el mapa cuente el circuito
 let curvaFoco = 0;
 setInterval(() => { curvaFoco++; }, 12000);
+// Adelantamientos CONTADOS aquí durante la carrera. Mientras no haya
+// ninguno no se dice nada: cero pases al empezar no significa "aquí no se
+// adelanta", significa que todavía no hemos contado.
+function pasesTexto(d, c) {
+  const pases = d.pases || {};
+  const n = pases[String(c.numero)] || 0;
+  const total = d.pases_total || 0;
+  if (!total) return '';
+  if (!n) return ' · no passes here yet this race (' + total + ' so far on track)';
+  const pct = Math.round(100 * n / total);
+  return ' · <b>' + n + (n === 1 ? ' pass' : ' passes') + '</b> counted here ' +
+         'this race — ' + pct + '% of all overtaking';
+}
 function pintarCurva(d) {
   const caja = document.getElementById('panel-curva');
   const cont = document.getElementById('curva');
@@ -1816,6 +1851,8 @@ function pintarCurva(d) {
     '<div class="razon">' + Math.round(c.angulo) + '° of steering, taken at ' +
     pct + "% of the lap's top speed" +
     (esLenta ? ' — the slowest corner here, and the hardest to overtake into' : '') +
+    // Lo CONTADO en esta carrera manda sobre lo que sugiere la geometría
+    pasesTexto(d, c) +
     '</div></div>';
 }
 function pintarMapa(d) {
@@ -2801,6 +2838,29 @@ async def narrar_datos(client: anthropic.AsyncAnthropic, eventos):
                 f"{int(lenta['velocidad_rel'] * 100)}% of the lap's top speed. "
                 f"Good moment to explain why a corner like that is so hard to "
                 f"overtake into.")
+        # Dónde se está adelantando DE VERDAD hoy. Contado por nosotros, no
+        # sacado de ninguna estadística ajena — por eso se puede decir al aire.
+        if estado.pases_total >= 3 and estado.pases:
+            top = sorted(estado.pases.items(), key=lambda kv: -kv[1])[:3]
+            detalle = ", ".join(
+                f"turn {c} ({v} of them)" for c, v in top)
+            contexto += (
+                f"\nWHERE THE PASSES ARE ACTUALLY HAPPENING (counted by us, "
+                f"live, this race): {estado.pases_total} on-track passes so "
+                f"far. Most of them at {detalle}. This is OUR OWN count, so "
+                f"say so — and if it contradicts the corner everyone expects, "
+                f"that contrast is the story.")
+        # Y lo acumulado de carreras anteriores AQUÍ: con varias carreras ya
+        # se puede hablar del circuito, no solo del día de hoy.
+        hist = _historial_pases_cache(
+            estado.tele.sesion.get("circuit_short_name") or "")
+        if hist and hist["carreras"] >= 2 and hist["top"]:
+            p = hist["top"][0]
+            contexto += (
+                f"\nOUR HISTORY AT THIS TRACK: across {hist['carreras']} races "
+                f"we have logged {hist['total']} on-track passes here, and "
+                f"turn {p['curva']} accounts for {p['porcentaje']}% of them. "
+                f"That is our own record, built race by race.")
         # Lectura de NUESTRO modelo (calculada con lo medido en esta carrera).
         # Se marca como estimación propia para que el dúo no la venda como un
         # hecho — la credibilidad del canal depende de esa distinción.
@@ -4332,6 +4392,72 @@ def curvas_del_trazado(puntos, ventana=6, umbral_grados=14):
     salida.sort(key=lambda c: c["indice"])       # orden de recorrido
     for k, c in enumerate(salida, start=1):
         c["numero"] = k
+    return salida
+
+
+def zona_del_punto(x, y, curvas, radio=None):
+    """¿En qué curva del circuito cae el punto (x, y)?
+
+    Se usa para repartir los adelantamientos por zona: un pase se apunta a la
+    curva más cercana al sitio donde ocurrió. Devuelve el número de curva, o
+    None si el punto queda lejos de todas (una recta larga, por ejemplo) —
+    preferimos no apuntarlo a ninguna antes que atribuirlo mal.
+
+    `radio` es hasta dónde cuenta una curva. Por defecto, un tercio de la
+    distancia media entre curvas vecinas: así la zona de frenada entra, pero
+    media recta no.
+    """
+    if not curvas or x is None or y is None:
+        return None
+    if radio is None:
+        if len(curvas) < 2:
+            return None
+        vecinas = [math.dist((curvas[i]["x"], curvas[i]["y"]),
+                             (curvas[i + 1]["x"], curvas[i + 1]["y"]))
+                   for i in range(len(curvas) - 1)]
+        vecinas.sort()
+        radio = vecinas[len(vecinas) // 2] / 3.0     # mediana, no promedio
+    mejor, dist = None, None
+    for c in curvas:
+        d = math.dist((x, y), (c["x"], c["y"]))
+        if dist is None or d < dist:
+            mejor, dist = c["numero"], d
+    return mejor if dist is not None and dist <= radio else None
+
+
+# Solo en carrera se adelanta de verdad: en clasificación el orden lo cambia
+# el crono, no un coche pasando a otro.
+_SESIONES_PASES = ("Race", "Sprint")
+
+
+def pases_entre(previas, actuales, lugares, cerca):
+    """Adelantamientos REALES entre dos fotos de la clasificación.
+
+    Un cambio de posición no es siempre un adelantamiento: cuando alguien
+    entra a boxes, todos los de atrás "ganan" un puesto sin haber pasado a
+    nadie. Por eso aquí un pase solo cuenta si los dos coches estaban JUNTOS
+    EN PISTA en ese momento — que es lo que distingue un adelantamiento de
+    una parada, un abandono o una sanción.
+
+    `lugares` es {numero: (x, y)} y `cerca` la distancia máxima entre los dos
+    coches para creernos el pase. Devuelve [(quien_pasa, a_quien, x, y)].
+    """
+    salida = []
+    for n, ahora in actuales.items():
+        antes = previas.get(n)
+        if antes is None or ahora >= antes:
+            continue                      # no ganó posiciones
+        for m, antes_m in previas.items():
+            if m == n or antes_m >= antes:
+                continue                  # no venía por delante
+            if actuales.get(m, 0) <= ahora:
+                continue                  # no quedó por detrás
+            a, b = lugares.get(n), lugares.get(m)
+            if not a or not b:
+                continue                  # sin posición en pista, no contamos
+            if math.dist(a, b) > cerca:
+                continue                  # lejos: fue boxes o abandono
+            salida.append((n, m, a[0], a[1]))
     return salida
 
 
@@ -6025,6 +6151,8 @@ async def bucle_mapa():
     tele_trazada = None
     ultimo_guardado = 0.0
     prox_intento_trazado = 0.0   # no repreguntar el trazado cada 2 s
+    pos_previas = None           # foto anterior de la clasificación
+    tele_pases = None            # de qué sesión son los pases que llevamos
     while True:
         await asyncio.sleep(2)
         t = estado.tele
@@ -6035,6 +6163,7 @@ async def bucle_mapa():
                 estado.mapa_trazado = []
                 estado.curvas = []
             tele_trazada = None
+            pos_previas = None
             continue
         # Guardar cada 10 s dónde va el replay, para retomar tras reinicio
         if time.time() - ultimo_guardado >= 10:
@@ -6081,6 +6210,33 @@ async def bucle_mapa():
                  "a": t.pilotos.get(n, {}).get("acronimo", str(n)),
                  "c": t.pilotos.get(n, {}).get("color", "")}
                 for n, p in pos.items()]
+        # ── Adelantamientos por zona (Fase B) ─────────────────────────
+        # Cada pase se apunta a la curva donde ocurrió. Con eso, "aquí es
+        # difícil adelantar" deja de ser geometría y pasa a ser un hecho
+        # contado en NUESTROS datos, carrera tras carrera.
+        if t is not tele_pases:
+            estado.pases, estado.pases_total = {}, 0
+            pos_previas, tele_pases = None, t
+        if (pos and estado.curvas and t.vuelta >= 1
+                and t.sesion.get("session_name") in _SESIONES_PASES):
+            actuales = dict(t.posiciones)
+            lugares = {n: (p["x"], p["y"]) for n, p in pos.items()}
+            if pos_previas:
+                # "Juntos en pista" medido contra el tamaño real del
+                # circuito, que en OpenF1 viene en unidades propias
+                xs = [c["x"] for c in estado.curvas]
+                ys = [c["y"] for c in estado.curvas]
+                diag = math.hypot(max(xs) - min(xs), max(ys) - min(ys)) or 1.0
+                for quien, a_quien, px, py in pases_entre(
+                        pos_previas, actuales, lugares, diag * 0.05):
+                    estado.pases_total += 1
+                    z = zona_del_punto(px, py, estado.curvas)
+                    if z is not None:
+                        estado.pases[z] = estado.pases.get(z, 0) + 1
+                    log.info("🏎️  Pase: %s a %s%s", t._nombre(quien),
+                             t._nombre(a_quien),
+                             f" en la curva {z}" if z else " (en recta)")
+            pos_previas = actuales
 
 
 async def bucle_vod():
@@ -6245,6 +6401,15 @@ def _guardar_datos_carrera(s):
                                 if pit.get("segundos") else None),
             "parada_muestras": pit.get("muestras"),
             "incidentes": len(t.incidentes),
+            # Adelantamientos contados por nosotros, repartidos por curva.
+            # Guardar también la geometría del circuito es lo que permite
+            # leer estos números otra vez el año que viene.
+            "pases_por_curva": {str(k): v for k, v in estado.pases.items()},
+            "pases_total": estado.pases_total,
+            "curvas": [{"numero": c["numero"], "angulo": c["angulo"],
+                        "direccion": c["direccion"],
+                        "velocidad_rel": c["velocidad_rel"]}
+                       for c in estado.curvas],
             "pilotos": pilotos,
         }
         os.makedirs(DATOS_DIR, exist_ok=True)
@@ -6274,6 +6439,51 @@ def cargar_datos_carreras(limite=200):
                 with open(os.path.join(DATOS_DIR, a)) as f:
                     salida.append(json.load(f))
     return salida
+
+
+def historial_pases(circuito=None):
+    """Adelantamientos por curva sumados de TODAS las carreras guardadas.
+
+    Una carrera sola dice poco: un coche de seguridad o una salida loca
+    desordenan el reparto. Varias carreras del mismo circuito ya dibujan
+    dónde se adelanta ahí de verdad. Devuelve None mientras no haya nada
+    contado — no rellenamos huecos con suposiciones.
+    """
+    clave = _clave_circuito(circuito) if circuito else None
+    curvas, total, carreras = {}, 0, 0
+    for r in cargar_datos_carreras():
+        if not r.get("pases_total"):
+            continue
+        if clave and _clave_circuito(r.get("circuito") or "") != clave:
+            continue
+        carreras += 1
+        total += r["pases_total"]
+        for c, v in (r.get("pases_por_curva") or {}).items():
+            with contextlib.suppress(ValueError, TypeError):
+                curvas[int(c)] = curvas.get(int(c), 0) + int(v)
+    if not carreras or not total:
+        return None
+    orden = sorted(curvas.items(), key=lambda kv: -kv[1])
+    return {"carreras": carreras, "total": total, "por_curva": curvas,
+            "top": [{"curva": c, "pases": v,
+                     "porcentaje": round(100 * v / total, 1)}
+                    for c, v in orden[:5]]}
+
+
+_PASES_CACHE: dict = {}
+
+
+def _historial_pases_cache(circuito, ttl=600):
+    """historial_pases() sin releer el disco en cada línea del narrador."""
+    clave = _clave_circuito(circuito or "")
+    hit = _PASES_CACHE.get(clave)
+    if hit and time.time() - hit[0] < ttl:
+        return hit[1]
+    valor = None
+    with contextlib.suppress(Exception):
+        valor = historial_pases(circuito or None)
+    _PASES_CACHE[clave] = (time.time(), valor)
+    return valor
 
 
 def _guardar_resumen_sesion(s):
