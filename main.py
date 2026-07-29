@@ -25,6 +25,7 @@ import contextlib
 import datetime as dt
 import json
 import logging
+import math
 import os
 import random
 import re
@@ -537,6 +538,7 @@ class Estado:
                                          # la telemetría no esté disponible
         self.mapa: list = []             # coches en pista (x, y) para el mapa
         self.mapa_trazado: list = []     # trazado completo del circuito (fijo)
+        self.curvas: list = []           # curvas detectadas del trazado
         self.modo_calidad: str = "auto"    # auto | max | ahorro (botón del panel)
         self.off_air_manual: bool = False  # botón OFF AIR: silencio total, sin gasto
         self.segmento_id: int = 0      # id del último segmento con audio
@@ -1345,6 +1347,7 @@ async def apex():
                       "otros": estado.standings_otros},
         "mapa": estado.mapa,
         "mapa_trazado": estado.mapa_trazado,
+        "curvas": estado.curvas,
     })
 
 
@@ -1770,6 +1773,7 @@ async def visor():
     <section class="panel" id="panel-mapa" style="display:none"><h3>Track Map</h3><canvas id="mapa" width="300" height="200"></canvas></section>
     <section class="panel" id="panel-incidentes"><h3>Race Control</h3><div id="incidentes"></div></section>
     <section class="panel"><h3>Race Intelligence</h3><div id="intel"></div><div id="pitloss"></div></section>
+    <section class="panel" id="panel-curva" style="display:none"><h3>Corner Spotlight</h3><div id="curva"></div></section>
   </div>
 </main>
 <div id="dialogo"><div class="card">
@@ -1789,6 +1793,31 @@ let proxSesionIso = null, standingsData = null, standingsVista = 0;
 // (mapa_trazado) y se dibuja como una línea continua; los coches se
 // pintan encima. Si aún no llegó el trazado, se acumula de respaldo.
 let trazoMapa = [], mapaSuave = {};
+// Curva destacada: va rotando sola para que el mapa cuente el circuito
+let curvaFoco = 0;
+setInterval(() => { curvaFoco++; }, 12000);
+function pintarCurva(d) {
+  const caja = document.getElementById('panel-curva');
+  const cont = document.getElementById('curva');
+  if (!caja || !cont) return;
+  const curvas = d.curvas || [];
+  if (!curvas.length) { caja.style.display = 'none'; return; }
+  caja.style.display = 'block';
+  const c = curvas[curvaFoco % curvas.length];
+  // La más lenta del circuito se marca: es donde menos se adelanta
+  const minv = Math.min(...curvas.map(x => x.velocidad_rel));
+  const esLenta = c.velocidad_rel <= minv + 0.02;
+  const pct = Math.round(c.velocidad_rel * 100);
+  cont.innerHTML =
+    '<div class="duelo"><div class="top">' +
+    '<span>TURN ' + c.numero + ' · ' + c.direccion.toUpperCase() + '</span>' +
+    '<span class="score ' + (esLenta ? 'high' : (c.velocidad_rel < 0.75 ? 'mid' : 'low')) +
+    '">' + pct + '%</span></div>' +
+    '<div class="razon">' + Math.round(c.angulo) + '° of steering, taken at ' +
+    pct + "% of the lap's top speed" +
+    (esLenta ? ' — the slowest corner here, and the hardest to overtake into' : '') +
+    '</div></div>';
+}
 function pintarMapa(d) {
   const panel = document.getElementById('panel-mapa');
   const caja = document.getElementById('mapabox');
@@ -1937,6 +1966,23 @@ function pintarMapa(d) {
     ctx.fillStyle = 'rgba(210,220,240,.5)';
     const r = grande ? 2 : 1;
     for (const [x, y] of linea) ctx.fillRect(px(x) - r, py(y) - r, r*2, r*2);
+  }
+  // Curva destacada: anillo pulsante sobre el vértice + su número
+  const cur = (d.curvas || [])[curvaFoco % Math.max(1, (d.curvas||[]).length)];
+  if (cur && trazado.length) {
+    const X = px(cur.x), Y = py(cur.y);
+    const r = (grande ? 20 : 9) + Math.sin(Date.now() / 260) * (grande ? 4 : 2);
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255,214,0,.95)';
+    ctx.lineWidth = grande ? 4 : 2;
+    ctx.beginPath(); ctx.arc(X, Y, r, 0, 7); ctx.stroke();
+    ctx.fillStyle = 'rgba(255,214,0,.16)'; ctx.fill();
+    if (grande) {
+      ctx.font = '800 15px Inter,sans-serif';
+      ctx.fillStyle = '#FFD600';
+      ctx.fillText('T' + cur.numero, X + r + 6, Y + 5);
+    }
+    ctx.restore();
   }
   // Coches: punto con color de equipo, glow, anillo blanco y acrónimo
   const rCoche = grande ? 9 : 4;
@@ -2365,6 +2411,7 @@ async function tick() {
     board.innerHTML = '<div class="vacio">No live session</div>';
   }
   pintarMapa(d);
+  pintarCurva(d);
   // Race Intelligence: duelos con puntaje y su porqué (nunca un número
   // sin explicación — regla de oro de métricas honestas)
   const intel = document.getElementById('intel');
@@ -2742,6 +2789,18 @@ async def narrar_datos(client: anthropic.AsyncAnthropic, eventos):
         if estrategia:
             contexto += (f"\nMEASURED STRATEGY DATA (real, quotable): "
                          f"{estrategia}")
+        # Curva destacada: la más lenta del circuito, medida del trazado real.
+        # Es donde menos se adelanta, y da pie a explicar el trazado al aire.
+        if estado.curvas:
+            lenta = min(estado.curvas, key=lambda c: c["velocidad_rel"])
+            contexto += (
+                f"\nCORNER SPOTLIGHT (measured from this circuit's own GPS "
+                f"trace): turn {lenta['numero']} is the slowest corner on the "
+                f"lap — a {int(lenta['angulo'])}° "
+                f"{lenta['direccion']}-hander taken at roughly "
+                f"{int(lenta['velocidad_rel'] * 100)}% of the lap's top speed. "
+                f"Good moment to explain why a corner like that is so hard to "
+                f"overtake into.")
         # Lectura de NUESTRO modelo (calculada con lo medido en esta carrera).
         # Se marca como estimación propia para que el dúo no la venda como un
         # hecho — la credibilidad del canal depende de esa distinción.
@@ -4198,6 +4257,82 @@ def _cargar_trazado_cache(circuito):
             p = json.load(f)
         return p if isinstance(p, list) and len(p) > 20 else []
     return []
+
+
+def curvas_del_trazado(puntos, ventana=6, umbral_grados=14):
+    """Detecta las CURVAS del circuito a partir del trazado real.
+
+    De las coordenadas sale el giro en cada punto (ángulo entre el tramo que
+    entra y el que sale); donde ese giro se mantiene alto hay una curva. Y
+    como las muestras llegan a intervalos regulares, lo juntas que estén dice
+    la velocidad: apretadas = lento.
+
+    Devuelve [{numero, angulo, direccion, velocidad_rel, x, y, indice}]
+    numeradas desde meta, o [] si el trazado no da para medirlo.
+    """
+    pts = [(float(p["x"]), float(p["y"])) for p in (puntos or [])
+           if isinstance(p, dict) and p.get("x") is not None
+           and p.get("y") is not None]
+    n = len(pts)
+    if n < 40:
+        return []
+    sep = [math.dist(pts[i], pts[(i + 1) % n]) for i in range(n)]
+    orden = sorted(sep)
+    # Referencia de velocidad: el tramo más rápido (percentil 90) del circuito
+    ref = orden[int(n * 0.9)] or 1.0
+    # Un hueco en el GPS deja un salto largo que, visto como geometría, parece
+    # un giro brutal. Marcamos esos saltos para NO inventar curvas ahí (el
+    # mapa hace lo mismo al pintar: corta la línea en vez de cruzar el
+    # circuito). Referencia: la mediana, que no la mueve un dato suelto.
+    mediana = orden[n // 2] or 1.0
+    salto = [s > 6 * mediana for s in sep]
+
+    giros = []
+    for i in range(n):
+        a, b, c = pts[(i - ventana) % n], pts[i], pts[(i + ventana) % n]
+        v1 = (b[0] - a[0], b[1] - a[1])
+        v2 = (c[0] - b[0], c[1] - b[1])
+        n1 = math.hypot(*v1) or 1.0
+        n2 = math.hypot(*v2) or 1.0
+        cos = max(-1.0, min(1.0, (v1[0] * v2[0] + v1[1] * v2[1]) / (n1 * n2)))
+        cruz = v1[0] * v2[1] - v1[1] * v2[0]      # signo = sentido del giro
+        # ¿Hay un hueco dentro de la ventana que mide este giro? Entonces el
+        # ángulo no es de fiar: se descarta el punto.
+        roto = any(salto[(i - ventana + k) % n] for k in range(2 * ventana))
+        giros.append((math.degrees(math.acos(cos)), cruz, roto))
+
+    # Tramos seguidos por encima del umbral = una curva
+    curvas, actual = [], []
+    for i in range(n + ventana):          # +ventana: cierra una curva en meta
+        j = i % n
+        if giros[j][0] >= umbral_grados and not giros[j][2]:
+            actual.append(j)
+        elif actual:
+            if len(actual) >= 2:
+                curvas.append(actual)
+            actual = []
+    if len(actual) >= 2:
+        curvas.append(actual)
+    if not curvas:
+        return []
+
+    salida = []
+    for idxs in curvas:
+        # El vértice: el punto de giro más cerrado del tramo
+        pico = max(idxs, key=lambda j: giros[j][0])
+        vel = sum(sep[j] for j in idxs) / len(idxs)
+        salida.append({
+            "indice": pico,
+            "angulo": round(giros[pico][0], 1),
+            "direccion": "left" if giros[pico][1] > 0 else "right",
+            # 0 = lo más lento del circuito, 1 = a tope
+            "velocidad_rel": round(max(0.0, min(1.0, vel / ref)), 3),
+            "x": pts[pico][0], "y": pts[pico][1],
+        })
+    salida.sort(key=lambda c: c["indice"])       # orden de recorrido
+    for k, c in enumerate(salida, start=1):
+        c["numero"] = k
+    return salida
 
 
 def _color_velocidad(t):
@@ -5898,6 +6033,7 @@ async def bucle_mapa():
                 estado.mapa = []
             if estado.mapa_trazado:
                 estado.mapa_trazado = []
+                estado.curvas = []
             tele_trazada = None
             continue
         # Guardar cada 10 s dónde va el replay, para retomar tras reinicio
@@ -5916,6 +6052,7 @@ async def bucle_mapa():
             circuito = t.sesion.get("circuit_short_name") or ""
             if trazado:
                 estado.mapa_trazado = trazado
+                estado.curvas = curvas_del_trazado(trazado)
                 tele_trazada = t
                 log.info("🗺️  Trazado del circuito precargado (%d puntos)",
                          len(trazado))
@@ -5930,6 +6067,7 @@ async def bucle_mapa():
                 guardado = _cargar_trazado_cache(circuito)
                 if guardado:
                     estado.mapa_trazado = guardado
+                    estado.curvas = curvas_del_trazado(guardado)
                     log.info("🗺️  Trazado de %s tomado del caché (%d puntos) "
                              "— aún sin vuelta rodada en esta sesión",
                              circuito, len(guardado))
