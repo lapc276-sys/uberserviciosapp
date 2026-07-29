@@ -5394,32 +5394,60 @@ def _guardar_short(short_id, datos):
         log.warning("No se pudo guardar short (%s)", e)
 
 
+# Con el Repl dormido no hay quién genere nada: el bucle vive dentro del
+# proceso. Con ADELANTAR en on, al estar despierto se hacen TAMBIÉN las
+# franjas que aún no llegan hoy, así una sola ventana de encendido saca los
+# shorts del día completos. El precio es que salen seguidos en vez de
+# repartidos — peor para el algoritmo de Shorts, pero mucho mejor que
+# publicar uno o ninguno. Con el server 24/7 (deployment) esto se apaga:
+# SHORTS_ADELANTAR=off y cada franja vuelve a salir a su hora.
+SHORTS_ADELANTAR = os.environ.get("SHORTS_ADELANTAR", "on").lower() not in (
+    "off", "0", "", "no")
+
+
 def _slot_short_pendiente(ahora):
-    """Devuelve (slot_id, hora_slot) de la última franja del día que ya pasó
-    y todavía no tiene short guardado; o None si están todas al día.
+    """Devuelve (slot_id, hora_slot) de una franja del día sin short guardado,
+    o None si están todas hechas.
 
     Con esto el generador es idempotente y recupera franjas perdidas (por
-    reinicios del server o por no estar corriendo en el minuto exacto)."""
+    reinicios del server o por no estar corriendo en el minuto exacto). Las
+    ya vencidas van primero: si el proceso se muere a mitad de la puesta al
+    día, lo que queda por hacer es lo que menos urgía."""
+    hoy = ahora.strftime("%Y%m%d_")
+
+    def falta(h):
+        slot_id = f"{hoy}{h:02d}00"
+        return (slot_id, h) if not os.path.exists(
+            f"shorts/short_{slot_id}.json") else None
+
+    # 1) Franjas cuya hora ya pasó, de la más reciente a la más vieja
     for h in sorted(SHORTS_HORARIOS, reverse=True):
-        if ahora.hour < h:
-            continue  # esa franja aún no llega hoy
-        slot_id = ahora.strftime("%Y%m%d_") + f"{h:02d}00"
-        if not os.path.exists(f"shorts/short_{slot_id}.json"):
-            return slot_id, h
+        if ahora.hour >= h and (p := falta(h)):
+            return p
+    # 2) Y si se permite adelantar, las que faltan por llegar hoy
+    if SHORTS_ADELANTAR:
+        for h in sorted(SHORTS_HORARIOS):
+            if ahora.hour < h and (p := falta(h)):
+                return p
     return None
 
 
 async def bucle_shorts():
-    """Genera 4 shorts por día (noticias + momentos dramáticos) a horas fijas.
+    """Genera un short por franja del día (SHORTS_HORAS), a horas fijas.
 
     Idempotente: una franja se genera una sola vez. Si el server estaba caído
-    o pasó del minuto exacto, la recupera al arrancar/al siguiente ciclo."""
+    o pasó del minuto exacto, la recupera al arrancar/al siguiente ciclo. Con
+    SHORTS_ADELANTAR en on también hace las franjas que aún no llegan, para
+    que un Repl que se duerme igual saque el día completo."""
     if not os.environ.get("ANTHROPIC_API_KEY"):
         return
     os.makedirs("shorts", exist_ok=True)
     client = anthropic.AsyncAnthropic()
-    log.info("📹 Generador de shorts activado (4/día a horas %s UTC)",
-             SHORTS_HORARIOS)
+    log.info("📹 Generador de shorts activado (%d/día a horas %s UTC)%s",
+             len(SHORTS_HORARIOS), SHORTS_HORARIOS,
+             " — ADELANTANDO las franjas del día (pensado para un Repl que "
+             "se duerme; con el server 24/7 pon SHORTS_ADELANTAR=off)"
+             if SHORTS_ADELANTAR else "")
     while True:
         try:
             ahora = dt.datetime.now(dt.timezone.utc)
