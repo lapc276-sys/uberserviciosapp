@@ -2742,6 +2742,14 @@ async def narrar_datos(client: anthropic.AsyncAnthropic, eventos):
         if estrategia:
             contexto += (f"\nMEASURED STRATEGY DATA (real, quotable): "
                          f"{estrategia}")
+        # Lectura de NUESTRO modelo (calculada con lo medido en esta carrera).
+        # Se marca como estimación propia para que el dúo no la venda como un
+        # hecho — la credibilidad del canal depende de esa distinción.
+        modelo = _lectura_modelo()
+        if modelo:
+            contexto += (f"\nOUR OWN STRATEGY MODEL (an ESTIMATE from the "
+                         f"data measured in THIS race — present it as our "
+                         f"read, never as fact): {modelo}")
         clima = estado.tele.clima
         if clima.get("lluvia"):
             contexto += ("\nWEATHER: it is RAINING on track — treacherous, "
@@ -5960,6 +5968,62 @@ _RESUMEN_SESIONES = os.environ.get(
 # Regla de la casa: aquí solo entra lo MEDIDO, nunca una estimación.
 DATOS_DIR = os.path.join("datos", "carreras")
 DATOS_VERSION = 1
+
+
+def _lectura_modelo():
+    """Lectura del modelo propio de estrategia con los datos MEDIDOS en la
+    carrera en curso: cuántas paradas salen a cuenta y si hay ventana de
+    undercut en el duelo más caliente. Texto listo para el aire, o "" si aún
+    no hay datos suficientes que lo respalden."""
+    t = estado.tele
+    if t is None:
+        return ""
+    try:
+        import estrategia
+        pit = t.perdida_pit() or {}
+        coste = pit.get("segundos")
+        partes = []
+        # 1) Plan de paradas, usando la degradación del líder como referencia
+        tabla = t.tabla()
+        nums = {p: n for n, p in t.posiciones.items()}
+        deg_lider = t.degradacion(nums.get(1)) if tabla else None
+        if deg_lider and coste and t.total_vueltas:
+            rec = estrategia.recomendacion_paradas(
+                t.total_vueltas, deg_lider["pendiente"], coste,
+                muestras_deg=deg_lider.get("muestras"),
+                muestras_parada=pit.get("muestras"))
+            if rec:
+                partes.append(rec["motivo"])
+        # 2) ¿Le conviene parar YA al líder?
+        if deg_lider and coste and t.total_vueltas and t.vuelta:
+            restantes = max(0, t.total_vueltas - t.vuelta)
+            ahora = estrategia.conviene_parar_ahora(
+                restantes, deg_lider["pendiente"], deg_lider.get("edad") or 0,
+                coste)
+            if ahora:
+                partes.append(ahora["motivo"])
+        # 3) Ventana de undercut en el duelo más caliente
+        duelos = t.battle_scores()
+        if duelos:
+            d = duelos[0]
+            gap_txt = None
+            for f in tabla:
+                if f["pos"] == d["pos_detras"]:
+                    gap_txt = f.get("gap")
+                    break
+            deg_delante = t.degradacion(nums.get(d["pos_delante"]))
+            if gap_txt and deg_delante:
+                with contextlib.suppress(ValueError):
+                    uc = estrategia.ventana_undercut(
+                        float(str(gap_txt).lstrip("+")),
+                        deg_delante["pendiente"],
+                        deg_delante.get("edad") or 0)
+                    if uc:
+                        partes.append(f"{d['entre']}: {uc['motivo']}")
+        return "; ".join(partes)
+    except Exception as e:
+        log.info("Modelo de estrategia no disponible (%s)", e)
+        return ""
 
 
 def _guardar_datos_carrera(s):
