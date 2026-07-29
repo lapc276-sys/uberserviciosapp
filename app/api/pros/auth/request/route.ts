@@ -5,6 +5,7 @@ import { createMagicToken } from '@/lib/pro-auth';
 import { sendEmail } from '@/lib/email';
 import { sendSms } from '@/lib/sms';
 import { site } from '@/lib/config/site';
+import { RATE_LIMITS, limitRequest, rateLimitResponse } from '@/lib/rate-limit';
 
 export const runtime = 'nodejs';
 
@@ -17,6 +18,13 @@ const schema = z.object({ email: z.string().email() });
  * enumerable endpoint would let anyone probe which cleaners work for us.
  */
 export async function POST(req: Request) {
+  // Each accepted call sends an email and an SMS to someone else's address.
+  // Unlimited, that is a spam cannon pointed at our own pros.
+  const limit = limitRequest(req, 'magic-link', RATE_LIMITS.magicLink);
+  if (!limit.ok) {
+    return rateLimitResponse(limit, 'Too many sign-in requests. Please wait a few minutes.');
+  }
+
   const parsed = schema.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) {
     return NextResponse.json({ error: 'Enter a valid email address.' }, { status: 422 });

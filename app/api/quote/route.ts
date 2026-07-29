@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { calculateQuote } from '@/lib/quote';
+import { RATE_LIMITS, limitRequest, rateLimitResponse } from '@/lib/rate-limit';
 
 export const runtime = 'nodejs';
 
@@ -14,6 +15,9 @@ const schema = z.object({
 });
 
 export async function POST(req: Request) {
+  const limit = limitRequest(req, 'quote', RATE_LIMITS.quote);
+  if (!limit.ok) return rateLimitResponse(limit);
+
   let body: unknown;
   try {
     body = await req.json();

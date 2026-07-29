@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { calculateQuote } from '@/lib/quote';
 import { getService } from '@/lib/config/services';
+import { RATE_LIMITS, limitRequest, rateLimitResponse } from '@/lib/rate-limit';
 
 export const runtime = 'nodejs';
 
@@ -29,6 +30,11 @@ const schema = z.object({
  * effects are stubbed behind env-gated integrations — see lib/automations.
  */
 export async function POST(req: Request) {
+  // A booking fires email, SMS, an invoice and a dispatch round — a loop here
+  // spams real customers and real pros, not just our own logs.
+  const limit = limitRequest(req, 'book', RATE_LIMITS.book);
+  if (!limit.ok) return rateLimitResponse(limit);
+
   let body: unknown;
   try {
     body = await req.json();

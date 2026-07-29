@@ -5,6 +5,7 @@ import { buildAnalysis } from '@/lib/vision/estimate';
 import { priceFromAnalysis } from '@/lib/vision/pricing';
 import { services } from '@/lib/config/services';
 import { saveVisionAnalysis, createLead } from '@/lib/data';
+import { RATE_LIMITS, limitRequest, rateLimitResponse } from '@/lib/rate-limit';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -41,6 +42,17 @@ function framesAreSafe(frames: string[]): boolean {
 }
 
 export async function POST(req: Request) {
+  // Checked before parsing: this endpoint is unauthenticated and every call
+  // that reaches the analyzer spends money, so the cheapest possible rejection
+  // has to come first.
+  const limit = limitRequest(req, 'vision', RATE_LIMITS.vision);
+  if (!limit.ok) {
+    return rateLimitResponse(
+      limit,
+      'You’ve reached the limit for video quotes. Try again later, or book with our quick questionnaire.',
+    );
+  }
+
   let body: unknown;
   try {
     body = await req.json();

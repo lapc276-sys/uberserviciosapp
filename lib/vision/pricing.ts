@@ -20,6 +20,26 @@ export const MINIMUM_JOB_USD = 89;
 /** Share of revenue paid to the pro (the rest is platform margin). */
 export const PRO_PAYOUT_SHARE = 0.75;
 
+/**
+ * Payment processing, charged on the full amount collected — tax included,
+ * because the processor takes its cut of the tax we merely pass through.
+ * Stripe's standard US card rate.
+ */
+export const PAYMENT_FEE_PCT = 0.029;
+export const PAYMENT_FEE_FIXED_USD = 0.3;
+
+/**
+ * Per-job variable technology cost: one vision analysis (~8 frames at a
+ * multimodal model), plus the confirmation and reminder SMS and emails that
+ * every booking fires.
+ *
+ * Small per job and easy to wave away — which is exactly why it belongs in the
+ * arithmetic. A margin figure that omits the costs a job actually incurs is
+ * not a margin figure, and the whole point of computing this in code rather
+ * than in a spreadsheet is that it stays honest as volume grows.
+ */
+export const TECH_COST_PER_JOB_USD = 0.15;
+
 export interface VisionQuote {
   minutes: number;
   hours: number;
@@ -36,8 +56,14 @@ export interface VisionQuote {
   proPayout: number;
   /** Estimated consumables for this job — a real cost, not a rounding error. */
   supplyCost: number;
-  /** What's left after paying the pro and the supplies. */
+  /** Card processing on the tax-inclusive total. */
+  paymentFee: number;
+  /** Vision analysis + transactional SMS/email for this job. */
+  techCost: number;
+  /** What's left after the pro, supplies, processing and technology. */
   platformMargin: number;
+  /** Margin as a share of pre-tax revenue, for comparing jobs of any size. */
+  marginPct: number;
   currency: 'USD';
 }
 
@@ -73,6 +99,14 @@ export function priceFromAnalysis(
       .reduce((sum, l) => sum + l.estimatedCost, 0),
   );
 
+  // Processing is charged on what the customer actually pays, so tax is in the
+  // base even though we never keep it.
+  const collected = midpoint * (1 + taxRate);
+  const paymentFee = Number((collected * PAYMENT_FEE_PCT + PAYMENT_FEE_FIXED_USD).toFixed(2));
+  const techCost = TECH_COST_PER_JOB_USD;
+
+  const platformMargin = Number((midpoint - proPayout - supplyCost - paymentFee - techCost).toFixed(2));
+
   return {
     minutes: analysis.totalMinutes,
     hours: Number(hours.toFixed(2)),
@@ -86,7 +120,10 @@ export function priceFromAnalysis(
     taxNote: taxRate > 0 ? cityTax?.note : undefined,
     proPayout,
     supplyCost,
-    platformMargin: Math.round(midpoint - proPayout - supplyCost),
+    paymentFee,
+    techCost,
+    platformMargin,
+    marginPct: midpoint > 0 ? Number(((platformMargin / midpoint) * 100).toFixed(1)) : 0,
     currency: 'USD',
   };
 }
