@@ -4878,6 +4878,14 @@ def _lente(concepto):
 # (o disparando POST /control/ola/{trazado}); se auto-siembra al arrancar.
 _OLA_ARCHIVO = "shorts_ola.json"          # cola prioritaria (runtime)
 _OLA_MARCADOR = "shorts_ola_gp.json"      # último GP sembrado (runtime)
+# Cada cuánto sale un tema de la ola. A 1.0 saldrían todos seguidos y el canal
+# pasaría dos días hablando del mismo circuito; a 0.5 se intercalan con el
+# pozo normal y la ola dura todo el fin de semana sin cansar.
+try:
+    OLA_PROPORCION = max(0.0, min(1.0, float(os.environ.get("OLA_PROPORCION",
+                                                            "0.5"))))
+except ValueError:
+    OLA_PROPORCION = 0.5
 # GP en curso: por defecto el Hungaroring (GP vigente). Cambia el Secret
 # GP_ACTUAL cada fin de semana al circuito de la próxima carrera.
 _GP_ACTUAL = (os.environ.get("GP_ACTUAL") or "Hungaroring").strip()
@@ -4984,8 +4992,13 @@ def _sembrar_ola_gp_actual():
 def _tema_tecnico_siguiente():
     """Genera un tema técnico ENFOCADO (concepto × lente), evitando los
     usados recientemente. El espacio combinatorio es enorme → prácticamente
-    no repite en todo el año. Si hay una OLA de GP sembrada, ese tema manda."""
-    prioritario = _tema_prioritario()
+    no repite en todo el año.
+
+    Si hay una OLA de GP sembrada, sus temas se INTERCALAN (no salen todos
+    seguidos): ocho shorts consecutivos del mismo circuito se sienten
+    repetitivos aunque el concepto técnico cambie."""
+    prioritario = (_tema_prioritario() if random.random() < OLA_PROPORCION
+                   else None)
     return _tema_tecnico_impl(prioritario)
 
 
@@ -5337,6 +5350,9 @@ async def animaciones_para_short(short):
 # diferencia. Los números salen de la clasificación REAL (Jolpica), nunca
 # inventados, y las fotos son de licencia libre — mismo gancho que las cuentas
 # que usan fotos con derechos, pero 100% legal.
+_COMPARACION_ULTIMA = "comparacion_ultima.json"
+
+
 def _apellido(nombre):
     partes = (nombre or "").strip().split()
     return partes[-1].upper() if partes else ""
@@ -5367,6 +5383,19 @@ async def _generar_short_comparacion(sid):
     try:
         delta = int(a["puntos"]) - int(b["puntos"])
     except (TypeError, ValueError):
+        return None
+    # NO repetir la misma tarjeta: entre carreras la clasificación no cambia,
+    # así que sin este freno saldría el mismo short (mismos pilotos, mismos
+    # puntos) un día tras otro. Si nada cambió, esta franja se cede al short
+    # educativo de siempre.
+    firma = f"{a['nombre']}|{a['puntos']}|{b['nombre']}|{b['puntos']}"
+    ultima = ""
+    with contextlib.suppress(Exception):
+        with open(_COMPARACION_ULTIMA) as f:
+            ultima = json.load(f).get("firma", "")
+    if firma == ultima:
+        log.info("📊 Tarjeta de comparación omitida: la clasificación no ha "
+                 "cambiado desde la última")
         return None
     fa = await _descargar_foto_comparacion(
         f"{a['nombre']} F1", f"shorts/cmpa_{sid}.jpg")
@@ -5410,6 +5439,9 @@ async def _generar_short_comparacion(sid):
         "sin_overlay": True,      # la tarjeta ya trae su propio texto
     }
     _guardar_short(sid, datos)
+    with contextlib.suppress(Exception):
+        with open(_COMPARACION_ULTIMA, "w") as f:
+            json.dump({"firma": firma}, f)
     log.info("📊 Short de comparación creado: %s %s vs %s %s",
              lider, a["puntos"], seg, b["puntos"])
     return True
