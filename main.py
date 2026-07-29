@@ -3492,6 +3492,28 @@ VALIDAR_FOTOS = os.environ.get("VALIDAR_FOTOS", "on").lower() not in (
 FOTOS_VEREDICTOS = "fotos_veredictos.json"
 _veredictos: dict | None = None
 
+# Imágenes mínimas para que un short se publique. Con menos, el video sale
+# casi negro (el armador rellena con fondo liso) y eso hace más daño en el
+# canal que no publicar: el short se pospone y se reintenta solo.
+MIN_FOTOS_SHORT = max(1, int(os.environ.get("MIN_FOTOS_SHORT", "2") or 2))
+# Un short al que le faltan fotos se reintenta con espera (cada consulta a
+# las fuentes + la validación con visión cuestan), y tras varios intentos se
+# abandona: mejor un short menos hoy que un video negro en el canal.
+FOTOS_ESPERA_S = 1800
+FOTOS_INTENTOS_MAX = 6
+
+
+def _fuentes_fotos_activas():
+    """Fuentes de fotos con clave configurada. Openverse y Wikimedia no
+    necesitan clave y siempre se intentan, así que no salen en la lista —
+    esto sirve para ver de un golpe si el canal depende solo de ellas."""
+    activas = []
+    if PEXELS_API_KEY:
+        activas.append("Pexels")
+    if FLICKR_API_KEY:
+        activas.append("Flickr")
+    return activas
+
 SYSTEM_VISION_FOTO = """You are the photo editor of a professional \
 motorsport TV channel. Decide if this image can air FULL-SCREEN in a \
 documentary about the given topic. REJECT (apta=false) if it is: a \
@@ -5976,12 +5998,21 @@ async def bucle_youtube():
                     log.info("📤 Short %s sin audio — se pospone", sid)
                     continue
 
+                # 1b) Si ya se pospuso por falta de fotos, esperar antes de
+                # volver a intentarlo: cada intento consulta las fuentes y
+                # valida con visión, y eso cuesta. Sin esta espera el bucle
+                # reintentaría cada 5 min indefinidamente.
+                espera = short.get("fotos_espera_hasta", 0)
+                if espera and time.time() < espera:
+                    continue
+
                 # 2) Fotos de libre uso VARIADAS (sin repetir entre shorts).
                 # Un short educativo usa fotos de SU tema técnico; los demás,
                 # el mix genérico de pilotos/equipos.
                 log.info("📤 Preparando short %s para YouTube "
                          "(video + subida)…", sid)
-                if short.get("fotos"):
+                propias = bool(short.get("fotos"))   # gráficos nuestros
+                if propias:
                     fotos = short["fotos"]
                 elif short.get("consulta"):
                     fotos = await fotos_para_tema(short["consulta"], n=6)
@@ -6001,6 +6032,48 @@ async def bucle_youtube():
                     if clips:
                         log.info("🎬 %d animación(es) propia(s) en el short %s",
                                  len(clips[:2]), sid)
+
+                # 2c) Sin material visual no se publica. El armador tiene un
+                # respaldo de fondo liso para no reventar, pero un short casi
+                # negro en el canal es peor que no publicar: se POSPONE y se
+                # reintenta al siguiente ciclo, cuando las fuentes respondan.
+                # No cuenta como intento fallido — el guion está bien, lo que
+                # falta son las fotos. Un gráfico propio (tarjeta de
+                # comparación) ya es material completo y le basta con uno.
+                minimo = 1 if propias else MIN_FOTOS_SHORT
+                if len(fotos) < minimo:
+                    n_int = short.get("fotos_intentos", 0) + 1
+                    short["fotos_intentos"] = n_int
+                    if n_int >= FOTOS_INTENTOS_MAX:
+                        # Se acabaron los reintentos: se abandona ESTE short
+                        # en vez de publicarlo negro. La franja no se vuelve a
+                        # generar hoy (una por día), así que hoy sale uno
+                        # menos — y eso es lo correcto.
+                        short["yt_intentos"] = 3
+                        log.warning(
+                            "📤 Short %s ABANDONADO tras %d intentos sin "
+                            "conseguir imágenes. Hoy sale un short menos. "
+                            "Fuentes con clave: %s — añadir PEXELS_API_KEY "
+                            "(gratis) es el arreglo de fondo",
+                            sid, n_int,
+                            ", ".join(_fuentes_fotos_activas()) or "ninguna")
+                    else:
+                        short["fotos_espera_hasta"] = (time.time()
+                                                      + FOTOS_ESPERA_S)
+                        log.warning(
+                            "📤 Short %s pospuesto (%d/%d): %d imagen(es) "
+                            "para un mínimo de %d. Sin fotos saldría un video "
+                            "casi negro. Reintento en %d min. Fuentes con "
+                            "clave: %s", sid, n_int, FOTOS_INTENTOS_MAX,
+                            len(fotos), minimo, FOTOS_ESPERA_S // 60,
+                            ", ".join(_fuentes_fotos_activas()) or
+                            "ninguna (solo Openverse/Wikimedia)")
+                    _guardar_short(sid, short)
+                    continue
+                # Salió del bache: borrar el rastro de esperas anteriores
+                if short.pop("fotos_espera_hasta", None) is not None:
+                    short.pop("fotos_intentos", None)
+                    _guardar_short(sid, short)
 
                 # 3) Armar video vertical: rótulo grande estilo F1 Shorts (solo
                 # el gancho limpio, sin hashtags), chip de serie arriba y

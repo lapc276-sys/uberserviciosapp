@@ -885,6 +885,11 @@ async def _armar_video_base(audio_path, fotos_urls, titulo, salida_mp4,
         # (siempre disponible); ffmpeg lavfi como plan B con su error real
         # en el log.
         if not imgs:
+            # Que se vea en el log: un video así sale casi negro, y hasta
+            # ahora esto pasaba en silencio. Quien llama decide si publicarlo.
+            log.warning("⚠️  Ninguna de las %d imágenes entró — el video "
+                        "saldrá con fondo liso, sin fotos",
+                        len(fotos_urls or []))
             fondo = os.path.join(tmp, "fondo.png")
             try:
                 from PIL import Image
