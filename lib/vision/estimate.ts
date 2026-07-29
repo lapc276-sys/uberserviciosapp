@@ -8,10 +8,10 @@ import {
   type SoilDimension,
   type ConditionLevel,
 } from './types';
+import { planSupplies } from './supplies';
 import {
   ROOM_BASE_MINUTES,
   OBJECT_TIME_COST,
-  SUPPLY_RULES,
   MINUTES_PER_PRO,
   SERVICE_TIME_MULTIPLIER,
   soilWeightsFor,
@@ -116,13 +116,20 @@ export function buildAnalysis(
       ? rooms.reduce((sum, r) => sum + soilIndex(r.soil, r.type) * r.estimatedMinutes, 0) / totalMinutes
       : 0;
 
-  const allObjects = rooms.flatMap((r) => r.objects.map((o) => o.name.toLowerCase()));
+  // Supplies are planned from the worst level seen anywhere: if one bathroom
+  // has mold, the van needs mold remover regardless of the average.
   const worstSoil = rooms.reduce<SoilScores>((acc, r) => {
     for (const key of Object.keys(acc) as SoilDimension[]) acc[key] = Math.max(acc[key], r.soil[key]);
     return acc;
   }, { ...EMPTY_SOIL });
 
-  const supplies = SUPPLY_RULES.filter((rule) => rule.when(worstSoil, allObjects)).map((r) => r.supply);
+  const supplyPlan = planSupplies({
+    soil: worstSoil,
+    objects: rooms.flatMap((r) => r.objects),
+    roomTypes: rooms.map((r) => r.type),
+    serviceSlug,
+    totalMinutes: Math.round(totalMinutes),
+  });
 
   const confidence = rooms.length
     ? rooms.reduce((sum, r) => sum + r.confidence, 0) / rooms.length
@@ -138,7 +145,8 @@ export function buildAnalysis(
     rooms,
     totalMinutes: Math.round(totalMinutes),
     recommendedPros: Math.max(1, Math.ceil(totalMinutes / MINUTES_PER_PRO)),
-    suppliesNeeded: [...new Set(supplies)],
+    suppliesNeeded: supplyPlan.lines.map((l) => l.name),
+    supplyPlan,
     condition: conditionFromIndex(weightedIndex) as ConditionLevel,
     confidence: Number(confidence.toFixed(2)),
     source,

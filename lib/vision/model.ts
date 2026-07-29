@@ -81,20 +81,6 @@ export const OBJECT_TIME_COST: Record<string, number> = {
   balcony: 8,
 };
 
-/** Supplies implied by what the analysis found. */
-export const SUPPLY_RULES: { when: (soil: SoilScores, objects: string[]) => boolean; supply: string }[] = [
-  { when: (s) => s.grease >= 35, supply: 'Heavy-duty degreaser' },
-  { when: (s) => s.mold >= 25, supply: 'Mold & mildew remover' },
-  { when: (s) => s.stains >= 35, supply: 'Stain treatment / scrub pads' },
-  { when: (s) => s.hair >= 30, supply: 'Pet hair vacuum attachment' },
-  { when: (s) => s.dust >= 40, supply: 'Microfiber cloths & duster' },
-  { when: (s) => s.trash >= 30, supply: 'Contractor trash bags' },
-  { when: (_, o) => o.some((x) => /carpet|rug/.test(x)), supply: 'Carpet cleaner' },
-  { when: (_, o) => o.some((x) => /window|mirror|glass/.test(x)), supply: 'Glass cleaner' },
-  { when: (_, o) => o.some((x) => /oven|stove|range/.test(x)), supply: 'Oven cleaner' },
-  { when: (_, o) => o.some((x) => /toilet|bathtub|shower/.test(x)), supply: 'Bathroom disinfectant' },
-];
-
 /** A single job longer than this warrants a second pro, and so on. */
 export const MINUTES_PER_PRO = 240;
 

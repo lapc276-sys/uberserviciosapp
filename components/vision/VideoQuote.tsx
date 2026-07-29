@@ -13,6 +13,14 @@ import { Button } from '@/components/ui/Button';
 
 type Stage = 'idle' | 'extracting' | 'analyzing' | 'done' | 'error';
 
+/** Order matters: what gets forgotten in the van comes first. */
+const SUPPLY_GROUPS = [
+  { category: 'chemical' as const, label: 'Products' },
+  { category: 'consumable' as const, label: 'Consumables' },
+  { category: 'ppe' as const, label: 'Protection' },
+  { category: 'tool' as const, label: 'Tools' },
+];
+
 const CONDITION_STYLES: Record<string, string> = {
   excellent: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300',
   good: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300',
@@ -261,14 +269,52 @@ export function VideoQuote() {
               <Row label="AI confidence" value={`${Math.round(analysis.confidence * 100)}%`} />
             </div>
 
-            {analysis.suppliesNeeded.length > 0 && (
+            {analysis.supplyPlan && analysis.supplyPlan.lines.length > 0 && (
               <div className="mt-5 border-t pt-4">
                 <p className="flex items-center gap-1.5 text-xs uppercase tracking-wide text-slate-400">
-                  <ShoppingBag className="h-3.5 w-3.5" /> Supplies needed
+                  <ShoppingBag className="h-3.5 w-3.5" /> What we bring
                 </p>
-                <ul className="mt-2 space-y-1 text-sm text-slate-600 dark:text-slate-300">
-                  {analysis.suppliesNeeded.map((s) => <li key={s}>· {s}</li>)}
-                </ul>
+
+                {analysis.supplyPlan.safetyWarnings.map((warning) => (
+                  <p
+                    key={warning}
+                    className="mt-3 flex items-start gap-2 rounded-xl bg-red-50 p-3 text-xs text-red-800 dark:bg-red-950/30 dark:text-red-300"
+                  >
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                    <span>{warning}</span>
+                  </p>
+                ))}
+
+                {SUPPLY_GROUPS.map(({ category, label }) => {
+                  const lines = analysis.supplyPlan!.lines.filter((l) => l.category === category);
+                  if (lines.length === 0) return null;
+                  return (
+                    <div key={category} className="mt-3">
+                      <p className="text-xs font-medium text-slate-500 dark:text-slate-400">{label}</p>
+                      <ul className="mt-1 space-y-1">
+                        {lines.map((l) => (
+                          <li key={l.id} className="flex items-baseline justify-between gap-2 text-sm">
+                            <span className="text-slate-600 dark:text-slate-300">
+                              {l.name}
+                              {l.quantity > 1 && <span className="text-slate-400"> ×{l.quantity}</span>}
+                            </span>
+                            {l.hazard && (
+                              <span className="shrink-0 rounded-full bg-amber-50 px-1.5 text-[10px] font-medium uppercase text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
+                                {l.hazard}
+                              </span>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  );
+                })}
+
+                {analysis.supplyPlan.ppeRequired.length > 0 && (
+                  <p className="mt-3 text-xs text-slate-400">
+                    Protective equipment: {analysis.supplyPlan.ppeRequired.join(', ')}
+                  </p>
+                )}
               </div>
             )}
 

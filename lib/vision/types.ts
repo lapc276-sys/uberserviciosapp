@@ -1,3 +1,5 @@
+import type { SupplyPlan } from './supplies';
+
 /**
  * Domain model for AI property analysis.
  *
@@ -80,7 +82,10 @@ export interface PropertyAnalysis {
   totalMinutes: number;
   /** Crew size the job warrants, so a long job isn't a 9-hour solo shift. */
   recommendedPros: number;
+  /** Product names only — the detailed plan lives in `supplyPlan`. */
   suppliesNeeded: string[];
+  /** Quantities, costs, PPE and never-mix warnings. See lib/vision/supplies.ts. */
+  supplyPlan?: SupplyPlan;
   condition: ConditionLevel;
   /** 0–1 overall confidence; drives how wide the quoted range is. */
   confidence: number;

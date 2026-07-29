@@ -34,6 +34,9 @@ export interface VisionQuote {
   taxNote?: string;
   /** What the assigned pro(s) earn, before platform fee. */
   proPayout: number;
+  /** Estimated consumables for this job — a real cost, not a rounding error. */
+  supplyCost: number;
+  /** What's left after paying the pro and the supplies. */
   platformMargin: number;
   currency: 'USD';
 }
@@ -62,6 +65,13 @@ export function priceFromAnalysis(
   const taxAmount = Math.round(midpoint * taxRate);
 
   const proPayout = Math.round(midpoint * PRO_PAYOUT_SHARE);
+  // Only consumables count against margin — reusable tools are capital, not
+  // a per-job cost, so charging them to every job would understate profit.
+  const supplyCost = Math.round(
+    (analysis.supplyPlan?.lines ?? [])
+      .filter((l) => l.category !== 'tool')
+      .reduce((sum, l) => sum + l.estimatedCost, 0),
+  );
 
   return {
     minutes: analysis.totalMinutes,
@@ -75,7 +85,8 @@ export function priceFromAnalysis(
     totalHigh: Math.round(high * (1 + taxRate)),
     taxNote: taxRate > 0 ? cityTax?.note : undefined,
     proPayout,
-    platformMargin: Math.round(midpoint - proPayout),
+    supplyCost,
+    platformMargin: Math.round(midpoint - proPayout - supplyCost),
     currency: 'USD',
   };
 }
