@@ -760,6 +760,13 @@ export interface CalibrationSummary {
   meanAbsErrorMinutes: number;
   /** Share of jobs where predicted was within 20% of actual. */
   within20Pct: number;
+  /**
+   * Summed minutes across scored jobs. Ratio-based calibration needs the
+   * totals, not the mean of per-job ratios: a 20-minute job that ran 10
+   * minutes over should not weigh the same as a 6-hour job that did.
+   */
+  predictedTotalMinutes: number;
+  actualTotalMinutes: number;
   recent: VisionAnalysisRecord[];
 }
 
@@ -807,6 +814,8 @@ export async function getCalibration(): Promise<CalibrationSummary> {
     meanBiasMinutes: Math.round(bias),
     meanAbsErrorMinutes: Math.round(absError),
     within20Pct: scored.length ? Math.round((close / scored.length) * 100) : 0,
+    predictedTotalMinutes: scored.reduce((s, r) => s + r.predictedMinutes, 0),
+    actualTotalMinutes: scored.reduce((s, r) => s + r.actualMinutes!, 0),
     recent: records.slice(0, 25),
   };
 }

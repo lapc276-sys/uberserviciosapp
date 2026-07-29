@@ -10,13 +10,11 @@ import {
 } from './types';
 import { planSupplies } from './supplies';
 import {
-  ROOM_BASE_MINUTES,
-  OBJECT_TIME_COST,
-  MINUTES_PER_PRO,
-  SERVICE_TIME_MULTIPLIER,
+  DEFAULT_TIME_MODEL,
   soilWeightsFor,
   soilIndex,
   conditionFromIndex,
+  type TimeModelParams,
 } from './model';
 
 /**
@@ -40,9 +38,9 @@ function normalizeSoil(soil: Partial<SoilScores> | undefined): SoilScores {
   return out;
 }
 
-function roomMinutes(room: RawRoomObservation, soil: SoilScores): number {
-  const base = ROOM_BASE_MINUTES[room.type] ?? ROOM_BASE_MINUTES.other;
-  const weights = soilWeightsFor(room.type);
+function roomMinutes(room: RawRoomObservation, soil: SoilScores, params: TimeModelParams): number {
+  const base = params.roomBaseMinutes[room.type] ?? params.roomBaseMinutes.other;
+  const weights = soilWeightsFor(room.type, params);
 
   // Soil contributes its weighted minutes scaled by severity.
   const soilMinutes = (Object.keys(weights) as SoilDimension[]).reduce(
@@ -54,7 +52,7 @@ function roomMinutes(room: RawRoomObservation, soil: SoilScores): number {
   // shaky guess can't inflate the bill.
   const objectMinutes = room.objects.reduce((sum, obj) => {
     const key = obj.name.trim().toLowerCase();
-    const cost = OBJECT_TIME_COST[key];
+    const cost = params.objectTimeCost[key];
     if (!cost) return sum;
     const count = Math.max(1, Math.min(obj.count || 1, 6));
     const weight = Math.max(0.3, Math.min(obj.confidence || 0.5, 1));
@@ -83,25 +81,31 @@ export interface EstimateOptions {
   serviceSlug: string;
   source: PropertyAnalysis['source'];
   warnings?: string[];
+  /**
+   * The calibrated model for this market. Defaults to the uncalibrated
+   * hypothesis so this function stays pure and callable from a test without a
+   * database — the caller is responsible for loading the market's model.
+   */
+  model?: TimeModelParams;
 }
 
 export function buildAnalysis(
   observations: RawRoomObservation[],
-  { serviceSlug, source, warnings = [] }: EstimateOptions,
+  { serviceSlug, source, warnings = [], model = DEFAULT_TIME_MODEL }: EstimateOptions,
 ): PropertyAnalysis {
   const labels = labelRooms(observations);
-  const multiplier = SERVICE_TIME_MULTIPLIER[serviceSlug] ?? 1;
+  const multiplier = model.serviceTimeMultiplier[serviceSlug] ?? 1;
 
   const rooms: RoomAnalysis[] = observations.map((obs, i) => {
     const soil = normalizeSoil(obs.soil);
-    const minutes = roomMinutes(obs, soil) * multiplier;
+    const minutes = roomMinutes(obs, soil, model) * multiplier;
     return {
       type: obs.type,
       label: labels[i],
       confidence: Math.max(0, Math.min(obs.confidence ?? 0.5, 1)),
       objects: obs.objects.filter((o) => o.name?.trim()).slice(0, 25),
       soil,
-      condition: conditionFromIndex(soilIndex(soil, obs.type)),
+      condition: conditionFromIndex(soilIndex(soil, obs.type, model)),
       estimatedMinutes: Math.round(minutes),
       notes: obs.notes,
     };
@@ -113,7 +117,7 @@ export function buildAnalysis(
   // spotless hallway can't offset a disastrous kitchen.
   const weightedIndex =
     totalMinutes > 0
-      ? rooms.reduce((sum, r) => sum + soilIndex(r.soil, r.type) * r.estimatedMinutes, 0) / totalMinutes
+      ? rooms.reduce((sum, r) => sum + soilIndex(r.soil, r.type, model) * r.estimatedMinutes, 0) / totalMinutes
       : 0;
 
   // Supplies are planned from the worst level seen anywhere: if one bathroom
@@ -144,7 +148,7 @@ export function buildAnalysis(
   return {
     rooms,
     totalMinutes: Math.round(totalMinutes),
-    recommendedPros: Math.max(1, Math.ceil(totalMinutes / MINUTES_PER_PRO)),
+    recommendedPros: Math.max(1, Math.ceil(totalMinutes / model.minutesPerPro)),
     suppliesNeeded: supplyPlan.lines.map((l) => l.name),
     supplyPlan,
     condition: conditionFromIndex(weightedIndex) as ConditionLevel,

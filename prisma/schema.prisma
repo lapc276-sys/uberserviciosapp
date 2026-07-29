@@ -382,3 +382,43 @@ model Lead {
 
   @@index([createdAt])
 }
+
+/**
+ * A versioned time model for one market.
+ *
+ * The constants in lib/vision/model.ts are the hypothesis every market starts
+ * from. This table is how that hypothesis gets replaced by something fitted to
+ * reality — without a deploy, because the person who notices that Manhattan
+ * kitchens run 20% long is not the person who ships code, and the gap between
+ * noticing and fixing is where mispriced jobs pile up.
+ *
+ * Versions are immutable and never deleted: a quote must stay explainable
+ * months later ("which model priced this?"), and a bad calibration has to be
+ * revertible by activating the previous version rather than by remembering
+ * what the numbers used to be.
+ */
+model TimeModelConfig {
+  id String @id @default(cuid())
+  /// City slug, or "default" for every market without its own.
+  market  String  @default("default")
+  version Int
+  /// Exactly one active version per market — enforced in a transaction.
+  active  Boolean @default(false)
+
+  /// A partial or complete TimeModelParams; merged over defaults on read.
+  params Json
+
+  /// Why this version exists — the note a future reader needs.
+  note      String?
+  createdBy String?
+
+  /// Accuracy of the version this one replaces, captured at creation.
+  basedOnSamples Int?
+  basedOnBiasPct Float?
+
+  createdAt   DateTime  @default(now())
+  activatedAt DateTime?
+
+  @@unique([market, version])
+  @@index([market, active])
+}

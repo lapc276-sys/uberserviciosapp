@@ -6,6 +6,7 @@ import { priceFromAnalysis } from '@/lib/vision/pricing';
 import { services } from '@/lib/config/services';
 import { saveVisionAnalysis, createLead } from '@/lib/data';
 import { RATE_LIMITS, limitRequest, rateLimitResponse } from '@/lib/rate-limit';
+import { getTimeModel, marketFor } from '@/lib/vision/time-model-store';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -76,7 +77,10 @@ export async function POST(req: Request) {
   const analyzer = getAnalyzer();
   const { rooms, warnings } = await analyzer.analyze({ frames, serviceSlug });
 
-  const analysis = buildAnalysis(rooms, { serviceSlug, source: analyzer.name, warnings });
+  // Prices come from this market's calibrated model when one is active, and
+  // from the built-in hypothesis otherwise.
+  const model = await getTimeModel(marketFor(city));
+  const analysis = buildAnalysis(rooms, { serviceSlug, source: analyzer.name, warnings, model });
   if (analysis.rooms.length === 0) {
     return NextResponse.json(
       {

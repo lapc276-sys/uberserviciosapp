@@ -4,6 +4,14 @@ import { getCalibration } from '@/lib/data';
 import { getTrainingReport } from '@/lib/vision/training';
 import { formatDuration } from '@/lib/vision/estimate';
 import { formatCurrency } from '@/lib/utils';
+import { isDbConfigured } from '@/lib/db';
+import { DEFAULT_TIME_MODEL } from '@/lib/vision/model';
+import {
+  getActiveVersion,
+  listTimeModelVersions,
+  suggestCalibration,
+} from '@/lib/vision/time-model-store';
+import { TimeModelPanel } from '@/components/admin/TimeModelPanel';
 
 export const metadata: Metadata = buildMetadata({ title: 'AI Vision | Homigo Admin', path: '/admin/vision', noindex: true });
 export const dynamic = 'force-dynamic';
@@ -14,7 +22,18 @@ export const dynamic = 'force-dynamic';
  * the AI is over- or under-estimating, and by how much.
  */
 export default async function VisionAdminPage() {
-  const [c, training] = await Promise.all([getCalibration(), getTrainingReport()]);
+  const [c, training, activeModel, versions] = await Promise.all([
+    getCalibration(),
+    getTrainingReport(),
+    getActiveVersion(),
+    listTimeModelVersions(),
+  ]);
+
+  const suggestion = suggestCalibration(activeModel?.params ?? DEFAULT_TIME_MODEL, {
+    samples: c.withActuals,
+    predictedTotal: c.predictedTotalMinutes,
+    actualTotal: c.actualTotalMinutes,
+  });
 
   const biasLabel =
     c.withActuals === 0
@@ -61,6 +80,13 @@ export default async function VisionAdminPage() {
           </div>
         ))}
       </div>
+
+      <TimeModelPanel
+        active={activeModel}
+        versions={versions}
+        suggestion={suggestion}
+        dbConfigured={isDbConfigured}
+      />
 
       {/* Field training samples — the only thing that improves the model */}
       <div className="mt-8 rounded-2xl border bg-white shadow-soft dark:bg-white/[0.03]">
