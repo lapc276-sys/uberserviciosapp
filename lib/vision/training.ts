@@ -43,7 +43,10 @@ export interface TrainingSampleInput extends OperatorContext {
   taskActuals?: TaskActual[];
   capturedBy: string;
   serviceSlug: string;
+  /** The market this sample is priced against. */
   city?: string;
+  /** Where it was actually filmed, when that differs from the market. */
+  captureOrigin?: string;
   propertyType?: string;
   consentName: string;
   consentTraining: boolean;
@@ -120,6 +123,7 @@ export async function saveTrainingSample(input: TrainingSampleInput): Promise<st
       capturedBy: input.capturedBy,
       serviceSlug: input.serviceSlug,
       city: input.city,
+      captureOrigin: input.captureOrigin,
       propertyType: input.propertyType ?? 'residential',
       consentName: input.consentName,
       consentAt: new Date(),

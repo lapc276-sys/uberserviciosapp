@@ -302,7 +302,18 @@ model TrainingSample {
   id           String @id @default(cuid())
   capturedBy   String // pro id or admin email
   serviceSlug  String
+  /// The market this sample is priced against — always a market we sell in.
   city         String?
+  /**
+   * Where the footage was actually filmed, when that differs from the market.
+   *
+   * Capture and sale are separate concerns. Timing how long a greasy oven takes
+   * is a fact about the oven, and it is worth collecting wherever there are
+   * willing hands — but it must never be mistaken for a statement about local
+   * labour rates, which always come from the market being sold to. Recorded so
+   * pace differences between origins stay visible instead of silently blending.
+   */
+  captureOrigin String?
   propertyType String @default("residential")
 
   // Consent record — who agreed, and when.

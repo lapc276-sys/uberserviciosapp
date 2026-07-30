@@ -7,6 +7,8 @@ import { services } from '@/lib/config/services';
 import { saveVisionAnalysis, createLead } from '@/lib/data';
 import { RATE_LIMITS, limitRequest, rateLimitResponse } from '@/lib/rate-limit';
 import { getTimeModel, marketFor } from '@/lib/vision/time-model-store';
+import { FLOOR_TYPES, PET_KINDS } from '@/lib/vision/tasks';
+import { buildWalkthrough } from '@/lib/vision/walkthrough';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -22,6 +24,19 @@ const schema = z.object({
     .max(MAX_FRAMES, `Up to ${MAX_FRAMES} frames`),
   serviceSlug: z.string().refine((s) => services.some((x) => x.slug === s), 'Unknown service'),
   city: z.string().max(120).optional(),
+  /** Answers from the guided walkthrough. Every one of these moves the price. */
+  preferences: z
+    .object({
+      requested: z.array(z.string().max(60)).max(60).optional(),
+      declined: z.array(z.string().max(60)).max(60).optional(),
+    })
+    .optional(),
+  property: z
+    .object({
+      floorTypes: z.array(z.enum(FLOOR_TYPES)).max(7).optional(),
+      pets: z.array(z.enum(PET_KINDS)).max(3).optional(),
+    })
+    .optional(),
   contact: z
     .object({
       name: z.string().max(120).optional(),
@@ -69,7 +84,7 @@ export async function POST(req: Request) {
     );
   }
 
-  const { frames, serviceSlug, city, contact } = parsed.data;
+  const { frames, serviceSlug, city, contact, preferences, property } = parsed.data;
   if (!framesAreSafe(frames)) {
     return NextResponse.json({ error: 'Frames must be JPEG, PNG or WebP images.' }, { status: 422 });
   }
@@ -80,7 +95,14 @@ export async function POST(req: Request) {
   // Prices come from this market's calibrated model when one is active, and
   // from the built-in hypothesis otherwise.
   const model = await getTimeModel(marketFor(city));
-  const analysis = buildAnalysis(rooms, { serviceSlug, source: analyzer.name, warnings, model });
+  const analysis = buildAnalysis(rooms, {
+    serviceSlug,
+    source: analyzer.name,
+    warnings,
+    model,
+    preferences,
+    property,
+  });
   if (analysis.rooms.length === 0) {
     return NextResponse.json(
       {
@@ -115,5 +137,12 @@ export async function POST(req: Request) {
     });
   }
 
-  return NextResponse.json({ id, analysis, quote });
+  // The script for the rest of the conversation: what to ask, what to film
+  // again, and what we saw. Property questions are dropped once answered so the
+  // app never asks about the dog twice.
+  const walkthrough = buildWalkthrough(analysis, serviceSlug, {
+    askProperty: !property?.floorTypes?.length && !property?.pets?.length,
+  });
+
+  return NextResponse.json({ id, analysis, quote, walkthrough });
 }

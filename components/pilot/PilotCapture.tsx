@@ -46,6 +46,8 @@ export function PilotCapture({ capturedBy }: { capturedBy: string }) {
   const [step, setStep] = useState<Step>('setup');
   const [serviceSlug, setServiceSlug] = useState('deep-cleaning');
   const [city, setCity] = useState(cities[0].name);
+  /** Where the footage was filmed, when that is not a market we sell in. */
+  const [captureOrigin, setCaptureOrigin] = useState('');
   const [propertyType, setPropertyType] = useState('residential');
 
   const [consentName, setConsentName] = useState('');
@@ -219,6 +221,7 @@ export function PilotCapture({ capturedBy }: { capturedBy: string }) {
         body: JSON.stringify({
           serviceSlug,
           city,
+          captureOrigin: captureOrigin.trim() || undefined,
           propertyType,
           consentName,
           consentTraining,
@@ -354,7 +357,7 @@ export function PilotCapture({ capturedBy }: { capturedBy: string }) {
               </select>
             </div>
             <div>
-              <label className="text-sm font-medium">City</label>
+              <label className="text-sm font-medium">Market (prices)</label>
               <select
                 value={city}
                 onChange={(e) => setCity(e.target.value)}
@@ -362,6 +365,24 @@ export function PilotCapture({ capturedBy }: { capturedBy: string }) {
               >
                 {cities.map((c) => <option key={c.slug}>{c.name}</option>)}
               </select>
+            </div>
+
+            {/*
+              Capture and sale are separate. Timing how long a greasy oven takes
+              is a fact about the oven and worth collecting anywhere; local
+              labour rates are not, and always come from the market above.
+            */}
+            <div>
+              <label className="text-sm font-medium">Filmed in (if elsewhere)</label>
+              <input
+                value={captureOrigin}
+                onChange={(e) => setCaptureOrigin(e.target.value)}
+                placeholder="e.g. Caracas, Venezuela"
+                className="mt-2 w-full rounded-xl border bg-white px-4 py-3 text-base outline-none focus:border-brand-400 dark:bg-white/5"
+              />
+              <p className="mt-1 text-xs text-slate-400">
+                Los tiempos viajan; las tarifas no. Se cotiza siempre con el mercado de arriba.
+              </p>
             </div>
             <div>
               <label className="text-sm font-medium">Property</label>

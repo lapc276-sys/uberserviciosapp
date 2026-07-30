@@ -24,6 +24,11 @@ const analysisSchema = z.object({
 const schema = z.object({
   serviceSlug: z.string().refine((s) => services.some((x) => x.slug === s), 'Unknown service'),
   city: z.string().max(120).optional(),
+  /**
+   * Where the footage was filmed, when that is not a market we sell in.
+   * Times travel; labour rates do not.
+   */
+  captureOrigin: z.string().max(120).optional(),
   propertyType: z.string().max(40).optional(),
   consentName: z.string().min(2).max(120),
   consentTraining: z.boolean().default(false),
@@ -95,6 +100,7 @@ export async function POST(req: Request) {
     capturedBy,
     serviceSlug: data.serviceSlug,
     city: data.city,
+    captureOrigin: data.captureOrigin,
     propertyType: data.propertyType,
     consentName: data.consentName,
     consentTraining: data.consentTraining,

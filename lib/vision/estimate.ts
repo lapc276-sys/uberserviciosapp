@@ -9,7 +9,7 @@ import {
   type ConditionLevel,
 } from './types';
 import { planSupplies } from './supplies';
-import { planRoomTasks } from './tasks';
+import { planRoomTasks, petAwareSoil, type TaskPreferences, type PropertyContext } from './tasks';
 import {
   DEFAULT_TIME_MODEL,
   soilWeightsFor,
@@ -88,11 +88,15 @@ export interface EstimateOptions {
    * database — the caller is responsible for loading the market's model.
    */
   model?: TimeModelParams;
+  /** What the customer asked for or declined during the walkthrough. */
+  preferences?: TaskPreferences;
+  /** Floors, pets — what the camera reads badly and the walkthrough asks. */
+  property?: PropertyContext;
 }
 
 export function buildAnalysis(
   observations: RawRoomObservation[],
-  { serviceSlug, source, warnings = [], model = DEFAULT_TIME_MODEL }: EstimateOptions,
+  { serviceSlug, source, warnings = [], model = DEFAULT_TIME_MODEL, preferences, property }: EstimateOptions,
 ): PropertyAnalysis {
   const labels = labelRooms(observations);
   const multiplier = model.serviceTimeMultiplier[serviceSlug] ?? 1;
@@ -102,14 +106,37 @@ export function buildAnalysis(
   const estimatorMinutes = { room: 0, task: 0 };
 
   const rooms: RoomAnalysis[] = observations.map((obs, i) => {
-    const soil = normalizeSoil(obs.soil);
+    // A declared pet raises the hair floor before anything is costed: the
+    // animal is rarely in shot, but its hair is on every surface.
+    const soil = petAwareSoil(normalizeSoil(obs.soil), property);
     const objects = obs.objects.filter((o) => o.name?.trim()).slice(0, 25);
 
-    const taskPlan = planRoomTasks({ roomType: obs.type, soil, objects, serviceSlug });
+    const taskPlan = planRoomTasks({ roomType: obs.type, soil, objects, serviceSlug, preferences, property });
+
+    /*
+     * The customer's answers have to move the price under *either* estimator.
+     *
+     * Floor type, pets and requested work are all expressed in the task
+     * catalog, so the room model — which has one number per room — would
+     * otherwise ignore them and quote someone the same price whether or not
+     * they said "carpet, a dog, and please do the oven". A question whose
+     * answer changes nothing is worse than not asking.
+     *
+     * The adjustment is measured, not invented: re-plan the room as if nothing
+     * had been answered and take the difference. The catalog is the only place
+     * that knows what cleaning an oven interior costs.
+     */
+    const neutralPlan = planRoomTasks({
+      roomType: obs.type,
+      soil: normalizeSoil(obs.soil),
+      objects,
+      serviceSlug,
+    });
+    const answerDelta = taskPlan.totalMinutes - neutralPlan.totalMinutes;
 
     // Rounded per room, then summed — so the total always equals the sum of the
     // per-room figures the customer is shown, with no stray minute to explain.
-    const fromRoomModel = Math.round(roomMinutes(obs, soil, model) * multiplier);
+    const fromRoomModel = Math.max(1, Math.round(roomMinutes(obs, soil, model) * multiplier + answerDelta));
 
     // No service multiplier here, on purpose. The room model needs one because
     // it has no way to express that a deep clean does *more things* — it only

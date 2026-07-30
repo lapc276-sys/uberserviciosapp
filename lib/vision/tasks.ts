@@ -742,22 +742,115 @@ const DEEP_SERVICES = new Set([
   'post-construction-cleaning',
 ]);
 
+/**
+ * What the customer asked for, on top of what the footage showed.
+ *
+ * The walkthrough is a conversation, not a scan: someone says "clean inside the
+ * oven" or "don't touch the garage". Those answers have to reach the price, or
+ * the app asked a question it then ignored — which is worse than not asking.
+ */
+/**
+ * Facts about the home that a camera reads badly or not at all.
+ *
+ * Floor type is the clearest case: carpet and tile look similar in a dim phone
+ * frame and behave nothing alike — carpet cannot be mopped, needs slow
+ * overlapping vacuum passes, and holds pet hair that hard floors release. Pets
+ * are worse: the animal is usually not in shot, but its hair is everywhere and
+ * it is the single most common reason a job runs over.
+ *
+ * So the walkthrough asks. One question each, and both change the price.
+ */
+export const FLOOR_TYPES = ['carpet', 'rug_over_hard', 'hardwood', 'tile', 'vinyl', 'laminate', 'concrete'] as const;
+export type FloorType = (typeof FLOOR_TYPES)[number];
+
+export const FLOOR_TYPE_LABELS: Record<FloorType, { en: string; es: string }> = {
+  carpet: { en: 'Wall-to-wall carpet', es: 'Alfombra de pared a pared' },
+  rug_over_hard: { en: 'Rugs over hard floor', es: 'Alfombras sobre piso duro' },
+  hardwood: { en: 'Hardwood', es: 'Madera' },
+  tile: { en: 'Tile', es: 'Cerámica o baldosa' },
+  vinyl: { en: 'Vinyl', es: 'Vinilo' },
+  laminate: { en: 'Laminate', es: 'Laminado' },
+  concrete: { en: 'Concrete', es: 'Cemento' },
+};
+
+/**
+ * How much longer floor work takes on each surface, relative to vinyl.
+ *
+ * Carpet is slow because vacuuming it properly means overlapping passes, not
+ * one sweep. Tile is slow because of grout. Hypotheses, like everything else —
+ * and among the first the pilot should check, since floor type is easy to
+ * record and hard to argue about.
+ */
+export const FLOOR_EFFORT: Record<FloorType, number> = {
+  carpet: 1.45,
+  rug_over_hard: 1.2,
+  tile: 1.15,
+  concrete: 1.1,
+  hardwood: 1.05,
+  laminate: 1,
+  vinyl: 1,
+};
+
+export const PET_KINDS = ['dog', 'cat', 'other'] as const;
+export type PetKind = (typeof PET_KINDS)[number];
+
+export const PET_LABELS: Record<PetKind, { en: string; es: string }> = {
+  dog: { en: 'Dog', es: 'Perro' },
+  cat: { en: 'Cat', es: 'Gato' },
+  other: { en: 'Other pet', es: 'Otra mascota' },
+};
+
+/** Tasks whose minutes scale with the floor surface. */
+const FLOOR_TASKS = new Set(['vacuum', 'mop', 'floor_edges', 'carpet_spot', 'pet_hair', 'stairs_detail']);
+
+export interface PropertyContext {
+  /** Floors present in the home. The slowest one governs, not the average. */
+  floorTypes?: FloorType[];
+  pets?: PetKind[];
+}
+
+export interface TaskPreferences {
+  /** Task ids the customer explicitly asked for, overriding service scope. */
+  requested?: string[];
+  /** Task ids the customer explicitly declined. Declining always wins. */
+  declined?: string[];
+}
+
 function applies(
   task: CleaningTask,
-  ctx: { roomType: RoomType; soil: SoilScores; objects: string[]; serviceSlug: string },
+  ctx: {
+    roomType: RoomType;
+    soil: SoilScores;
+    objects: string[];
+    serviceSlug: string;
+    preferences?: TaskPreferences;
+  },
 ): boolean {
   if (task.rooms.length > 0 && !task.rooms.includes(ctx.roomType)) return false;
-  if (task.services && !task.services.includes(ctx.serviceSlug)) return false;
-  if (task.deepOnly && !DEEP_SERVICES.has(ctx.serviceSlug)) return false;
 
-  if (task.requiresSoil && (ctx.soil[task.requiresSoil.dimension] ?? 0) < task.requiresSoil.min) {
-    return false;
-  }
+  // Declining beats every other rule, including an explicit request. If both
+  // arrive the customer changed their mind, and the safe reading of an
+  // ambiguous answer is the one that doesn't bill for unwanted work.
+  if (ctx.preferences?.declined?.includes(task.id)) return false;
 
-  // An object-gated task needs evidence. Guessing that a bathroom "probably"
-  // has a tub adds minutes to a quote for work that may not exist.
-  if (task.requiresObject && !task.requiresObject.some((name) => ctx.objects.includes(name))) {
-    return false;
+  const requested = ctx.preferences?.requested?.includes(task.id) ?? false;
+
+  // A request overrides scope gates — that is what asking is for. It does not
+  // override the room gate above: no amount of asking puts an oven in a
+  // bathroom.
+  if (!requested) {
+    if (task.services && !task.services.includes(ctx.serviceSlug)) return false;
+    if (task.deepOnly && !DEEP_SERVICES.has(ctx.serviceSlug)) return false;
+
+    if (task.requiresSoil && (ctx.soil[task.requiresSoil.dimension] ?? 0) < task.requiresSoil.min) {
+      return false;
+    }
+
+    // An object-gated task needs evidence. Guessing that a bathroom "probably"
+    // has a tub adds minutes to a quote for work that may not exist.
+    if (task.requiresObject && !task.requiresObject.some((name) => ctx.objects.includes(name))) {
+      return false;
+    }
   }
 
   return true;
@@ -775,19 +868,41 @@ export function planRoomTasks(ctx: {
   soil: SoilScores;
   objects: DetectedObject[];
   serviceSlug: string;
+  preferences?: TaskPreferences;
+  property?: PropertyContext;
 }): TaskPlan {
   const objectNames = ctx.objects.map((o) => o.name.trim().toLowerCase());
 
+  // The slowest surface governs. Averaging would quote a carpeted living room
+  // as if half of it were vinyl, and the crew still has to vacuum all of it.
+  const floorFactor = Math.max(1, ...(ctx.property?.floorTypes ?? []).map((f) => FLOOR_EFFORT[f] ?? 1));
+  const hasPets = (ctx.property?.pets?.length ?? 0) > 0;
+
   const lines: TaskLine[] = TASK_CATALOG.filter((task) =>
-    applies(task, { roomType: ctx.roomType, soil: ctx.soil, objects: objectNames, serviceSlug: ctx.serviceSlug }),
+    applies(task, {
+      roomType: ctx.roomType,
+      soil: ctx.soil,
+      objects: objectNames,
+      serviceSlug: ctx.serviceSlug,
+      preferences: ctx.preferences,
+    }),
   ).map((task) => {
     const driverScore = task.driver ? (ctx.soil[task.driver] ?? 0) : undefined;
+    let minutes = taskMinutesAt(task, driverScore ?? 0, ctx.roomType);
+
+    if (FLOOR_TASKS.has(task.id)) minutes *= floorFactor;
+
+    // A declared pet is stronger evidence than the footage: hair is hard to see
+    // in a phone frame and the animal is usually not in shot, so a low hair
+    // score on a home with a dog is more likely a missed read than a clean floor.
+    if (hasPets && (task.id === 'pet_hair' || task.id === 'upholstery')) minutes *= 1.3;
+
     return {
       id: task.id,
       label: task.label,
       labelEs: task.labelEs,
       category: task.category,
-      minutes: taskMinutesAt(task, driverScore ?? 0, ctx.roomType),
+      minutes: Number(minutes.toFixed(1)),
       driver: task.driver,
       driverScore,
       note: task.note,
@@ -798,6 +913,32 @@ export function planRoomTasks(ctx: {
     lines,
     totalMinutes: Number(lines.reduce((sum, l) => sum + l.minutes, 0).toFixed(1)),
   };
+}
+
+/**
+ * Pets make the hair task apply even when the camera saw a tidy floor.
+ *
+ * Kept separate from `applies` because it is a statement about evidence, not
+ * about scope: the declaration is a better signal than the frame.
+ */
+export function petAwareSoil(soil: SoilScores, property?: PropertyContext): SoilScores {
+  if (!property?.pets?.length) return soil;
+  const floor = property.pets.includes('dog') || property.pets.includes('cat') ? 30 : 20;
+  return { ...soil, hair: Math.max(soil.hair, floor) };
+}
+
+/**
+ * Whether a service already covers this task without the customer asking.
+ *
+ * Exported so the walkthrough can decide what is worth *offering*: offering
+ * work a service already includes implies an extra charge for something the
+ * customer is already paying for, which is the kind of thing that gets noticed
+ * in a review.
+ */
+export function isTaskInServiceScope(task: CleaningTask, serviceSlug: string): boolean {
+  if (task.services) return task.services.includes(serviceSlug);
+  if (task.deepOnly) return DEEP_SERVICES.has(serviceSlug);
+  return true;
 }
 
 /** Every task that could ever apply to a room type — the pilot's full checklist. */
