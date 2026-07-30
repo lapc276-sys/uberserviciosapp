@@ -41,6 +41,9 @@ SCOPES_LECTURA = ["https://www.googleapis.com/auth/youtube.upload",
 SCOPES_COMENTARIOS = ["https://www.googleapis.com/auth/youtube.upload",
                       "https://www.googleapis.com/auth/youtube.readonly",
                       "https://www.googleapis.com/auth/youtube.force-ssl"]
+# Los subtítulos (captions.insert) piden force-ssl igual que los comentarios:
+# una sola re-autorización desbloquea las dos cosas.
+SCOPES_SUBTITULOS = SCOPES_COMENTARIOS
 # User-Agent conforme a la política de Wikimedia (identificable + contacto);
 # sin esto, upload.wikimedia.org responde 429 a IPs compartidas como Replit
 _UA = {"User-Agent":
@@ -1192,6 +1195,39 @@ async def subir_miniatura(video_id, imagen_path):
     except Exception as e:
         log.info("No se pudo fijar la miniatura (¿canal sin verificar?) — "
                  "el video queda con frame automático (%s)", e)
+        return False
+
+
+def _subtitulos_sync(video_id, srt_path, idioma, nombre):
+    from googleapiclient.discovery import build
+    from googleapiclient.http import MediaFileUpload
+    yt = build("youtube", "v3", credentials=_credenciales(SCOPES_SUBTITULOS),
+               cache_discovery=False)
+    media = MediaFileUpload(srt_path, mimetype="application/octet-stream")
+    yt.captions().insert(
+        part="snippet",
+        body={"snippet": {"videoId": video_id, "language": idioma,
+                          "name": nombre, "isDraft": False}},
+        media_body=media).execute()
+
+
+async def subir_subtitulos(video_id, srt_path, idioma="en", nombre=""):
+    """Sube una pista de subtítulos al video. True si entró.
+
+    Cuesta ~400 unidades de cuota (una subida de video son ~1600), así que
+    con 4 shorts al día cabe de sobra. Requiere el scope force-ssl — el
+    mismo que los comentarios. No lanza: si falla, el video ya está subido
+    y funcionando, que es lo que importa."""
+    if not (video_id and srt_path and os.path.exists(srt_path)):
+        return False
+    try:
+        await asyncio.to_thread(_subtitulos_sync, video_id, srt_path,
+                                idioma, nombre)
+        log.info("💬 Subtítulos (%s) puestos en %s", idioma, video_id)
+        return True
+    except Exception as e:
+        log.info("No se pudieron subir los subtítulos de %s (%s) — "
+                 "¿falta re-autorizar con force-ssl?", video_id, e)
         return False
 
 

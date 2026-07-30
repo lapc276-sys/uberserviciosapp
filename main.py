@@ -44,6 +44,7 @@ import telemetria
 import youtube_subir
 import redes_sociales
 import graficos_f1
+import subtitulos
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 log = logging.getLogger("f1tv-backend")
@@ -3503,6 +3504,33 @@ FOTOS_ESPERA_S = 1800
 FOTOS_INTENTOS_MAX = 6
 
 
+# Subtítulos propios en cada short. El idioma PRINCIPAL del canal es el que
+# se sube (IDIOMA): es la pista fiel, y de ella salen las traducciones
+# automáticas de YouTube al resto de idiomas. Cuesta ~400 unidades de cuota
+# por short (una subida son ~1600), así que con 4 al día cabe holgado.
+SUBTITULOS_ON = os.environ.get("SUBTITULOS", "on").lower() not in (
+    "off", "0", "", "no")
+
+
+async def _poner_subtitulos(video_id, short, audio_ruta):
+    """Genera el SRT del short a partir de su guion y lo sube. No lanza."""
+    texto = (short.get("guion") or "").strip()
+    if not texto:
+        return False
+    dur = await asyncio.to_thread(youtube_subir._duracion_audio, audio_ruta)
+    if not dur:
+        log.info("💬 Sin duración de audio para %s — sin subtítulos",
+                 short.get("id"))
+        return False
+    ruta = f"shorts/short_{short['id']}.srt"
+    if not subtitulos.escribir_srt(texto, dur, ruta):
+        return False
+    ok = await youtube_subir.subir_subtitulos(video_id, ruta, idioma=IDIOMA)
+    with contextlib.suppress(OSError):
+        os.remove(ruta)
+    return ok
+
+
 def _fuentes_fotos_activas():
     """Fuentes de fotos con clave configurada. Openverse y Wikimedia no
     necesitan clave y siempre se intentan, así que no salen en la lista —
@@ -6108,6 +6136,17 @@ async def bucle_youtube():
                     short["youtube_id"] = res["id"]
                     short["youtube_url"] = res["url"]
                     _guardar_short(sid, short)
+                    # 4b) Subtítulos con el guion EXACTO. No hay que
+                    # transcribir: el texto es nuestro y el audio dura lo que
+                    # dura. Además de servir a quien ve sin sonido, le da a
+                    # YouTube una base fiel para traducir solo al español y
+                    # al hindi — sin eso traduce desde su reconocimiento de
+                    # voz, que destroza nombres de pilotos y términos
+                    # técnicos.
+                    if SUBTITULOS_ON:
+                        with contextlib.suppress(Exception):
+                            await _poner_subtitulos(res["id"], short,
+                                                    audio_ruta)
                 else:
                     short["yt_intentos"] = short.get("yt_intentos", 0) + 1
                     _guardar_short(sid, short)
