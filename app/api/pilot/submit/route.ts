@@ -37,6 +37,21 @@ const schema = z.object({
   hoursWorkedToday: z.coerce.number().min(0).max(24).optional(),
   crewSize: z.coerce.number().int().min(1).max(10).optional(),
   startHour: z.coerce.number().int().min(0).max(23).optional(),
+  /**
+   * Per-chore times. Partial on purpose — asking for all twenty would get
+   * zero, and three honest ones are three facts the model did not have.
+   */
+  taskActuals: z
+    .array(
+      z.object({
+        taskId: z.string().min(1).max(60),
+        roomIndex: z.number().int().min(0).max(40),
+        minutes: z.coerce.number().min(0).max(600).optional(),
+        skipped: z.boolean().optional(),
+      }),
+    )
+    .max(400)
+    .optional(),
   notes: z.string().max(1000).optional(),
 });
 
@@ -93,6 +108,7 @@ export async function POST(req: Request) {
     hoursWorkedToday: data.hoursWorkedToday,
     crewSize: data.crewSize,
     startHour: data.startHour,
+    taskActuals: data.taskActuals,
     notes: data.notes,
   });
 

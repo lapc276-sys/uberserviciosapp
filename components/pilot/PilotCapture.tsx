@@ -11,6 +11,8 @@ import {
   SOIL_DIMENSIONS, ROOM_TYPES, ROOM_LABELS, EMPTY_SOIL,
   type PropertyAnalysis, type RoomAnalysis, type RoomType,
 } from '@/lib/vision/types';
+import { TASK_BY_ID } from '@/lib/vision/tasks';
+import type { TaskActual } from '@/lib/vision/training';
 import { VoiceControl } from '@/components/pilot/VoiceControl';
 import type { VoiceCommand } from '@/lib/vision/voice-commands';
 import { services } from '@/lib/config/services';
@@ -25,13 +27,14 @@ import { cities } from '@/lib/config/cities';
  * one-handed, standing in someone's kitchen.
  */
 
-type Step = 'setup' | 'consent' | 'capture' | 'correct' | 'after' | 'wrap' | 'done';
+type Step = 'setup' | 'consent' | 'capture' | 'correct' | 'tasks' | 'after' | 'wrap' | 'done';
 
 const STEPS: { id: Step; label: string }[] = [
   { id: 'setup', label: 'Job' },
   { id: 'consent', label: 'Consent' },
   { id: 'capture', label: 'Scan' },
   { id: 'correct', label: 'Correct' },
+  { id: 'tasks', label: 'Tasks' },
   { id: 'after', label: 'After' },
   { id: 'wrap', label: 'Wrap' },
 ];
@@ -60,6 +63,12 @@ export function PilotCapture({ capturedBy }: { capturedBy: string }) {
   const [afterAnalysis, setAfterAnalysis] = useState<PropertyAnalysis | null>(null);
   const [quality, setQuality] = useState<{ score: number; verdict: string; summary: string } | null>(null);
   const [actualMinutes, setActualMinutes] = useState('');
+  /**
+   * Per-chore times, keyed `roomIndex:taskId`. Sparse on purpose — asking a
+   * cleaner to time twenty tasks would get zero of them.
+   */
+  const [taskTimes, setTaskTimes] = useState<Record<string, string>>({});
+  const [taskSkipped, setTaskSkipped] = useState<Record<string, boolean>>({});
   const [jobSequence, setJobSequence] = useState('1');
   const [hoursWorkedToday, setHoursWorkedToday] = useState('0');
   const [crewSize, setCrewSize] = useState('1');
@@ -171,7 +180,28 @@ export function PilotCapture({ capturedBy }: { capturedBy: string }) {
 
     if (command.kind === 'next') setActiveRoom((a) => Math.min(a + 1, rooms.length - 1));
     if (command.kind === 'prev') setActiveRoom((a) => Math.max(a - 1, 0));
-    if (command.kind === 'done' && rooms.length > 0) setStep('after');
+    if (command.kind === 'done' && rooms.length > 0) setStep('tasks');
+  }
+
+  /** Only chores the person actually reported on. Silence is not data. */
+  function collectTaskActuals(): TaskActual[] {
+    const out: TaskActual[] = [];
+    const keys = new Set([...Object.keys(taskTimes), ...Object.keys(taskSkipped)]);
+
+    for (const key of keys) {
+      const [roomPart, ...idParts] = key.split(':');
+      const roomIndex = Number(roomPart);
+      const taskId = idParts.join(':');
+      if (!Number.isInteger(roomIndex) || !taskId) continue;
+
+      const skipped = taskSkipped[key] === true;
+      const minutes = Number(taskTimes[key]);
+      const hasMinutes = Number.isFinite(minutes) && minutes > 0;
+      if (!skipped && !hasMinutes) continue;
+
+      out.push({ taskId, roomIndex, skipped: skipped || undefined, minutes: skipped ? undefined : minutes });
+    }
+    return out;
   }
 
   async function submit() {
@@ -197,6 +227,7 @@ export function PilotCapture({ capturedBy }: { capturedBy: string }) {
           corrected: { ...predicted, rooms },
           afterAnalysis: afterAnalysis ?? undefined,
           actualMinutes: minutes,
+          taskActuals: collectTaskActuals(),
           jobSequence: Number(jobSequence) || undefined,
           hoursWorkedToday: Number(hoursWorkedToday) || undefined,
           crewSize: Number(crewSize) || 1,
@@ -534,7 +565,87 @@ export function PilotCapture({ capturedBy }: { capturedBy: string }) {
 
             <div className="flex gap-3">
               <BackButton onClick={() => setStep('capture')} />
-              <NextButton onClick={() => setStep('after')} disabled={rooms.length === 0} />
+              <NextButton onClick={() => setStep('tasks')} disabled={rooms.length === 0} />
+            </div>
+          </div>
+        )}
+
+        {/* ── Tasks ─────────────────────────────────────────────────────── */}
+        {step === 'tasks' && (
+          <div className="space-y-5">
+            <div>
+              <h2 className="text-xl font-semibold">Time the chores</h2>
+              <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                Only the ones you noticed. Three honest times beat twenty guesses — a job total says the estimate
+                was wrong, this says <em>which chore</em> was wrong.
+              </p>
+              <p className="mt-1 text-sm text-slate-400">
+                Solo las que notaste. Tres tiempos reales valen más que veinte inventados.
+              </p>
+            </div>
+
+            {rooms.map((room, roomIndex) => (
+              <div key={roomIndex} className="rounded-2xl border bg-white p-4 dark:bg-white/[0.03]">
+                <p className="mb-3 font-medium">{room.label}</p>
+
+                {room.tasks.length === 0 ? (
+                  <p className="text-sm text-slate-400">
+                    No task list for this room — it was added by hand after the scan.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {room.tasks.map((task) => {
+                      const key = `${roomIndex}:${task.id}`;
+                      const skipped = taskSkipped[key] === true;
+                      const estimate = TASK_BY_ID[task.id];
+                      return (
+                        <div
+                          key={key}
+                          className={`flex items-center gap-2 rounded-xl border p-2 ${skipped ? 'opacity-45' : ''}`}
+                        >
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-sm">{task.labelEs}</p>
+                            <p className="truncate text-xs text-slate-400">
+                              {task.label} · est. {task.minutes} min
+                              {task.driver ? ` · ${task.driver} ${task.driverScore}` : ''}
+                            </p>
+                          </div>
+
+                          <input
+                            type="number"
+                            inputMode="numeric"
+                            min={0}
+                            max={600}
+                            disabled={skipped}
+                            value={taskTimes[key] ?? ''}
+                            onChange={(e) => setTaskTimes((prev) => ({ ...prev, [key]: e.target.value }))}
+                            placeholder={estimate ? String(Math.round(task.minutes)) : 'min'}
+                            aria-label={`Minutes for ${task.label}`}
+                            className="w-16 shrink-0 rounded-lg border px-2 py-1.5 text-center text-sm dark:bg-white/[0.06]"
+                          />
+
+                          <button
+                            type="button"
+                            onClick={() => setTaskSkipped((prev) => ({ ...prev, [key]: !prev[key] }))}
+                            aria-pressed={skipped}
+                            aria-label={`Mark ${task.label} not done`}
+                            className={`shrink-0 rounded-lg border px-2 py-1.5 text-xs ${
+                              skipped ? 'border-brand-500 text-brand-600' : 'text-slate-400'
+                            }`}
+                          >
+                            {skipped ? 'skipped' : 'skip'}
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            ))}
+
+            <div className="flex gap-3">
+              <BackButton onClick={() => setStep('correct')} />
+              <NextButton onClick={() => setStep('after')} />
             </div>
           </div>
         )}

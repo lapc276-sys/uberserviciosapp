@@ -339,6 +339,14 @@ model TrainingSample {
   /** Local hour the job started, 0-23. */
   startHour        Int?
 
+  /**
+   * Minutes recorded against individual chores, when the pro had a moment to
+   * split them out. Deliberately optional and partial: a job total says the
+   * estimate was wrong, this says which task was wrong, and three timed tasks
+   * out of twenty is still three facts the model did not have.
+   */
+  taskActuals Json?
+
   /** Post-service analysis, for quality scoring. */
   afterAnalysis Json?
   /** 0-100 improvement score derived from before vs. after. */

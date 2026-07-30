@@ -21,7 +21,26 @@ export interface OperatorContext {
   startHour?: number;
 }
 
+/**
+ * One chore, timed.
+ *
+ * The high-value record in the whole pilot. A job total tells you the estimate
+ * was wrong; this tells you that degreasing the stovetop takes triple what the
+ * catalog claims, which is a fixable fact about one constant.
+ */
+export interface TaskActual {
+  taskId: string;
+  /** Index into the corrected analysis' rooms, so the soil context is known. */
+  roomIndex: number;
+  /** Minutes actually spent. Omitted when the task was skipped. */
+  minutes?: number;
+  /** The task did not apply or was not done — itself a useful correction. */
+  skipped?: boolean;
+}
+
 export interface TrainingSampleInput extends OperatorContext {
+  /** Partial by design — a few timed chores beat none. */
+  taskActuals?: TaskActual[];
   capturedBy: string;
   serviceSlug: string;
   city?: string;
@@ -115,6 +134,7 @@ export async function saveTrainingSample(input: TrainingSampleInput): Promise<st
       hoursWorkedToday: input.hoursWorkedToday,
       crewSize: input.crewSize ?? 1,
       startHour: input.startHour,
+      taskActuals: input.taskActuals?.length ? (input.taskActuals as unknown as object) : undefined,
       afterAnalysis: input.afterAnalysis as unknown as object | undefined,
       qualityScore: input.qualityScore,
       notes: input.notes,
