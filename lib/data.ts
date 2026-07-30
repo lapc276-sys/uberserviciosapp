@@ -1,4 +1,5 @@
 import { prisma, isDbConfigured } from './db';
+import { marketFor } from './vision/time-model-store';
 
 /**
  * Data-access layer. One API for the app; two backends underneath:
@@ -767,10 +768,27 @@ export interface CalibrationSummary {
    */
   predictedTotalMinutes: number;
   actualTotalMinutes: number;
+  /**
+   * Every scored job as a predicted/actual pair, for calibration.
+   *
+   * Passed on unscreened: deciding which of these to trust belongs in
+   * lib/vision/outliers.ts, not here, so the rejection rule lives in one place
+   * and can be tested without a database.
+   */
+  scoredSamples: { predictedMinutes: number; actualMinutes: number; city: string | null }[];
   recent: VisionAnalysisRecord[];
 }
 
-export async function getCalibration(): Promise<CalibrationSummary> {
+/**
+ * Accuracy of the estimate, optionally for one market only.
+ *
+ * The market filter is not a convenience — it is a safety rail. Capture happens
+ * wherever there are willing hands, which is not necessarily where the jobs are
+ * sold. Pooling those samples and calibrating from the total would let footage
+ * filmed in one country move the price of work quoted in another, and the
+ * arithmetic would look perfectly healthy while doing it.
+ */
+export async function getCalibration(market?: string): Promise<CalibrationSummary> {
   let records: VisionAnalysisRecord[];
 
   if (!isDbConfigured || !prisma) {
@@ -797,6 +815,10 @@ export async function getCalibration(): Promise<CalibrationSummary> {
     }));
   }
 
+  if (market) {
+    records = records.filter((r) => marketFor(r.city) === market);
+  }
+
   const scored = records.filter((r) => r.actualMinutes && r.actualMinutes > 0);
   const bias = scored.length
     ? scored.reduce((s, r) => s + (r.predictedMinutes - r.actualMinutes!), 0) / scored.length
@@ -816,6 +838,11 @@ export async function getCalibration(): Promise<CalibrationSummary> {
     within20Pct: scored.length ? Math.round((close / scored.length) * 100) : 0,
     predictedTotalMinutes: scored.reduce((s, r) => s + r.predictedMinutes, 0),
     actualTotalMinutes: scored.reduce((s, r) => s + r.actualMinutes!, 0),
+    scoredSamples: scored.map((r) => ({
+      predictedMinutes: r.predictedMinutes,
+      actualMinutes: r.actualMinutes!,
+      city: r.city,
+    })),
     recent: records.slice(0, 25),
   };
 }

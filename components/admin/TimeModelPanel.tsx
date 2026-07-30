@@ -18,13 +18,18 @@ export function TimeModelPanel({
   versions,
   suggestion,
   dbConfigured,
+  market,
+  markets,
 }: {
   active: TimeModelVersion | null;
   versions: TimeModelVersion[];
   suggestion: CalibrationSuggestion;
   dbConfigured: boolean;
+  market: string;
+  markets: { slug: string; name: string }[];
 }) {
   const router = useRouter();
+  const isDefaultMarket = market === 'default';
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -36,6 +41,7 @@ export function TimeModelPanel({
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
+          market,
           params: suggestion.params,
           note: `Calibration ×${suggestion.factor} from ${suggestion.samples} jobs (${suggestion.biasPct > 0 ? '+' : ''}${suggestion.biasPct}% bias)`,
           basedOnSamples: suggestion.samples,
@@ -73,14 +79,44 @@ export function TimeModelPanel({
 
   return (
     <div className="mt-8 rounded-2xl border bg-white shadow-soft dark:bg-white/[0.03]">
-      <div className="border-b p-5">
-        <h2 className="font-semibold">Time model</h2>
-        <p className="text-xs text-slate-400">
-          The minutes behind every video quote. Calibrating here changes pricing immediately — no deploy.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3 border-b p-5">
+        <div>
+          <h2 className="font-semibold">Time model</h2>
+          <p className="text-xs text-slate-400">
+            The minutes behind every video quote. Calibrating here changes pricing immediately — no deploy.
+          </p>
+        </div>
+        <select
+          value={market}
+          onChange={(e) => router.push(`/admin/vision?market=${encodeURIComponent(e.target.value)}`)}
+          className="rounded-xl border bg-white px-3 py-1.5 text-sm dark:bg-white/[0.06]"
+          aria-label="Market"
+        >
+          {markets.map((m) => (
+            <option key={m.slug} value={m.slug}>
+              {m.name}
+            </option>
+          ))}
+        </select>
       </div>
 
       <div className="p-5">
+        {/*
+          The trap this warning exists for: samples captured somewhere with no
+          market of its own land in `default`, and `default` is what every
+          uncalibrated market inherits. Calibrating it from that data reprices
+          cities the footage never came from.
+        */}
+        {isDefaultMarket && (
+          <div className="mb-5 rounded-xl bg-amber-50 p-4 text-sm text-amber-800 dark:bg-amber-950/30 dark:text-amber-300">
+            <p className="font-medium">This is the fallback for every market</p>
+            <p className="mt-1">
+              Any city without its own calibration inherits it. If these samples came from one place, calibrate that
+              market instead — otherwise footage from one city sets prices in all of them.
+            </p>
+          </div>
+        )}
+
         <div className="flex flex-wrap items-center gap-3 text-sm">
           <span className="text-slate-500 dark:text-slate-400">Active:</span>
           {active ? (
@@ -98,6 +134,12 @@ export function TimeModelPanel({
         <div className="mt-5 rounded-xl border border-dashed p-4">
           <p className="text-sm font-medium">Suggested calibration</p>
           <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{suggestion.rationale}</p>
+
+          {/* Rejected samples are shown, never quietly dropped — a growing pile
+              of them usually means the capture flow is confusing somebody. */}
+          {suggestion.dataWarning && (
+            <p className="mt-2 text-xs text-amber-700 dark:text-amber-400">{suggestion.dataWarning}</p>
+          )}
 
           {suggestion.confident ? (
             <div className="mt-4 flex flex-wrap items-center gap-3">

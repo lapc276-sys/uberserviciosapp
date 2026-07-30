@@ -137,19 +137,22 @@ describe('a calibrated model actually changes the estimate', () => {
 describe('suggestCalibration', () => {
   const enough = MIN_SAMPLES_FOR_CONFIDENCE;
 
+  /** `count` jobs of `predicted` minutes that each actually took `ratio` times as long. */
+  const jobs = (count: number, ratio: number, predicted = 120) =>
+    Array.from({ length: count }, () => ({
+      predictedMinutes: predicted,
+      actualMinutes: Math.round(predicted * ratio),
+    }));
+
   it('suggests nothing without data', () => {
-    const s = suggestCalibration(DEFAULT_TIME_MODEL, { samples: 0, predictedTotal: 0, actualTotal: 0 });
+    const s = suggestCalibration(DEFAULT_TIME_MODEL, []);
     expect(s.factor).toBe(1);
     expect(s.confident).toBe(false);
     expect(s.params).toEqual(DEFAULT_TIME_MODEL);
   });
 
   it('computes the factor from summed minutes, weighting long jobs more', () => {
-    const s = suggestCalibration(DEFAULT_TIME_MODEL, {
-      samples: enough,
-      predictedTotal: 1000,
-      actualTotal: 1200,
-    });
+    const s = suggestCalibration(DEFAULT_TIME_MODEL, jobs(enough, 1.2));
     expect(s.factor).toBeCloseTo(1.2, 2);
     expect(s.biasPct).toBeCloseTo(20, 0);
   });
@@ -159,51 +162,71 @@ describe('suggestCalibration', () => {
    * jobs cannot move the live model, however dramatic the apparent bias.
    */
   it('withholds confidence below the sample threshold', () => {
-    const s = suggestCalibration(DEFAULT_TIME_MODEL, {
-      samples: enough - 1,
-      predictedTotal: 1000,
-      actualTotal: 1500,
-    });
+    const s = suggestCalibration(DEFAULT_TIME_MODEL, jobs(enough - 1, 1.5));
     expect(s.confident).toBe(false);
     expect(s.rationale).toMatch(/noise/i);
   });
 
   it('withholds confidence when the bias is small enough to be noise', () => {
-    const s = suggestCalibration(DEFAULT_TIME_MODEL, {
-      samples: enough * 3,
-      predictedTotal: 1000,
-      actualTotal: 1020,
-    });
-    expect(s.confident).toBe(false);
+    expect(suggestCalibration(DEFAULT_TIME_MODEL, jobs(enough * 3, 1.02)).confident).toBe(false);
   });
 
   it('is confident with enough samples and a real gap', () => {
-    const s = suggestCalibration(DEFAULT_TIME_MODEL, {
-      samples: enough,
-      predictedTotal: 1000,
-      actualTotal: 1250,
-    });
+    const s = suggestCalibration(DEFAULT_TIME_MODEL, jobs(enough, 1.25));
     expect(s.confident).toBe(true);
     expect(s.rationale).toMatch(/short/i);
   });
 
   it('says "long" when the model overestimates', () => {
-    const s = suggestCalibration(DEFAULT_TIME_MODEL, {
-      samples: enough,
-      predictedTotal: 1000,
-      actualTotal: 800,
-    });
+    const s = suggestCalibration(DEFAULT_TIME_MODEL, jobs(enough, 0.8));
     expect(s.biasPct).toBeLessThan(0);
     expect(s.rationale).toMatch(/long/i);
   });
 
   it('returns a usable scaled model alongside the number', () => {
-    const s = suggestCalibration(DEFAULT_TIME_MODEL, {
-      samples: enough,
-      predictedTotal: 1000,
-      actualTotal: 1200,
-    });
+    const s = suggestCalibration(DEFAULT_TIME_MODEL, jobs(enough, 1.2));
     expect(s.params.roomBaseMinutes.kitchen).toBeCloseTo(ROOM_BASE_MINUTES.kitchen * 1.2, 1);
+  });
+
+  describe('outlier screening', () => {
+    /**
+     * The failure this prevents: one fat-fingered entry among honest samples
+     * dragging the factor somewhere nobody intended, with the suggestion
+     * reading exactly as confidently as it would on clean data.
+     */
+    it('ignores a single absurd entry that would otherwise dominate the sum', () => {
+      const clean = jobs(enough, 1.1);
+      const poisoned = [...clean, { predictedMinutes: 20, actualMinutes: 480 }];
+
+      const honest = suggestCalibration(DEFAULT_TIME_MODEL, clean);
+      const screened = suggestCalibration(DEFAULT_TIME_MODEL, poisoned);
+
+      expect(screened.factor).toBeCloseTo(honest.factor, 2);
+      expect(screened.excluded).toBe(1);
+    });
+
+    it('counts only the surviving samples toward confidence', () => {
+      const s = suggestCalibration(DEFAULT_TIME_MODEL, [...jobs(enough - 1, 1.3), ...jobs(5, 20)]);
+      expect(s.samples).toBe(enough - 1);
+      expect(s.confident).toBe(false);
+    });
+
+    it('still learns from a job that ran double, since that is the error being measured', () => {
+      const s = suggestCalibration(DEFAULT_TIME_MODEL, jobs(enough, 2));
+      expect(s.excluded).toBe(0);
+      expect(s.factor).toBeCloseTo(2, 1);
+    });
+
+    it('flags a capture flow that produces mostly unusable data', () => {
+      const s = suggestCalibration(DEFAULT_TIME_MODEL, [...jobs(10, 1.1), ...jobs(10, 0)]);
+      expect(s.dataWarning).toMatch(/capture flow/i);
+    });
+
+    it('says so when everything was rejected', () => {
+      const s = suggestCalibration(DEFAULT_TIME_MODEL, jobs(10, 0));
+      expect(s.samples).toBe(0);
+      expect(s.rationale).toMatch(/rejected/i);
+    });
   });
 });
 

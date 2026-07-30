@@ -9,6 +9,7 @@ import {
   type ConditionLevel,
 } from './types';
 import { planSupplies } from './supplies';
+import { planRoomTasks } from './tasks';
 import {
   DEFAULT_TIME_MODEL,
   soilWeightsFor,
@@ -96,17 +97,39 @@ export function buildAnalysis(
   const labels = labelRooms(observations);
   const multiplier = model.serviceTimeMultiplier[serviceSlug] ?? 1;
 
+  // Both estimators run for every room. The unused one costs nothing and is the
+  // only way to watch the two converge — or fail to — as field data lands.
+  const estimatorMinutes = { room: 0, task: 0 };
+
   const rooms: RoomAnalysis[] = observations.map((obs, i) => {
     const soil = normalizeSoil(obs.soil);
-    const minutes = roomMinutes(obs, soil, model) * multiplier;
+    const objects = obs.objects.filter((o) => o.name?.trim()).slice(0, 25);
+
+    const taskPlan = planRoomTasks({ roomType: obs.type, soil, objects, serviceSlug });
+
+    // Rounded per room, then summed — so the total always equals the sum of the
+    // per-room figures the customer is shown, with no stray minute to explain.
+    const fromRoomModel = Math.round(roomMinutes(obs, soil, model) * multiplier);
+
+    // No service multiplier here, on purpose. The room model needs one because
+    // it has no way to express that a deep clean does *more things* — it only
+    // has one number per room. The task model says so directly: a deep clean
+    // fires the oven interior, the baseboards, inside the cabinets. Multiplying
+    // on top would charge for that scope twice.
+    const fromTaskModel = Math.round(taskPlan.totalMinutes);
+
+    estimatorMinutes.room += fromRoomModel;
+    estimatorMinutes.task += fromTaskModel;
+
     return {
       type: obs.type,
       label: labels[i],
       confidence: Math.max(0, Math.min(obs.confidence ?? 0.5, 1)),
-      objects: obs.objects.filter((o) => o.name?.trim()).slice(0, 25),
+      objects,
       soil,
       condition: conditionFromIndex(soilIndex(soil, obs.type, model)),
-      estimatedMinutes: Math.round(minutes),
+      estimatedMinutes: model.estimator === 'task' ? fromTaskModel : fromRoomModel,
+      tasks: taskPlan.lines,
       notes: obs.notes,
     };
   });
@@ -148,6 +171,8 @@ export function buildAnalysis(
   return {
     rooms,
     totalMinutes: Math.round(totalMinutes),
+    estimatorMinutes,
+    estimator: model.estimator,
     recommendedPros: Math.max(1, Math.ceil(totalMinutes / model.minutesPerPro)),
     suppliesNeeded: supplyPlan.lines.map((l) => l.name),
     supplyPlan,

@@ -129,6 +129,7 @@ export function PilotCapture({ capturedBy }: { capturedBy: string }) {
         soil: { ...EMPTY_SOIL },
         condition: 'good',
         estimatedMinutes: 0,
+        tasks: [],
       },
     ]);
   }

@@ -1,4 +1,5 @@
 import type { SupplyPlan } from './supplies';
+import type { TaskLine } from './tasks';
 
 /**
  * Domain model for AI property analysis.
@@ -74,12 +75,30 @@ export interface RoomAnalysis {
   condition: ConditionLevel;
   /** Minutes of cleaning work, computed by the estimator (not the model). */
   estimatedMinutes: number;
+  /**
+   * The chores this room actually needs, each with its own minutes.
+   * This is what the pro sees as a checklist and what the pilot times
+   * individually — a total that is wrong tells you nothing about why.
+   */
+  tasks: TaskLine[];
   notes?: string;
 }
 
 export interface PropertyAnalysis {
   rooms: RoomAnalysis[];
+  /** The authoritative estimate, produced by whichever estimator is active. */
   totalMinutes: number;
+  /**
+   * What each estimator says, kept side by side.
+   *
+   * The room model is the one that has been quoting real jobs; the task model
+   * is finer-grained but built entirely on desk estimates. Publishing both lets
+   * `/admin/vision` show the gap between them as field data arrives, so the
+   * switch is made on evidence instead of on faith in the newer code.
+   */
+  estimatorMinutes: { room: number; task: number };
+  /** Which one produced `totalMinutes`. */
+  estimator: 'room' | 'task';
   /** Crew size the job warrants, so a long job isn't a 9-hour solo shift. */
   recommendedPros: number;
   /** Product names only — the detailed plan lives in `supplyPlan`. */

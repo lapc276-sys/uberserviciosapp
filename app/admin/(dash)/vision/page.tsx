@@ -10,7 +10,9 @@ import {
   getActiveVersion,
   listTimeModelVersions,
   suggestCalibration,
+  DEFAULT_MARKET,
 } from '@/lib/vision/time-model-store';
+import { cities } from '@/lib/config/cities';
 import { TimeModelPanel } from '@/components/admin/TimeModelPanel';
 
 export const metadata: Metadata = buildMetadata({ title: 'AI Vision | Homigo Admin', path: '/admin/vision', noindex: true });
@@ -21,19 +23,24 @@ export const dynamic = 'force-dynamic';
  * until these numbers say otherwise — this page is how you find out whether
  * the AI is over- or under-estimating, and by how much.
  */
-export default async function VisionAdminPage() {
+export default async function VisionAdminPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ market?: string }>;
+}) {
+  const market = (await searchParams).market ?? DEFAULT_MARKET;
+
+  // Scoped to one market on purpose. Capture happens wherever there are
+  // willing hands, which is not always where the work is sold — pooling the
+  // samples would let footage from one country reprice another.
   const [c, training, activeModel, versions] = await Promise.all([
-    getCalibration(),
+    getCalibration(market === DEFAULT_MARKET ? undefined : market),
     getTrainingReport(),
-    getActiveVersion(),
-    listTimeModelVersions(),
+    getActiveVersion(market),
+    listTimeModelVersions(market),
   ]);
 
-  const suggestion = suggestCalibration(activeModel?.params ?? DEFAULT_TIME_MODEL, {
-    samples: c.withActuals,
-    predictedTotal: c.predictedTotalMinutes,
-    actualTotal: c.actualTotalMinutes,
-  });
+  const suggestion = suggestCalibration(activeModel?.params ?? DEFAULT_TIME_MODEL, c.scoredSamples);
 
   const biasLabel =
     c.withActuals === 0
@@ -86,6 +93,11 @@ export default async function VisionAdminPage() {
         versions={versions}
         suggestion={suggestion}
         dbConfigured={isDbConfigured}
+        market={market}
+        markets={[
+          { slug: DEFAULT_MARKET, name: 'All markets (default)' },
+          ...cities.map((city) => ({ slug: city.slug, name: city.name })),
+        ]}
       />
 
       {/* Field training samples — the only thing that improves the model */}

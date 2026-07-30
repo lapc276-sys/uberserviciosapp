@@ -117,6 +117,16 @@ export interface TimeModelParams {
   objectTimeCost: Record<string, number>;
   serviceTimeMultiplier: Record<string, number>;
   minutesPerPro: number;
+  /**
+   * Which estimator prices the job.
+   *
+   * Defaults to `room` — not because it is better, but because it is the one
+   * that has been quoting real work. The task model is finer-grained and more
+   * useful in the field, and it is also built entirely from desk estimates.
+   * Switching a market to `task` is a deliberate, versioned decision to be made
+   * once the pilot has per-task times worth trusting.
+   */
+  estimator: 'room' | 'task';
 }
 
 /** The uncalibrated hypothesis every market starts from. */
@@ -127,6 +137,7 @@ export const DEFAULT_TIME_MODEL: TimeModelParams = {
   objectTimeCost: OBJECT_TIME_COST,
   serviceTimeMultiplier: SERVICE_TIME_MULTIPLIER,
   minutesPerPro: MINUTES_PER_PRO,
+  estimator: 'room',
 };
 
 export function soilWeightsFor(
@@ -211,6 +222,7 @@ export function mergeTimeModel(stored: unknown): TimeModelParams {
     objectTimeCost: numberMap(raw.objectTimeCost, OBJECT_TIME_COST, 120),
     serviceTimeMultiplier: numberMap(raw.serviceTimeMultiplier, SERVICE_TIME_MULTIPLIER, 5),
     minutesPerPro: positive(raw.minutesPerPro, MINUTES_PER_PRO, 960) || MINUTES_PER_PRO,
+    estimator: raw.estimator === 'task' ? 'task' : 'room',
   };
 }
 

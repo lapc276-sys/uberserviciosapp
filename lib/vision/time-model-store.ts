@@ -1,6 +1,7 @@
 import { prisma, isDbConfigured } from '../db';
 import { getCityByName } from '../config/cities';
 import { DEFAULT_TIME_MODEL, mergeTimeModel, scaleTimeModel, type TimeModelParams } from './model';
+import { buildCalibrationSet, exclusionWarning, type ScoredSample } from './outliers';
 
 /**
  * Loading, versioning and activating the calibrated time model.
@@ -207,7 +208,12 @@ export async function activateTimeModelVersion(id: string): Promise<TimeModelVer
 export interface CalibrationSuggestion {
   /** Multiplier to apply to the current model. */
   factor: number;
+  /** Samples that survived outlier screening — the ones the factor is built on. */
   samples: number;
+  /** Samples rejected before the arithmetic ran. */
+  excluded: number;
+  /** Set when the rejected pile is large enough to distrust the capture flow. */
+  dataWarning: string | null;
   biasPct: number;
   /** Whether there is enough evidence to act on this. */
   confident: boolean;
@@ -235,22 +241,31 @@ export const MIN_SAMPLES_FOR_CONFIDENCE = 30;
  */
 export function suggestCalibration(
   current: TimeModelParams,
-  stats: { samples: number; predictedTotal: number; actualTotal: number },
+  rawSamples: ScoredSample[],
 ): CalibrationSuggestion {
-  const { samples, predictedTotal, actualTotal } = stats;
+  // Screened before anything is summed. An unscreened set produces a
+  // suggestion worded exactly as confidently as a real one.
+  const set = buildCalibrationSet(rawSamples);
+  const samples = set.used.length;
+  const dataWarning = exclusionWarning(set);
 
-  if (samples === 0 || predictedTotal <= 0) {
+  if (samples === 0 || set.predictedTotal <= 0) {
     return {
       factor: 1,
       samples,
+      excluded: set.excluded.length,
+      dataWarning,
       biasPct: 0,
       confident: false,
-      rationale: 'No completed jobs with recorded actual minutes yet.',
+      rationale:
+        set.excluded.length > 0
+          ? 'Every recorded time so far was rejected as implausible. Nothing usable to calibrate from.'
+          : 'No completed jobs with recorded actual minutes yet.',
       params: current,
     };
   }
 
-  const factor = actualTotal / predictedTotal;
+  const factor = set.factor;
   const biasPct = Number(((factor - 1) * 100).toFixed(1));
   const confident = samples >= MIN_SAMPLES_FOR_CONFIDENCE && Math.abs(biasPct) >= 5;
 
@@ -263,6 +278,8 @@ export function suggestCalibration(
   return {
     factor: Number(factor.toFixed(3)),
     samples,
+    excluded: set.excluded.length,
+    dataWarning,
     biasPct,
     confident,
     rationale,
