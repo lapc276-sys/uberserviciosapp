@@ -5799,14 +5799,46 @@ _CTA_HABLADA = {
         "Suscríbete: cada día explico un secreto técnico de la F1.",
         "Dale a seguir y no te pierdas el próximo dato de F1.",
         "Si aprendiste algo, suscríbete: hay uno nuevo cada día.",
+        # El crédito del canal va AQUÍ, al final, y fundido con la
+        # suscripción. Al principio costaría el gancho, que es lo que decide
+        # si alguien se queda; al final ya no hay retención que perder y
+        # además explica POR QUÉ merece la pena seguir el canal.
+        "Gracias por verlo hasta el final. Suscríbete y nos vemos mañana.",
+        "Los gráficos y los datos son nuestros, hechos para explicártelo "
+        "mejor. Suscríbete.",
+        "Analizamos la telemetría nosotros mismos para traerte esto. "
+        "Suscríbete y sigue aprendiendo.",
     ],
     "en": [
         "Follow to understand Formula 1 like an engineer.",
         "Subscribe for a new F1 tech secret every single day.",
         "Hit follow so you don't miss the next F1 breakdown.",
         "If you learned something, subscribe — there's a new one daily.",
+        "Thanks for watching to the end. Subscribe and I'll see you "
+        "tomorrow.",
+        "The graphics and the data are our own, built to explain it "
+        "better. Subscribe.",
+        "We crunch the telemetry ourselves to bring you this. Subscribe "
+        "and keep learning.",
     ],
 }
+
+
+# Crédito del canal para las DESCRIPCIONES. Aquí no cuesta retención —
+# nadie abandona un short por lo que diga la descripción — y además es
+# donde YouTube lee contexto para recomendar el video.
+_CREDITO = {
+    "es": ("Guion, análisis y gráficos propios: estudiamos la telemetría "
+           "real para explicarte la F1 mejor. Narración original e "
+           "imágenes de licencia libre; sin metraje de retransmisión."),
+    "en": ("Our own script, analysis and graphics: we study real telemetry "
+           "to explain F1 properly. Original narration and free-licensed "
+           "images; no broadcast footage."),
+}
+
+
+def _credito_canal():
+    return _CREDITO.get(IDIOMA, _CREDITO["en"])
 
 
 def _cta_hablada():
@@ -5840,7 +5872,9 @@ def _caption_redes(short):
     base = titulo.split("#")[0].strip()
     if guion and guion[:60] not in base:
         base = f"{base}\n\n{guion[:180]}".strip()
-    return f"{base}\n\n{_HASHTAGS_REDES}"[:2100]
+    # El crédito también aquí: en Reels y TikTok casi nadie sabe de dónde
+    # sale el material, y decir que es propio es lo que distingue al canal.
+    return f"{base}\n\n{_credito_canal()}\n\n{_HASHTAGS_REDES}"[:2100]
 
 
 def _shorts_sin_subir():
@@ -6128,8 +6162,8 @@ async def bucle_youtube():
                 # 4) Subir a YouTube
                 descripcion = (
                     short.get("guion", "") + "\n\n"
-                    "#F1 #Formula1 #Racing #MotorSport #Shorts\n"
-                    "Contenido generado automáticamente por el canal F1."
+                    + _credito_canal() + "\n\n"
+                    "#F1 #Formula1 #Racing #MotorSport #Shorts"
                 )
                 tags = ["F1", "Formula1", "Racing", "MotorSport", "Shorts",
                         short.get("tipo", "news")]
