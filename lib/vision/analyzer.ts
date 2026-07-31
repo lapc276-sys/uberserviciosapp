@@ -33,7 +33,9 @@ For each room, rate soiling on a 0-100 scale where 0 is spotless and 100 is the 
 - trash: loose garbage, food waste, packaging
 - mold: mildew or mold, especially grout, caulk, damp corners
 
-Also list cleaning-relevant objects you can actually see (oven, refrigerator, bathtub, toilet, carpet, window, sofa, litter box, etc.) with a count and your confidence.
+Also list cleaning-relevant objects you can actually see, with a count and your confidence. Include appliances (oven, stove, range hood, microwave, refrigerator, dishwasher), fixtures (bathtub, shower, toilet, sink, mirror, window, blinds), surfaces (carpet, rug, sofa, mattress), and — importantly — anything that reveals who lives here: litter box, pet bed, dog bowl, cat tree, leash, crate, toy, high chair, stroller, crib.
+
+Those last ones matter as much as the appliances. A litter box means cat hair on every soft surface whether or not a cat is in frame; children's things mean far more picking up before any surface can be cleaned. Report them when you see them.
 
 Be conservative and evidence-based. If a frame is blurry, dark, or ambiguous, lower your confidence rather than guessing. Do NOT estimate time or price — that is computed separately.
 

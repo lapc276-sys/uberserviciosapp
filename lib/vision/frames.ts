@@ -100,3 +100,59 @@ export function readImages(files: File[]): Promise<string[]> {
     ),
   );
 }
+
+/**
+ * Mean luminance of a JPEG data URL, 0–255.
+ *
+ * Run in the browser before uploading: a frame too dark to read is worth
+ * catching while the customer is still standing in the room and can turn a
+ * light on. Sending it costs money and comes back as a confidently clean
+ * reading, because a vision model asked to grade a shadow reports what it can
+ * see rather than admitting it cannot see.
+ *
+ * Samples a grid rather than every pixel — a hundredth of the work for an
+ * answer that only needs to be roughly right.
+ */
+export async function frameBrightness(dataUrl: string): Promise<number> {
+  const image = new Image();
+  image.src = dataUrl;
+  await new Promise<void>((resolve, reject) => {
+    image.onload = () => resolve();
+    image.onerror = () => reject(new Error('Could not read that frame.'));
+  });
+
+  const canvas = document.createElement('canvas');
+  const size = 64;
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  if (!ctx) return 255;
+
+  ctx.drawImage(image, 0, 0, size, size);
+  const { data } = ctx.getImageData(0, 0, size, size);
+
+  let total = 0;
+  for (let i = 0; i < data.length; i += 4) {
+    // Rec. 601 luma: the eye weights green far above blue, and an unweighted
+    // average calls a dim green-lit room brighter than it looks.
+    total += 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+  }
+  return total / (data.length / 4);
+}
+
+/** Brightness across a set of frames, and whether the room needs more light. */
+export async function assessFrames(
+  dataUrls: string[],
+  darkThreshold = 62,
+): Promise<{ meanBrightness: number; tooDark: boolean; darkShare: number }> {
+  if (dataUrls.length === 0) return { meanBrightness: 0, tooDark: true, darkShare: 1 };
+
+  const values = await Promise.all(dataUrls.map((url) => frameBrightness(url).catch(() => 255)));
+  const meanBrightness = values.reduce((a, b) => a + b, 0) / values.length;
+  const darkFrames = values.filter((v) => v < darkThreshold).length;
+  const darkShare = darkFrames / values.length;
+
+  // One dark frame in a bright sweep is a shadowed corner, not a dark room.
+  // Half of them is a room that needs a light switch.
+  return { meanBrightness, tooDark: darkShare >= 0.5, darkShare };
+}
