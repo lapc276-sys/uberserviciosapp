@@ -3791,7 +3791,11 @@ async def fotos_para_tema(consulta, n=10):
     4) Flickr, 5) Wikimedia — todas de licencia libre y uso comercial. Las
     candidatas de búsqueda pasan por el editor con VISIÓN antes de entrar
     al video."""
-    fotos = list(fotos_biblioteca(consulta, n))
+    # La biblioteca manda, pero no puede copar el short entero: con varios
+    # esquemas etiquetados del mismo tema, un video podía salir sin una sola
+    # foto y todo diagramas — monótono de ver. Se le reserva como mucho la
+    # mitad de los huecos y el resto entra de las fuentes.
+    fotos = list(fotos_biblioteca(consulta, max(1, n // 2)))
     faltan = n - len(fotos)
     if faltan <= 0:
         return fotos[:n]

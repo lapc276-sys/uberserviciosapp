@@ -1,0 +1,53 @@
+{
+  "g_esquema_broken_front_wing.png": [
+    "front wing",
+    "damage",
+    "broken",
+    "endplate",
+    "debris",
+    "aerodynamics",
+    "downforce"
+  ],
+  "g_esquema_damaged_floor.png": [
+    "floor",
+    "diffuser",
+    "ground effect",
+    "damage",
+    "downforce",
+    "aerodynamics"
+  ],
+  "g_esquema_dirty_air.png": [
+    "dirty air",
+    "wake",
+    "turbulence",
+    "chasing",
+    "close racing",
+    "overtake",
+    "aerodynamics"
+  ],
+  "g_esquema_drs_open.png": [
+    "rear wing",
+    "drs",
+    "active aero",
+    "overtake",
+    "drag",
+    "straight"
+  ],
+  "g_esquema_high_downforce.png": [
+    "aerodynamics",
+    "downforce",
+    "rear wing",
+    "front wing",
+    "setup",
+    "monaco",
+    "grip"
+  ],
+  "g_esquema_low_downforce.png": [
+    "aerodynamics",
+    "drag",
+    "top speed",
+    "monza",
+    "rear wing",
+    "setup"
+  ]
+}
