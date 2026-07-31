@@ -89,12 +89,16 @@ describe('rate limiting', () => {
       expect(limitRequest(req(), 'quote', RATE_LIMITS.quote).ok).toBe(true);
     });
 
-    it('keeps the vision budget tight, since each call costs real money', () => {
-      expect(RATE_LIMITS.vision.limit).toBeLessThanOrEqual(10);
+    it('keeps the vision budget bounded, since each call costs real money', () => {
+      expect(RATE_LIMITS.vision.limit).toBeLessThanOrEqual(60);
     });
 
-    it('leaves room for an honest customer to re-record a bad walkthrough', () => {
-      expect(RATE_LIMITS.vision.limit).toBeGreaterThanOrEqual(3);
+    /**
+     * A guided walkthrough spends one call per room, so a budget sized for a
+     * single upload would cut a real customer off halfway down the hall.
+     */
+    it('leaves room for several complete room-by-room walkthroughs', () => {
+      expect(RATE_LIMITS.vision.limit).toBeGreaterThanOrEqual(30);
     });
   });
 

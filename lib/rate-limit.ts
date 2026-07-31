@@ -45,8 +45,14 @@ const HOUR = 60 * MINUTE;
  * services all fit comfortably inside them.
  */
 export const RATE_LIMITS = {
-  /** ~$0.10 of model spend per call. A real customer needs 2–3, not 40. */
-  vision: { limit: 6, windowMs: HOUR },
+  /**
+   * ~$0.02 of model spend per call, and a guided walkthrough spends one per
+   * room — a seven-room house is seven legitimate calls, so a budget sized for
+   * a single upload would cut a real customer off halfway down the hall. Sized
+   * for roughly five complete walkthroughs an hour: still bounded, still stops
+   * a loop, no longer punishes the flow the product is built around.
+   */
+  vision: { limit: 40, windowMs: HOUR },
   quote: { limit: 30, windowMs: 5 * MINUTE },
   book: { limit: 10, windowMs: HOUR },
   chat: { limit: 40, windowMs: 5 * MINUTE },

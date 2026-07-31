@@ -390,3 +390,55 @@ export function roomLabelEs(type: RoomType, index?: number): string {
   const base = ROOM_LABELS[type] ?? ROOM_LABELS.other;
   return index && index > 1 ? `${base} ${index}` : base;
 }
+
+/**
+ * Folds whatever the model returned for one room into a single observation.
+ *
+ * A model given eight frames of an open-plan kitchen often reports a kitchen
+ * *and* a dining room, and sometimes the same kitchen twice from two angles.
+ * The customer already told us which room they are standing in, so that is the
+ * answer — splitting it would double-count the space and quote the home for
+ * more rooms than it has.
+ *
+ * Soil takes the worst value seen rather than the average: one frame catching
+ * the greasy corner of a counter is evidence the grease is there, not evidence
+ * that the room is half greasy.
+ */
+export function collapseToRoom(
+  rooms: { soil: Record<string, number>; objects: DetectedObject[]; confidence: number; notes?: string }[],
+  type: RoomType,
+): {
+  type: RoomType;
+  confidence: number;
+  soil: Record<string, number>;
+  objects: DetectedObject[];
+  notes?: string;
+} {
+  const soil: Record<string, number> = {};
+  const objects = new Map<string, DetectedObject>();
+  let confidence = 0;
+
+  for (const room of rooms) {
+    for (const [dimension, score] of Object.entries(room.soil ?? {})) {
+      soil[dimension] = Math.max(soil[dimension] ?? 0, Number(score) || 0);
+    }
+    for (const object of room.objects ?? []) {
+      const key = object.name.trim().toLowerCase();
+      const existing = objects.get(key);
+      // The same oven seen from two angles is one oven, and the clearer look is
+      // the one worth keeping.
+      if (!existing || object.confidence > existing.confidence) {
+        objects.set(key, { ...object, name: key });
+      }
+    }
+    confidence += room.confidence ?? 0.5;
+  }
+
+  return {
+    type,
+    confidence: rooms.length ? Math.max(0, Math.min(confidence / rooms.length, 1)) : 0.5,
+    soil,
+    objects: [...objects.values()],
+    notes: rooms.find((r) => r.notes)?.notes,
+  };
+}

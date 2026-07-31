@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import { Video, Zap, ShieldCheck } from 'lucide-react';
 import { buildMetadata } from '@/lib/seo';
-import { VideoQuote } from '@/components/vision/VideoQuote';
+import { GuidedWalkthrough } from '@/components/vision/GuidedWalkthrough';
 import { JsonLd } from '@/components/seo/JsonLd';
 import { faqSchema } from '@/lib/schema';
 
@@ -14,7 +14,7 @@ export const metadata: Metadata = buildMetadata({
 });
 
 const steps = [
-  { icon: Video, title: 'Record a walkthrough', text: 'Walk slowly through each room. 30–90 seconds is enough.' },
+  { icon: Video, title: 'We walk you through it', text: 'Room by room, the app tells you what to film and how. A few seconds each.' },
   { icon: Zap, title: 'AI reads the space', text: 'It identifies rooms, objects and soil levels, then computes the work involved.' },
   { icon: ShieldCheck, title: 'Get a real price', text: 'Time, crew size, supplies and a transparent quote — in seconds.' },
 ];
@@ -70,7 +70,7 @@ export default function VideoQuotePage() {
 
       <section className="border-b">
         <div className="container py-12 sm:py-16">
-          <VideoQuote />
+          <GuidedWalkthrough />
         </div>
       </section>
 
