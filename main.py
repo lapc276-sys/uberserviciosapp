@@ -44,6 +44,7 @@ import telemetria
 import youtube_subir
 import redes_sociales
 import graficos_f1
+import metricas
 import subtitulos
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
@@ -472,6 +473,7 @@ async def lifespan(app: FastAPI):
               asyncio.create_task(bucle_temas()),
               asyncio.create_task(bucle_mapa()),
               asyncio.create_task(bucle_comentarios()),
+              asyncio.create_task(bucle_metricas()),
               asyncio.create_task(bucle_chat())]
     yield
     for t in tareas:
@@ -749,6 +751,33 @@ async def datos_carreras(limite: int = 50):
     estrategia."""
     regs = cargar_datos_carreras(min(max(1, limite), 200))
     return JSONResponse({"total": len(regs), "carreras": regs})
+
+
+@app.get("/datos/vistas")
+async def datos_vistas(short: str = ""):
+    """Curva de vistas de los shorts, medida por nosotros cada media hora.
+
+    Responde con datos a "¿bajan las vistas o solo se frena el ritmo?":
+    `shorts_con_bajada_real` cuenta cuántas veces el contador RETROCEDIÓ
+    (YouTube descartando vistas), y `porcentaje_primera_hora` dice qué
+    parte del total llegó en el empujón inicial. Con `short` se pide el
+    detalle de uno solo, con todas sus muestras."""
+    datos = metricas.cargar()
+    if short:
+        for vid, reg in datos.items():
+            if reg.get("short") == short or vid == short:
+                a = metricas.analizar(reg) or {}
+                return JSONResponse({"ok": True, "video_id": vid, **a,
+                                     "curva": reg.get("muestras", [])})
+        return JSONResponse({"ok": False, "error": "Short no seguido."},
+                            status_code=404)
+    r = metricas.resumen(datos)
+    if not r["shorts_seguidos"]:
+        return JSONResponse(
+            {"ok": False, "error": "Aún no hay muestras. Se toman cada "
+             f"{metricas.CADA_S // 60} min desde que se publica un short."},
+            status_code=404)
+    return JSONResponse({"ok": True, **r})
 
 
 @app.get("/datos/pases")
@@ -4702,6 +4731,52 @@ async def _redactar_respuesta(client, comentario):
     except Exception as e:
         log.info("No se pudo redactar la respuesta (%s)", e)
         return None
+
+
+async def bucle_metricas():
+    """Toma la curva de vistas de cada short publicado.
+
+    Sirve para responder con DATOS a una pregunta que si no solo se puede
+    suponer: ¿las vistas bajan tras publicar, o solo se frena el ritmo?
+    Con muestras periódicas se ve si el contador retrocede de verdad
+    (YouTube descartando vistas inválidas) o si solo se aplana.
+
+    Basta con YOUTUBE_API_KEY; no usa el OAuth. 1 unidad de cuota por
+    consulta, hasta 50 videos por llamada — despreciable.
+    """
+    if not YOUTUBE_API_KEY:
+        log.info("📈 Métricas de shorts inactivas — falta YOUTUBE_API_KEY")
+        return
+    await asyncio.sleep(90)          # dejar arrancar al resto
+    log.info("📈 Seguimiento de vistas activo (muestra cada %d min, "
+             "durante %d días por short)",
+             metricas.CADA_S // 60, metricas.DIAS_SEGUIMIENTO)
+    while True:
+        try:
+            # Shorts ya subidos y todavía dentro de la ventana de medición
+            publicados = {}
+            for archivo in sorted(os.listdir("shorts")):
+                if not (archivo.startswith("short_")
+                        and archivo.endswith(".json")):
+                    continue
+                with contextlib.suppress(Exception):
+                    with open(f"shorts/{archivo}") as f:
+                        s = json.load(f)
+                    vid = s.get("youtube_id")
+                    if vid and metricas.en_seguimiento(s.get("timestamp")):
+                        publicados[vid] = (s.get("id"), s.get("timestamp"))
+            if publicados:
+                stats = await metricas.estadisticas(list(publicados),
+                                                    YOUTUBE_API_KEY)
+                if stats:
+                    datos = metricas.cargar()
+                    n = metricas.registrar(datos, publicados, stats)
+                    if n:
+                        metricas.guardar(datos)
+                        log.info("📈 Vistas registradas en %d short(s)", n)
+        except Exception as e:
+            log.info("Seguimiento de vistas: %s", e)
+        await asyncio.sleep(max(300, metricas.CADA_S))
 
 
 async def bucle_comentarios():
