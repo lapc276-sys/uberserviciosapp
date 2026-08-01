@@ -3365,12 +3365,16 @@ async def _wiki_get(client, url, params):
     es justo lo que alarga el bloqueo.
     """
     global _wiki_turno_lock
+    # En pausa por un 429: se SALTA Wikimedia y se sigue con las otras
+    # fuentes. Esperar aquí era peor que el problema original — con ~16
+    # llamadas por short, la pausa se pagaba en cada una y un solo short
+    # tardaba veinte minutos en juntar fotos.
+    if time.monotonic() < _wiki_parado_hasta[0]:
+        return None
     if _wiki_turno_lock is None:
         _wiki_turno_lock = asyncio.Lock()
     async with _wiki_turno_lock:
-        ahora = time.monotonic()
-        espera = max(_wiki_ultimo[0] + _WIKI_ESPERA - ahora,
-                     _wiki_parado_hasta[0] - ahora)
+        espera = _wiki_ultimo[0] + _WIKI_ESPERA - time.monotonic()
         if espera > 0:
             await asyncio.sleep(espera)
         _wiki_ultimo[0] = time.monotonic()
