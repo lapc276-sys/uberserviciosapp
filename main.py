@@ -3582,6 +3582,37 @@ def _foto_real_primero(fotos):
     return [fotos[i]] + [f for k, f in enumerate(fotos) if k != i]
 
 
+# Imágenes REALES mínimas para publicar un video LARGO. Los shorts ya
+# tenían su guardián (MIN_FOTOS_SHORT); los largos no, y por eso podía
+# subirse un documental de minutos que era solo la tarjeta de cierre — un
+# párrafo fijo pidiendo temas, sin una sola foto. Las tarjetas y los
+# gráficos NO cuentan aquí: son el marco, no el contenido.
+MIN_FOTOS_LARGO = max(1, int(os.environ.get("MIN_FOTOS_LARGO", "4") or 4))
+
+
+def _fotos_reales(fotos):
+    """Cuántas de estas imágenes son fotos y no tarjetas o esquemas."""
+    return sum(1 for f in (fotos or []) if not _es_grafico(f))
+
+
+def _material_suficiente(fotos, que, minimo=None):
+    """¿Hay imágenes de sobra para publicar un video largo?
+
+    Devuelve True/False y deja dicho en el log por qué no, incluidas las
+    fuentes con clave — que es lo que suele explicar el problema.
+    """
+    minimo = MIN_FOTOS_LARGO if minimo is None else minimo
+    n = _fotos_reales(fotos)
+    if n >= minimo:
+        return True
+    log.warning("🎬 %s NO se publica: solo %d foto(s) reales de %d mínimas "
+                "(el resto son tarjetas). Saldría un video de texto fijo. "
+                "Fuentes con clave: %s", que, n, minimo,
+                ", ".join(_fuentes_fotos_activas()) or
+                "ninguna (solo Openverse/Wikimedia)")
+    return False
+
+
 def _fuentes_fotos_activas():
     """Fuentes de fotos con clave configurada. Openverse y Wikimedia no
     necesitan clave y siempre se intentan, así que no salen en la lista —
@@ -6498,6 +6529,11 @@ async def _vod_procesar(ruta):
     fotos = await imagenes_wikimedia(tema)
 
     titulo = _vod_titulo(meta)
+    if not _material_suficiente(fotos, f"VOD de {meta.get('sesion','sesión')}"):
+        meta["intentos"] = meta.get("intentos", 0) + 1
+        with open(meta_ruta, "w") as f:
+            json.dump(meta, f)
+        return False
     video = os.path.join(ruta, "vod.mp4")
     ok = await youtube_subir.armar_video(audio_total, fotos, titulo, video,
                                          horizontal=True)
@@ -7063,6 +7099,11 @@ async def _procesar_recap(ruta):
 
     titulo = (f"F1 {resumen.get('pais', '')} — {resumen.get('sesion', 'Race')} "
               f"Review: What We Loved & Hated")[:100]
+    if not _material_suficiente(imagenes, "La reseña de carrera"):
+        resumen["intentos"] = resumen.get("intentos", 0) + 1
+        with open(ruta, "w") as f:
+            json.dump(resumen, f, ensure_ascii=False)
+        return False
     video = os.path.join(tmp, "recap.mp4")
     ok = await youtube_subir.armar_video(audio_total, imagenes, titulo, video,
                                          horizontal=True, con_musica=True)
@@ -7288,6 +7329,11 @@ async def _subir_programa_video(ruta_ep):
         "Tell us in the comments — and subscribe")
     fotos = fotos[:23] + ([cierre] if cierre else [])
     titulo = f"{ep.get('titulo')} | {prog['titulo'].title()}"[:100]
+    if not _material_suficiente(fotos, f"El episodio '{ep.get('titulo')}'"):
+        ep["video_intentos"] = ep.get("video_intentos", 0) + 1
+        with open(ruta_ep, "w") as f:
+            json.dump(ep, f)
+        return
     video = os.path.join(tmp, "video.mp4")
     ok = await youtube_subir.armar_video(audio_total, fotos, titulo, video,
                                          horizontal=True, con_musica=True)
@@ -7614,6 +7660,8 @@ async def _producir_tema(tema):
         "Which topic should we cover next?",
         "Tell us in the comments — and subscribe")
     fotos = fotos[:23] + ([cierre] if cierre else [])
+    if not _material_suficiente(fotos, f"El explicativo '{titulo}'"):
+        return False
     video = os.path.join(tmp, "video.mp4")
     if not await youtube_subir.armar_video(audio_total, fotos, titulo, video,
                                            horizontal=True, con_musica=True):
