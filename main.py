@@ -43,6 +43,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 import telemetria
 import youtube_subir
 import redes_sociales
+import capitulos
 import graficos_f1
 import metricas
 import subtitulos
@@ -4025,6 +4026,75 @@ TITULO_GANCHO_SCHEMA = {
     "required": ["titulo", "gancho"],
     "additionalProperties": False,
 }
+
+CAPITULOS_SCHEMA = {
+    "type": "object",
+    "properties": {"titulos": {"type": "array", "items": {"type": "string"}}},
+    "required": ["titulos"],
+    "additionalProperties": False,
+}
+
+SYSTEM_CAPITULOS = (
+    "You name the chapters of a motorsport video. For each chunk of "
+    "transcript you get, write a SHORT label (3-6 words) that tells the "
+    "viewer what that part covers, so they can jump straight to it. Be "
+    "concrete and specific to that chunk — never generic filler like "
+    "'Introduction' or 'More analysis'. Do not invent anything that is not "
+    "in the text. Return exactly one label per chunk, in order. "
+    f"Write them in {IDIOMA_NOMBRE}.")
+
+
+async def _titular_capitulos(client, caps):
+    """Nombres para cada capítulo. [] si falla — el video va sin índice."""
+    if not (client and caps):
+        return []
+    trozos = [{"n": i + 1, "texto": (c.get("texto") or "")[:700]}
+              for i, c in enumerate(caps)]
+    try:
+        r = await client.messages.create(
+            model=MODELO_AHORRO, max_tokens=500, system=SYSTEM_CAPITULOS,
+            output_config={"format": {"type": "json_schema",
+                                      "schema": CAPITULOS_SCHEMA}},
+            messages=[{"role": "user", "content":
+                       f"{len(caps)} chunks, in order:\n"
+                       f"{json.dumps(trozos, ensure_ascii=False)}\n\n"
+                       f"Return exactly {len(caps)} labels."}])
+        if r.stop_reason == "refusal":
+            return []
+        data = json.loads(next((b.text for b in r.content
+                                if b.type == "text"), "{}"))
+        titulos = [str(t) for t in (data.get("titulos") or [])]
+        return titulos if len(titulos) == len(caps) else []
+    except Exception as e:
+        log.info("No se pudieron titular los capítulos (%s)", e)
+        return []
+
+
+async def _indice_capitulos(audios, textos, client=None):
+    """Bloque de capítulos para la descripción de un video LARGO, o "".
+
+    `audios` son los MP3 por línea en el mismo orden en que se concatenan;
+    de ahí salen los tiempos exactos. Nunca lanza: si algo no cuadra, el
+    video se sube sin índice, que es mejor que subirlo con uno roto.
+    """
+    try:
+        piezas = []
+        for i, a in enumerate(audios or []):
+            dur = await asyncio.to_thread(youtube_subir._duracion_audio, a)
+            piezas.append((dur, textos[i] if i < len(textos) else ""))
+        caps = capitulos.agrupar(piezas)
+        if not caps:
+            return ""
+        titulos = await _titular_capitulos(client, caps)
+        if not titulos:
+            return ""
+        bloque = capitulos.bloque(caps, titulos)
+        if bloque:
+            log.info("🔖 %d capítulos añadidos al video", len(caps))
+        return bloque
+    except Exception as e:
+        log.info("Capítulos no generados (%s)", e)
+        return ""
 # Estructuras de título que se van ROTANDO. Sin esto, el modelo tiende
 # siempre al mismo molde ("Why F1...", "Why Track...") y cuatro shorts
 # seguidos parecen el mismo video en el feed — el espectador desliza sin
@@ -6437,10 +6507,22 @@ async def _vod_procesar(ruta):
             json.dump(meta, f)
         return False
 
+    # Capítulos: el guion se grabó línea a línea junto a los MP3, así que
+    # los tiempos salen exactos de la duración de cada archivo.
+    guion = []
+    with contextlib.suppress(Exception):
+        with open(os.path.join(ruta, "guion.txt")) as f:
+            guion = [ln.strip() for ln in f if ln.strip()]
+    indice = ""
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        with contextlib.suppress(Exception):
+            indice = await _indice_capitulos(
+                audios, guion, anthropic.AsyncAnthropic())
     descripcion = (
         f"Full live commentary from our broadcast of the "
         f"{meta.get('sesion', 'session')} — {meta.get('pais', '')} "
         f"({meta.get('circuito', '')}).\n\n"
+        + (indice + "\n\n" if indice else "") +
         "AI-powered race radio: commentary and timing data only — "
         "no race footage. Images are free-licensed (Wikimedia Commons).\n\n"
         "#F1 #Formula1 #RaceRadio #Commentary"
@@ -6927,7 +7009,7 @@ async def _procesar_recap(ruta):
     # Sintetizar todas las líneas y unir el audio
     tmp = os.path.join(RESUMEN_DIR, resumen["id"])
     os.makedirs(tmp, exist_ok=True)
-    audios = []
+    audios, textos_ok = [], []
     for i, l in enumerate(lineas):
         audio = await sintetizar(l["quien"], l["texto"])
         if audio:
@@ -6935,6 +7017,9 @@ async def _procesar_recap(ruta):
             with open(a, "wb") as f:
                 f.write(audio)
             audios.append(a)
+            # En paralelo a los audios: si una línea no se sintetiza, su
+            # texto tampoco entra, o los capítulos se desalinearían.
+            textos_ok.append(l.get("texto", ""))
     audio_total = os.path.join(tmp, "audio.mp3")
     if not youtube_subir.concat_audios(audios, audio_total):
         resumen["intentos"] = resumen.get("intentos", 0) + 1
@@ -7002,11 +7087,13 @@ async def _procesar_recap(ruta):
         ([hero] + fotos) if hero else fotos,
         os.path.join(tmp, "thumb.jpg"),
         trazado=_cargar_trazado_cache(resumen.get("circuito") or ""))
+    indice = await _indice_capitulos(audios, textos_ok, client)
     descripcion = (
         f"Our full review of the {resumen.get('sesion','session')} at "
         f"{resumen.get('pais','')} — the good, the controversial, and our "
         f"driver verdicts. {('Winner: ' + ganador + '. ') if ganador else ''}"
         "Who was YOUR driver of the day? Tell us in the comments!\n\n"
+        + (indice + "\n\n" if indice else "") +
         "AI-powered analysis show — commentary, opinion and free-licensed "
         "images only, no race footage. Not affiliated with Formula 1.\n\n"
         "#F1 #Formula1 #RaceReview #Motorsport")
@@ -7162,7 +7249,7 @@ async def _subir_programa_video(ruta_ep):
         tipo, ep.get("titulo") or ""))
     os.makedirs(tmp, exist_ok=True)
     # Audio (usa el caché de audio por línea → barato si ya se emitió)
-    audios = []
+    audios, textos_ok = [], []
     for i, ln in enumerate(lineas):
         a = await sintetizar(voz, ln)
         if a:
@@ -7170,6 +7257,7 @@ async def _subir_programa_video(ruta_ep):
             with open(p, "wb") as f:
                 f.write(a)
             audios.append(p)
+            textos_ok.append(ln)
     audio_total = os.path.join(tmp, "audio.mp3")
     if not youtube_subir.concat_audios(audios, audio_total):
         ep["video_intentos"] = ep.get("video_intentos", 0) + 1
@@ -7222,8 +7310,14 @@ async def _subir_programa_video(ruta_ep):
             gancho or ep.get("titulo") or prog["titulo"],
             ([hero] + fotos) if hero else fotos,
             os.path.join(tmp, "thumb.jpg"))
+    indice = ""
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        with contextlib.suppress(Exception):
+            indice = await _indice_capitulos(audios, textos_ok,
+                                             anthropic.AsyncAnthropic())
     descripcion = (
         f"{prog['titulo'].title()} — {ep.get('titulo')}.\n\n"
+        + (indice + "\n\n" if indice else "") +
         "An AI-narrated motorsport documentary. Original narration + "
         "free-licensed images, no broadcast footage.\n\n"
         "Subscribe for more, and tell us what you'd like us to cover next!\n\n"
@@ -7502,7 +7596,7 @@ async def _producir_tema(tema):
              titulo, len(lineas))
     tmp = os.path.join("temas_video", tema["id"])
     os.makedirs(tmp, exist_ok=True)
-    audios = []
+    audios, textos_ok = [], []
     for i, ln in enumerate(lineas):
         a = await sintetizar("historiador", ln)
         if a:
@@ -7510,6 +7604,7 @@ async def _producir_tema(tema):
             with open(p, "wb") as f:
                 f.write(a)
             audios.append(p)
+            textos_ok.append(ln)
     audio_total = os.path.join(tmp, "audio.mp3")
     if not youtube_subir.concat_audios(audios, audio_total):
         return False
@@ -7533,8 +7628,10 @@ async def _producir_tema(tema):
     miniatura = await _miniatura_video(
         gancho or titulo, ([hero] + fotos) if hero else fotos,
         os.path.join(tmp, "thumb.jpg"))
+    indice = await _indice_capitulos(audios, textos_ok, client)
     descripcion = (
         f"{tema['intro']}\n\n"
+        + (indice + "\n\n" if indice else "") +
         "An AI-narrated motorsport explainer. Original narration + "
         "free-licensed images, no broadcast footage.\n\n"
         "Which topic should we cover next? Tell us in the comments — "
