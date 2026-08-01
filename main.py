@@ -3560,6 +3560,27 @@ async def _poner_subtitulos(video_id, short, audio_ruta):
     return ok
 
 
+def _es_grafico(ruta):
+    """¿Es un gráfico nuestro (esquema o tarjeta) y no una foto?"""
+    base = os.path.basename(str(ruta))
+    return base.startswith("g_") or base.startswith("card_")
+
+
+def _foto_real_primero(fotos):
+    """Reordena para que el short ABRA con una foto, no con un esquema.
+
+    El primer fotograma es la portada que se ve en el feed. Si siempre es
+    un diagrama del mismo estilo, los shorts parecen el mismo video y la
+    gente desliza sin verlos. Si no hay ninguna foto, se deja como está.
+    """
+    if not fotos or not _es_grafico(fotos[0]):
+        return fotos
+    i = next((k for k, f in enumerate(fotos) if not _es_grafico(f)), None)
+    if i is None:
+        return fotos
+    return [fotos[i]] + [f for k, f in enumerate(fotos) if k != i]
+
+
 def _fuentes_fotos_activas():
     """Fuentes de fotos con clave configurada. Openverse y Wikimedia no
     necesitan clave y siempre se intentan, así que no salen en la lista —
@@ -4004,13 +4025,47 @@ TITULO_GANCHO_SCHEMA = {
     "required": ["titulo", "gancho"],
     "additionalProperties": False,
 }
+# Estructuras de título que se van ROTANDO. Sin esto, el modelo tiende
+# siempre al mismo molde ("Why F1...", "Why Track...") y cuatro shorts
+# seguidos parecen el mismo video en el feed — el espectador desliza sin
+# verlos. Cada short recibe una estructura distinta de la anterior.
+_ESTRUCTURAS_TITULO = [
+    ("pregunta", "Open with a DIRECT QUESTION the viewer cannot answer but "
+     "wants to. Do NOT start with 'Why'."),
+    ("numero", "Open with a NUMBER or a measurable fact (a distance, a time, "
+     "a year, a percentage). Never invent it — only use figures present in "
+     "the material."),
+    ("contraste", "Open with a CONTRADICTION or reversal: something that "
+     "sounds wrong but is true. Do NOT start with 'Why'."),
+    ("consecuencia", "Open with the CONSEQUENCE, not the cause — what it "
+     "cost, what it broke, what it won. Do NOT start with 'Why'."),
+    ("nombre", "Open with the NAME of the part, rule, team era or car being "
+     "discussed. Do NOT start with 'Why'."),
+    ("imperativo", "Open with an IMPERATIVE or a second-person address "
+     "('Look at…', 'Forget…', 'You've been told…'). Do NOT start with 'Why'."),
+    ("epoca", "Open with a TIME MARKER (a year, an era, 'the season when…'). "
+     "Do NOT start with 'Why'."),
+]
+_ESTRUCTURA_CONTADOR = "titulo_estructura.json"
+
+
+def _estructura_titulo():
+    """Siguiente estructura de título, rotando y sin repetir la anterior."""
+    n = 0
+    with contextlib.suppress(Exception):
+        with open(_ESTRUCTURA_CONTADOR) as f:
+            n = int(json.load(f).get("n", 0))
+    with contextlib.suppress(Exception):
+        with open(_ESTRUCTURA_CONTADOR, "w") as f:
+            json.dump({"n": n + 1}, f)
+    return _ESTRUCTURAS_TITULO[n % len(_ESTRUCTURAS_TITULO)][1]
+
+
 SYSTEM_GANCHO = (
     "You are a YouTube growth expert. Write ONE irresistible but HONEST title "
     "that makes the viewer NEED to click. Use an open curiosity gap, real "
-    "stakes, or a mild contrarian angle — patterns like 'why X is a myth', "
-    "'the truth about X', 'what nobody tells you about X', 'X changed "
-    "everything', 'the reason X...'. Be CONCRETE, not vague. Front-load the "
-    "hook in the first 3 words (phones cut titles off). NEVER lie, never "
+    "stakes, or a mild contrarian angle. Be CONCRETE, not vague. Front-load "
+    "the hook in the first 3 words (phones cut titles off). NEVER lie, never "
     "invent results, numbers, records or quotes. Then give a punchy 2-4 word "
     "ALL-CAPS phrase for the thumbnail: the single most intriguing idea (a "
     "hook, NOT a summary), short enough to read big on a phone. "
@@ -4032,7 +4087,8 @@ async def _titulo_y_gancho(client, contexto, vertical=False):
                        f"CONTENT: {contexto}\n\nWrite the title for {fmt}, "
                        "plus the thumbnail punch phrase. The thumbnail phrase "
                        "must NOT just repeat the title — pick the most "
-                       "curiosity-provoking angle."}])
+                       "curiosity-provoking angle.\n\nREQUIRED TITLE SHAPE "
+                       f"for this one: {_estructura_titulo()}"}])
         if r.stop_reason == "refusal":
             return None, None
         data = json.loads(next((b.text for b in r.content
@@ -6161,6 +6217,15 @@ async def bucle_youtube():
                         fotos += await _fotos_variadas(short, n=6 - len(fotos))
                 else:
                     fotos = await _fotos_variadas(short)
+
+                # 2a-bis) El short NO debe abrir con un esquema técnico.
+                # La biblioteca tiene prioridad, así que las láminas salían
+                # primero y el video arrancaba con ellas: cuatro shorts de
+                # aerodinámica seguidos daban cuatro portadas casi idénticas
+                # en el feed, y el espectador desliza creyendo que ya lo vio.
+                # Abrir con una FOTO real y meter el esquema después.
+                if not propias:
+                    fotos = _foto_real_primero(fotos)
 
                 # 2b) Intercalar animaciones propias (aero, DRS…): entran en
                 # la misma lista que las fotos. Van tras la primera imagen,
