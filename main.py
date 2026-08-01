@@ -3345,6 +3345,47 @@ HISTORIA_SCHEMA = {
 
 _UA_WIKI = {"User-Agent": "F1FanChannel/1.0 (fan project)"}
 
+# Wikimedia limita por ritmo, y un short pide fotos de muchos temas
+# seguidos: sin pausa salían ~14 peticiones en 4 segundos y a partir de la
+# quinta TODO devolvía 429, así que el short se quedaba sin imágenes. No es
+# que la fuente falle — nos estábamos autobloqueando. Estas peticiones van
+# de una en una y espaciadas.
+_WIKI_ESPERA = float(os.environ.get("WIKI_ESPERA", "1.2") or 1.2)
+_WIKI_CASTIGO = 90.0          # si aun así responde 429, parar un rato
+_wiki_turno_lock: asyncio.Lock | None = None
+_wiki_ultimo = [0.0]
+_wiki_parado_hasta = [0.0]
+
+
+async def _wiki_get(client, url, params):
+    """GET a Wikimedia respetando el ritmo. Devuelve la respuesta o None.
+
+    Serializa las llamadas (una cada _WIKI_ESPERA s) y, si aun así llega un
+    429, se calla durante un rato en vez de seguir insistiendo — insistir
+    es justo lo que alarga el bloqueo.
+    """
+    global _wiki_turno_lock
+    if _wiki_turno_lock is None:
+        _wiki_turno_lock = asyncio.Lock()
+    async with _wiki_turno_lock:
+        ahora = time.monotonic()
+        espera = max(_wiki_ultimo[0] + _WIKI_ESPERA - ahora,
+                     _wiki_parado_hasta[0] - ahora)
+        if espera > 0:
+            await asyncio.sleep(espera)
+        _wiki_ultimo[0] = time.monotonic()
+    r = await client.get(url, params=params, timeout=20, headers=_UA_WIKI)
+    if r.status_code == 429:
+        with contextlib.suppress(Exception):
+            reintento = float(r.headers.get("retry-after", 0) or 0)
+        castigo = max(_WIKI_CASTIGO, reintento)
+        _wiki_parado_hasta[0] = time.monotonic() + castigo
+        log.info("Wikimedia pide bajar el ritmo (429) — pausa de %.0f s",
+                 castigo)
+        return None
+    r.raise_for_status()
+    return r
+
 
 async def imagen_wikimedia(query):
     """Foto de libre uso desde Wikipedia/Wikimedia Commons para un tema
@@ -3355,12 +3396,12 @@ async def imagen_wikimedia(query):
         return None
     try:
         async with httpx.AsyncClient() as c:
-            r = await c.get("https://en.wikipedia.org/w/api.php", params={
+            r = await _wiki_get(c, "https://en.wikipedia.org/w/api.php", {
                 "action": "query", "prop": "pageimages",
                 "piprop": "original", "format": "json",
-                "titles": query, "redirects": 1}, timeout=20,
-                headers=_UA_WIKI)
-            r.raise_for_status()
+                "titles": query, "redirects": 1})
+            if r is None:
+                return None
             for p in r.json().get("query", {}).get("pages", {}).values():
                 url = p.get("original", {}).get("source")
                 if url:
@@ -3384,15 +3425,15 @@ async def imagenes_wikimedia(query, n=4):
         return fotos
     try:
         async with httpx.AsyncClient() as c:
-            r = await c.get("https://commons.wikimedia.org/w/api.php",
-                            params={
-                                "action": "query", "generator": "search",
-                                "gsrsearch": query, "gsrnamespace": 6,
-                                "gsrlimit": 10, "prop": "imageinfo",
-                                "iiprop": "url|mime", "iiurlwidth": 1600,
-                                "format": "json"},
-                            timeout=20, headers=_UA_WIKI)
-            r.raise_for_status()
+            r = await _wiki_get(
+                c, "https://commons.wikimedia.org/w/api.php",
+                {"action": "query", "generator": "search",
+                 "gsrsearch": query, "gsrnamespace": 6,
+                 "gsrlimit": 10, "prop": "imageinfo",
+                 "iiprop": "url|mime", "iiurlwidth": 1600,
+                 "format": "json"})
+            if r is None:
+                return fotos[:n]
             paginas = r.json().get("query", {}).get("pages", {})
             for p in sorted(paginas.values(),
                             key=lambda p: p.get("index", 99)):
@@ -6274,7 +6315,16 @@ async def bucle_youtube():
                         ruta = f"shorts/{archivo}"
                         with open(ruta) as f:
                             s = json.load(f)
-                        if not s.get("youtube_id") and s.get("yt_intentos"):
+                        # La amnistía es para los que fallaron por avería
+                        # (faltaba ffmpeg, OAuth…), NO para los que se
+                        # abandonaron por falta de fotos: a esos los
+                        # resucitaba en cada reinicio y volvían a gastar
+                        # búsquedas y validación con visión para acabar
+                        # abandonados otra vez.
+                        rendido_sin_fotos = (
+                            s.get("fotos_intentos", 0) >= FOTOS_INTENTOS_MAX)
+                        if (not s.get("youtube_id") and s.get("yt_intentos")
+                                and not rendido_sin_fotos):
                             s["yt_intentos"] = 0
                             with open(ruta, "w") as f:
                                 json.dump(s, f, indent=2)
