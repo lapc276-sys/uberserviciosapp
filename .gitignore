@@ -11,7 +11,9 @@ comentarios_respondidos.json
 cache/animaciones/
 datos/carreras/
 comparacion_ultima.json
+fotos_usadas.json
+fotos_veredictos.json
+metricas/
 
 shorts/*.srt
-metricas/
 titulo_estructura.json
