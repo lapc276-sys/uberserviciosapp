@@ -6292,6 +6292,127 @@ def _caption_redes(short):
     return f"{base}\n\n{_credito_canal()}\n\n{_HASHTAGS_REDES}"[:2100]
 
 
+# ── Enlace del short a nuestros videos largos ────────────────────────────
+# Los Shorts traen MUCHA gente pero poco tiempo de visionado; los largos son
+# los que cuentan para monetizar. Enlazar unos con otros es la forma normal
+# de convertir ese tráfico, y hasta ahora no se hacía: cada formato del canal
+# vivía por su cuenta y ni siquiera guardábamos en un sitio común las URL de
+# los largos ya publicados.
+#
+# Qué esperar, sin vender humo: el enlace en la descripción de un Short se ve
+# poco (hay que desplegar la descripción). Donde de verdad se pulsa es en un
+# comentario FIJADO, y fijar comentarios no existe en la API de YouTube — es
+# un paso a mano en Studio, igual que el campo "video relacionado" que Studio
+# ofrece al subir un Short. Esto es lo que SÍ se puede automatizar.
+CATALOGO_LARGOS = "catalogo_largos.json"
+CATALOGO_MAX = 300
+ENLACE_LARGO_ON = os.environ.get("ENLACE_LARGO", "on").lower() not in (
+    "off", "0", "", "no")
+# Formatos que envejecen bien y sirven de respaldo cuando el short no tiene
+# un largo del mismo tema. Un resumen de una carrera de hace tres semanas no
+# entra aquí: enlazarlo sería mandar a la gente a algo caducado.
+_LARGOS_EVERGREEN = ("explainer", "documental")
+# Palabras que salen en casi todo lo del canal y por tanto no distinguen
+# ningún tema: si contaran, cualquier short "casaría" con cualquier largo.
+_VACIAS = {
+    "formula", "racing", "race", "races", "team", "teams", "driver",
+    "drivers", "season", "grand", "prix", "explained", "video", "episode",
+    "shorts", "short", "with", "from", "this", "that", "your", "our",
+    "have", "has", "had", "not", "but", "all", "one", "two", "can",
+    "will", "who", "does", "did", "get", "more", "most", "than", "then",
+    "them", "they", "when", "where", "which", "while", "into", "over",
+    "about", "after", "before", "every", "just", "like", "made", "make",
+    "much", "only", "what", "why", "how", "was", "were", "are", "his",
+    "her", "their", "there", "here", "been", "being", "some", "same",
+    "such", "very", "even", "also", "still", "these", "those", "would",
+    "could", "should", "because", "actually", "really",
+}
+
+
+def _claves(texto):
+    """Palabras significativas de un texto, para cruzar temas entre videos."""
+    return {p for p in _PALABRAS_RE.findall((texto or "").lower())
+            if len(p) > 3 and p not in _VACIAS}
+
+
+def _catalogo_largos():
+    with contextlib.suppress(Exception):
+        with open(CATALOGO_LARGOS, encoding="utf-8") as f:
+            datos = json.load(f)
+        if isinstance(datos, list):
+            return datos
+    return []
+
+
+def _registrar_largo(res, titulo, tipo, texto=""):
+    """Apunta un video largo recién publicado para poder enlazarlo luego.
+
+    Nunca lanza: si algo falla, lo único que pasa es que ese video no se
+    enlazará desde los shorts. No se aborta una publicación por esto.
+    """
+    if not (res and res.get("url")):
+        return
+    with contextlib.suppress(Exception):
+        datos = _catalogo_largos()
+        if any(e.get("id") == res.get("id") for e in datos):
+            return
+        datos.append({
+            "id": res.get("id"),
+            "url": res["url"],
+            "titulo": titulo or "",
+            "tipo": tipo,
+            "claves": sorted(_claves(f"{titulo} {texto}")),
+            "cuando": dt.datetime.now(dt.timezone.utc).isoformat(),
+        })
+        datos = datos[-CATALOGO_MAX:]
+        with open(CATALOGO_LARGOS, "w", encoding="utf-8") as f:
+            json.dump(datos, f, ensure_ascii=False, indent=1)
+        log.info("🔗 Catálogo de largos: %d video(s) enlazable(s)", len(datos))
+
+
+def _largo_relacionado(short):
+    """El video largo que mejor pega con este short, o None.
+
+    Primero por TEMA (palabras compartidas). Si no hay nada del mismo tema,
+    el evergreen más reciente: enlazar algo del mismo tema es mucho mejor,
+    pero enlazar el último explicativo sigue siendo mejor que no enlazar.
+    """
+    datos = _catalogo_largos()
+    if not datos:
+        return None
+    claves = _claves(f"{short.get('consulta', '')} {short.get('titulo', '')} "
+                     f"{short.get('guion', '')}")
+    mejor, mejor_n = None, 0
+    for e in reversed(datos):        # a igualdad de tema, gana el más nuevo
+        n = len(claves.intersection(e.get("claves") or ()))
+        if n > mejor_n:
+            mejor, mejor_n = e, n
+    # Con una sola palabra en común no hay tema: hacen falta dos, si no
+    # acabaríamos mandando un short de frenos a un documental de motores.
+    if mejor and mejor_n >= 2:
+        return mejor
+    # Respaldo: se rota entre los últimos evergreen en vez de mandar SIEMPRE
+    # al mismo video, para repartir el tráfico por el catálogo.
+    evergreen = [e for e in datos if e.get("tipo") in _LARGOS_EVERGREEN]
+    return random.choice(evergreen[-5:]) if evergreen else None
+
+
+def _enlace_largo(short):
+    """Bloque de enlace para la descripción del short, o "" si no hay nada.
+
+    Va PRIMERO en la descripción a propósito: es la única línea que se ve
+    sin desplegarla.
+    """
+    if not ENLACE_LARGO_ON:
+        return ""
+    e = _largo_relacionado(short)
+    if not e:
+        return ""
+    titulo = " ".join((e.get("titulo") or "").split())[:90]
+    linea = f"▶ WATCH THE FULL VIDEO: {e['url']}"
+    return f"{linea}\n{titulo}" if titulo else linea
+
+
 def _shorts_sin_subir():
     """Shorts guardados que todavía no se subieron a YouTube."""
     pendientes = []
@@ -6593,8 +6714,12 @@ async def bucle_youtube():
                     continue
 
                 # 4) Subir a YouTube
+                # El enlace al largo va DELANTE del guion: en un Short es la
+                # única línea de la descripción que se ve sin desplegarla.
+                enlace = _enlace_largo(short)
                 descripcion = (
-                    short.get("guion", "") + "\n\n"
+                    (enlace + "\n\n" if enlace else "")
+                    + short.get("guion", "") + "\n\n"
                     + _credito_canal() + "\n\n"
                     "#F1 #Formula1 #Racing #MotorSport #Shorts"
                 )
@@ -6761,6 +6886,9 @@ async def _vod_procesar(ruta):
          meta.get("sesion", ""), meta.get("pais", "")])
     if res:
         log.info("🎞️  VOD de sesión subido: %s", res["url"])
+        _registrar_largo(res, titulo, "vod",
+                         f"{meta.get('sesion', '')} {meta.get('pais', '')} "
+                         f"{meta.get('circuito', '')}")
         shutil.rmtree(ruta, ignore_errors=True)
         return True
     meta["intentos"] = meta.get("intentos", 0) + 1
@@ -7342,6 +7470,9 @@ async def _procesar_recap(ruta):
         miniatura=miniatura)
     if res:
         log.info("🎬 Video-reseña subido: %s", res["url"])
+        _registrar_largo(res, titulo, "resumen",
+                         f"{resumen.get('pais', '')} "
+                         f"{resumen.get('sesion', '')}")
         await _publicar_podcast("recap_" + resumen["id"], titulo,
                                 descripcion, audio_total)
         shutil.rmtree(tmp, ignore_errors=True)
@@ -7576,6 +7707,8 @@ async def _subir_programa_video(ruta_ep):
         miniatura=miniatura)
     if res:
         log.info("📼 Video de programa subido: %s", res["url"])
+        _registrar_largo(res, titulo, "documental",
+                         f"{prog['titulo']} {ep.get('titulo', '')}")
         await _publicar_podcast(
             "prog_" + _id_episodio_completo(tipo, ep.get("titulo") or ""),
             titulo, descripcion, audio_total)
@@ -7896,6 +8029,8 @@ async def _producir_tema(tema):
     if not res:
         return False
     log.info("🎓 Episodio de la cola subido: %s", res["url"])
+    _registrar_largo(res, titulo, "explainer",
+                     f"{tema.get('titulo', '')} {tema.get('intro', '')}")
     await _publicar_podcast("tema_" + tema["id"], titulo, descripcion,
                             audio_total)
     tema["youtube_id"] = res["id"]
