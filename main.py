@@ -327,6 +327,19 @@ async def _tts_openai(quien, texto):
 # sesión: sin esto, CADA línea reintenta ElevenLabs, recibe 401 y recién
 # entonces cae a OpenAI — un martilleo que ralentiza toda la producción.
 _elevenlabs_estado = {"desactivado": False}
+# OpenAI TTS necesita lo mismo, y por la misma razón: sin cortacircuitos, un
+# documental de 57 líneas hacía 57 llamadas seguidas que fallaban todas. Se
+# distingue el motivo: una clave mala (401/403) no se arregla sola y se
+# desactiva la sesión entera; un límite de ritmo o cuota (429) sí puede
+# pasarse, así que solo se pausa un rato.
+_TTS_PAUSA_S = 300.0
+_openai_tts_estado = {"desactivado": False, "pausa_hasta": 0.0}
+
+
+def _openai_tts_disponible():
+    if _openai_tts_estado["desactivado"]:
+        return False
+    return time.monotonic() >= _openai_tts_estado["pausa_hasta"]
 
 
 async def sintetizar(quien, texto):
@@ -350,11 +363,24 @@ async def sintetizar(quien, texto):
                           "ELEVENLABS_API_KEY.", code)
             else:
                 log.error("ElevenLabs falló (%s) — probando OpenAI", e)
-    if not audio and OPENAI_API_KEY:
+    if not audio and OPENAI_API_KEY and _openai_tts_disponible():
         try:
             audio = await _tts_openai(quien, texto)
         except Exception as e:
-            log.error("OpenAI TTS falló (%s) — la Mac usará su voz", e)
+            code = getattr(getattr(e, "response", None), "status_code", None)
+            if code in (401, 403):
+                _openai_tts_estado["desactivado"] = True
+                log.error("OpenAI TTS rechazó la clave (%s) — DESACTIVADO por "
+                          "esta sesión. Revisa el Secret OPENAI_API_KEY.", code)
+            elif code == 429:
+                _openai_tts_estado["pausa_hasta"] = (time.monotonic()
+                                                     + _TTS_PAUSA_S)
+                log.error("OpenAI TTS sin cuota o al límite (429) — en pausa "
+                          "%d min. Suele ser saldo agotado: revisa la "
+                          "facturación en platform.openai.com.",
+                          int(_TTS_PAUSA_S // 60))
+            else:
+                log.error("OpenAI TTS falló (%s) — la Mac usará su voz", e)
 
     if audio:
         _guardar_audio_cache(quien, texto, audio)
@@ -3633,6 +3659,24 @@ def _foto_real_primero(fotos):
 # párrafo fijo pidiendo temas, sin una sola foto. Las tarjetas y los
 # gráficos NO cuentan aquí: son el marco, no el contenido.
 MIN_FOTOS_LARGO = max(1, int(os.environ.get("MIN_FOTOS_LARGO", "4") or 4))
+
+
+# Fracción mínima de líneas que tienen que tener voz para montar un video
+# largo. Si el TTS falla a medias, algunas líneas salen habladas y otras
+# desaparecen: el resultado es un documental que se salta frases y no se
+# entiende. Mejor no montarlo y reintentar cuando la voz vuelva.
+MIN_VOZ_LARGO = 0.85
+
+
+def _voz_suficiente(audios, lineas, que):
+    """¿Se sintetizó bastante guion como para que el video tenga sentido?"""
+    total = len(lineas or [])
+    hechas = len(audios or [])
+    if total and hechas >= total * MIN_VOZ_LARGO:
+        return True
+    log.warning("🎙️  %s NO se monta: solo %d de %d líneas con voz. Se "
+                "reintenta cuando el TTS vuelva.", que, hechas, total)
+    return False
 
 
 def _fotos_reales(fotos):
@@ -7111,6 +7155,11 @@ async def _procesar_recap(ruta):
             # texto tampoco entra, o los capítulos se desalinearían.
             textos_ok.append(l.get("texto", ""))
     audio_total = os.path.join(tmp, "audio.mp3")
+    if not _voz_suficiente(audios, lineas, "La reseña de carrera"):
+        resumen["intentos"] = resumen.get("intentos", 0) + 1
+        with open(ruta, "w") as f:
+            json.dump(resumen, f, ensure_ascii=False)
+        return False
     if not youtube_subir.concat_audios(audios, audio_total):
         resumen["intentos"] = resumen.get("intentos", 0) + 1
         with open(ruta, "w") as f:
@@ -7354,6 +7403,11 @@ async def _subir_programa_video(ruta_ep):
             audios.append(p)
             textos_ok.append(ln)
     audio_total = os.path.join(tmp, "audio.mp3")
+    if not _voz_suficiente(audios, lineas, f"El episodio '{ep.get('titulo')}'"):
+        ep["video_intentos"] = ep.get("video_intentos", 0) + 1
+        with open(ruta_ep, "w") as f:
+            json.dump(ep, f)
+        return
     if not youtube_subir.concat_audios(audios, audio_total):
         ep["video_intentos"] = ep.get("video_intentos", 0) + 1
         with open(ruta_ep, "w") as f:
@@ -7706,6 +7760,8 @@ async def _producir_tema(tema):
             audios.append(p)
             textos_ok.append(ln)
     audio_total = os.path.join(tmp, "audio.mp3")
+    if not _voz_suficiente(audios, lineas, f"El explicativo '{titulo}'"):
+        return False
     if not youtube_subir.concat_audios(audios, audio_total):
         return False
     fotos = await fotos_para_tema(tema.get("consulta") or titulo, n=20)
