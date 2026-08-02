@@ -5975,38 +5975,132 @@ def _chip_serie(short):
 # ensamblador ya sabe intercalar video con imágenes.
 ANIMACIONES_ON = os.environ.get("ANIMACIONES", "on").lower() not in (
     "off", "0", "", "no")
+# Cuántas animaciones propias se intentan meter en cada short.
+ANIMACIONES_POR_SHORT = max(0, min(8, int(
+    os.environ.get("ANIMACIONES_POR_SHORT", "5") or 5)))
+# ...y cuántas puede DIBUJAR de cero en un mismo short. Cada clip son ~100
+# fotogramas de Pillow: si un short tuviera que generar cinco piezas nuevas
+# a la vez se quedaría minutos parado. Con este tope la biblioteca se va
+# llenando short a short y, una vez cacheada, ya entran las cinco enteras.
+ANIMACIONES_NUEVAS_MAX = max(1, int(
+    os.environ.get("ANIMACIONES_NUEVAS_MAX", "2") or 2))
+
+# Tema del short → animaciones, en orden de relevancia.
+#
+# Las palabras se comparan CONTRA PALABRAS ENTERAS, no como subcadenas: si
+# se buscara "wing" dentro del texto, "following" daría positivo, y "disc"
+# saltaría con "discuss". Ese fallo ya nos pasó en las etiquetas de la
+# biblioteca de esquemas, así que aquí se hace bien desde el principio.
+_TEMAS_ANIMACION = (
+    (("drs", "slipstream", "tow", "overtake", "overtakes", "overtaking"),
+     ("aero_drs_on", "aero_suelo", "trazada", "carga_frenada", "aero_ala")),
+    (("aero", "aerodynamics", "aerodynamic", "wing", "wings", "downforce",
+      "diffuser", "floor", "airflow", "drag", "dirty", "porpoising"),
+     ("aero_ala", "aero_suelo", "aero_drs_on", "carga_curva", "trazada")),
+    (("brake", "brakes", "braking", "disc", "discs", "caliper", "calipers",
+      "stopping"),
+     ("freno_caliente", "freno_frio", "carga_frenada", "trazada",
+      "neum_slick")),
+    (("tyre", "tyres", "tire", "tires", "compound", "compounds", "grip",
+      "degradation", "graining", "blistering", "slick", "slicks", "wet",
+      "wets", "rain", "intermediate", "intermediates", "rubber"),
+     ("neum_slick", "neum_gastado", "neum_mojado", "degradacion",
+      "carga_curva")),
+    (("engine", "engines", "hybrid", "ers", "mgu", "battery", "energy",
+      "deploy", "deployment", "harvest", "harvesting", "turbo", "fuel",
+      "electric"),
+     ("ers_deploy", "ers_harvest", "carga_acelera", "aero_ala",
+      "freno_caliente")),
+    (("strategy", "strategies", "pit", "pits", "pitstop", "undercut",
+      "overcut", "stint", "stints", "stop", "stops"),
+     ("degradacion", "degradacion_pit", "neum_gastado", "neum_slick",
+      "trazada")),
+    (("apex", "corner", "corners", "cornering", "understeer", "oversteer",
+      "balance", "trail", "kerb", "kerbs", "line"),
+     ("trazada", "trazada_mala", "carga_curva", "carga_frenada",
+      "carga_acelera")),
+)
+# Categorías del canal que ya dicen por sí solas que el short es técnico
+_CATEGORIAS_TECNICAS = {"Aero", "Tecnica", "Técnica", "Motor", "Neumaticos",
+                        "Neumáticos", "Estrategia", "Frenos"}
+# Relleno cuando el tema encaja pero no da para cinco piezas distintas
+_ANIMACIONES_RELLENO = ("aero_ala", "trazada", "carga_frenada", "neum_slick",
+                        "freno_caliente", "degradacion", "ers_deploy",
+                        "carga_curva")
+_PALABRAS_RE = re.compile(r"[a-z]+")
 
 
 async def animaciones_para_short(short):
     """Clips propios que ilustran el tema del short. Lista (posiblemente
     vacía) de rutas a MP4. Nunca lanza: si algo falla, el short se arma con
-    fotos como siempre."""
-    if not ANIMACIONES_ON:
+    fotos como siempre.
+
+    Solo se anima lo que es TÉCNICO. Un short sobre el mercado de pilotos no
+    mejora por meterle un disco de freno: sería relleno, y se nota.
+    """
+    if not (ANIMACIONES_ON and ANIMACIONES_POR_SHORT):
         return []
     cat = (short.get("categoria") or "").strip()
-    texto = f"{short.get('consulta','')} {short.get('guion','')}".lower()
-    clips = []
+    texto = f"{short.get('consulta', '')} {short.get('guion', '')}".lower()
+    palabras = set(_PALABRAS_RE.findall(texto))
+
+    elegidas, encajo = [], cat in _CATEGORIAS_TECNICAS
+    for claves, animaciones_tema in _TEMAS_ANIMACION:
+        if not palabras.intersection(claves):
+            continue
+        encajo = True
+        for a in animaciones_tema:
+            if a not in elegidas:
+                elegidas.append(a)
+    if not encajo:
+        return []
+    for a in _ANIMACIONES_RELLENO:          # completar hasta el objetivo
+        if len(elegidas) >= ANIMACIONES_POR_SHORT:
+            break
+        if a not in elegidas:
+            elegidas.append(a)
+    elegidas = elegidas[:ANIMACIONES_POR_SHORT]
+
+    clips, nuevas = [], 0
     try:
         import animaciones
-        # Aerodinámica: flujo de aire sobre el alerón. Si el tema habla del
-        # DRS, se generan las dos tomas (cerrado y abierto) para que el
-        # contraste se VEA, que es justo lo que explica el guion.
-        if cat == "Aero" or any(k in texto for k in (
-                "aero", "wing", "downforce", "drs", "diffuser", "airflow",
-                "dirty air", "ground effect")):
-            if "drs" in texto:
-                for abierto in (False, True):
-                    c = await animaciones.clip_flujo_aire(drs=abierto)
-                    if c:
-                        clips.append(c)
-            else:
-                c = await animaciones.clip_flujo_aire(
-                    suelo="ground effect" in texto or "floor" in texto)
-                if c:
-                    clips.append(c)
+        # Primero lo que ya está dibujado: es instantáneo y garantiza que el
+        # short lleva movimiento aunque hoy no dé tiempo a generar nada.
+        pendientes = []
+        for a in elegidas:
+            ruta = animaciones.ruta_cacheada(a)
+            (clips if ruta else pendientes).append(ruta or a)
+        for a in pendientes:
+            if nuevas >= ANIMACIONES_NUEVAS_MAX:
+                break
+            ruta = await animaciones.clip(a)
+            if ruta:
+                clips.append(ruta)
+                nuevas += 1
     except Exception as e:
         log.info("Animaciones no disponibles (%s) — se usan solo fotos", e)
+    if nuevas:
+        log.info("🎬 %d animación(es) dibujada(s) de cero (quedan %d por "
+                 "cachear)", nuevas, max(0, len(elegidas) - len(clips)))
     return clips
+
+
+def _intercalar_animaciones(fotos, clips):
+    """Mezcla los clips propios con las fotos, una y una.
+
+    La primera SIEMPRE es una foto real: el primer fotograma es la portada
+    del short en el feed, y un esquema técnico ahí rinde peor que una foto.
+    """
+    if not clips:
+        return list(fotos)
+    salida = list(fotos[:1])
+    resto, pendientes = list(fotos[1:]), list(clips)
+    while resto or pendientes:
+        if pendientes:
+            salida.append(pendientes.pop(0))
+        if resto:
+            salida.append(resto.pop(0))
+    return salida
 
 
 # ── Tarjetas de comparación (estilo viral, con datos REALES) ─────────────
@@ -6426,19 +6520,7 @@ async def bucle_youtube():
                 if not propias:
                     fotos = _foto_real_primero(fotos)
 
-                # 2b) Intercalar animaciones propias (aero, DRS…): entran en
-                # la misma lista que las fotos. Van tras la primera imagen,
-                # para que el short abra con una foto real y el movimiento
-                # llegue enseguida.
-                if not short.get("sin_overlay"):
-                    clips = await animaciones_para_short(short)
-                    for j, c in enumerate(clips[:2]):
-                        fotos.insert(min(1 + j * 2, len(fotos)), c)
-                    if clips:
-                        log.info("🎬 %d animación(es) propia(s) en el short %s",
-                                 len(clips[:2]), sid)
-
-                # 2c) Sin material visual no se publica. El armador tiene un
+                # 2b) Sin material visual no se publica. El armador tiene un
                 # respaldo de fondo liso para no reventar, pero un short casi
                 # negro en el canal es peor que no publicar: se POSPONE y se
                 # reintenta al siguiente ciclo, cuando las fuentes respondan.
@@ -6479,6 +6561,18 @@ async def bucle_youtube():
                 if short.pop("fotos_espera_hasta", None) is not None:
                     short.pop("fotos_intentos", None)
                     _guardar_short(sid, short)
+
+                # 2c) Intercalar animaciones propias (frenos, neumáticos,
+                # híbrido, trazada…): entran en la misma lista que las fotos.
+                # Va DESPUÉS del mínimo de imágenes a propósito: si contaran
+                # como fotos, un short sin material real pasaría el filtro
+                # gracias a los clips y saldría publicado sin una sola foto.
+                if not short.get("sin_overlay"):
+                    clips = await animaciones_para_short(short)
+                    if clips:
+                        fotos = _intercalar_animaciones(fotos, clips)
+                        log.info("🎬 %d animación(es) propia(s) en el short %s",
+                                 len(clips), sid)
 
                 # 3) Armar video vertical: rótulo grande estilo F1 Shorts (solo
                 # el gancho limpio, sin hashtags), chip de serie arriba y

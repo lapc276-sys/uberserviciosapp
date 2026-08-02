@@ -13,6 +13,32 @@ en Replit. Las láminas se generan una vez y viven como PNG en la biblioteca.
   llanta 18". Cambias una cota y el dibujo se reajusta solo.
 - `variantes_f1.py` — el catálogo de variantes (reglaje y daño) en formato
   vertical 1080x1920 para Shorts.
+- `ver_animaciones.py` — exporta como **GIF** cada animación de
+  `animaciones.py` para poder mirarlas. Este sí se puede correr en
+  cualquier sitio: no necesita ffmpeg ni sube nada.
+
+  ```bash
+  python3 herramientas/ver_animaciones.py            # todas
+  python3 herramientas/ver_animaciones.py freno      # solo las de freno
+  ```
+
+  Los GIF salen en `previsualizaciones/`. Lo que se publica son MP4, que sí
+  necesitan ffmpeg y los genera el canal solo.
+
+## Láminas fijas (`biblioteca/`) y animaciones (`animaciones.py`)
+
+Son dos cosas distintas y conviene no mezclarlas:
+
+| | láminas de `biblioteca/` | animaciones de `animaciones.py` |
+|---|---|---|
+| qué son | PNG quietos | MP4 en bucle, 4 s |
+| cómo se hacen | a mano, con cairosvg | el canal las dibuja solo, con Pillow |
+| cuántas por short | 1-2 | hasta 5 (`ANIMACIONES_POR_SHORT`) |
+| se eligen por | etiquetas en `biblioteca.json` | `_TEMAS_ANIMACION` en `main.py` |
+
+Para añadir una animación nueva: escribe su `fotograma_*` en
+`animaciones.py`, añádela a `CATALOGO`, y mete su alias en el tema que le
+toque de `_TEMAS_ANIMACION`. Nada más — el pipeline no se toca.
 
 ## Regla del canal sobre estos diagramas
 
@@ -54,8 +80,8 @@ la telemetría medida, no el dibujo.
 
 ## Cuidado con las etiquetas
 
-Las etiquetas se cruzan con la consulta del short buscando **subcadenas**,
-y eso muerde:
+Las etiquetas de `biblioteca.json` se cruzan con la consulta del short
+buscando **subcadenas**, y eso muerde:
 
 - No pongas `"formula 1 ..."`: la palabra *formula* está en casi todas las
   consultas del canal, y un short de motor acabaría con diagramas de
@@ -66,3 +92,8 @@ y eso muerde:
 
 Tras cambiar etiquetas, comprueba con consultas reales de `_TEMAS_TECNICOS`
 que cada lámina sale SOLO donde toca.
+
+Las **animaciones** no tienen ese problema: `_TEMAS_ANIMACION` compara
+palabras enteras, así que *following* ya no dispara *wing* ni *discuss*
+dispara *disc*. Si añades una palabra a esa tabla, añádela entera y con sus
+plurales, no como raíz.
