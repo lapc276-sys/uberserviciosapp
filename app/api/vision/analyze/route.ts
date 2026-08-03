@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { getAnalyzer } from '@/lib/vision/analyzer';
 import { buildAnalysis } from '@/lib/vision/estimate';
 import { priceFromAnalysis } from '@/lib/vision/pricing';
+import { sanityCheckEstimate } from '@/lib/vision/sanity';
 import { services } from '@/lib/config/services';
 import { saveVisionAnalysis, createLead } from '@/lib/data';
 import { RATE_LIMITS, limitRequest, rateLimitResponse } from '@/lib/rate-limit';
@@ -115,6 +116,13 @@ export async function POST(req: Request) {
   }
 
   const quote = priceFromAnalysis(analysis, { serviceSlug, city });
+
+  // Second opinion from the questionnaire engine. It cannot see soil, so it is
+  // never exactly right — but a threefold disagreement means one of them is
+  // broken, and a broken vision read produces a confident number rather than an
+  // error. Warn instead of quoting it silently.
+  const sanity = sanityCheckEstimate(analysis, { serviceSlug, city, low: quote.low, high: quote.high });
+  if (sanity.warningEs) analysis.warnings.push(sanity.warningEs);
 
   const id = await saveVisionAnalysis({
     serviceSlug,
