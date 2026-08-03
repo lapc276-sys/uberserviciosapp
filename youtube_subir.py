@@ -1231,13 +1231,54 @@ async def subir_subtitulos(video_id, srt_path, idioma="en", nombre=""):
         return False
 
 
+# Por qué el motivo del fallo importa tanto: quien llama lleva la cuenta de
+# los intentos de cada video y lo abandona tras unos pocos. Si un "hoy no
+# hay cuota" contara como intento, los reintentos cada pocos minutos se
+# comerían todos los intentos del día en un cuarto de hora y se perdería
+# TODO lo pendiente — por algo que se arregla solo a medianoche.
+#
+# Se guarda en una variable del módulo, no se devuelve, para no cambiar la
+# firma en los cinco sitios que suben video. Las subidas van una detrás de
+# otra en un único bucle, así que no hay dos a la vez pisándose.
+_ULTIMO_FALLO = None
+# Fallos que NO son culpa del video: reintentar más tarde tiene sentido.
+FALLOS_TEMPORALES = ("cuota", "auth", "red")
+
+
+def ultimo_fallo():
+    """Motivo del último fallo de subida: 'cuota', 'auth', 'red', 'video'
+    o None si la última subida fue bien."""
+    return _ULTIMO_FALLO
+
+
+def _clasificar_fallo(e):
+    """Traduce la excepción de la API a un motivo accionable."""
+    t = f"{type(e).__name__} {e}".lower()
+    if any(k in t for k in ("quotaexceeded", "ratelimitexceeded",
+                            "uploadlimitexceeded", "dailylimitexceeded")):
+        return "cuota"
+    if any(k in t for k in ("invalid_grant", "invalid_scope", "unauthorized",
+                            "refresherror", "invalid_client", "401")):
+        return "auth"
+    if any(k in t for k in ("timeout", "timed out", "connection", "ssl",
+                            "temporarily", "backenderror", "503", "502",
+                            "500", "socket", "broken pipe")):
+        return "red"
+    return "video"
+
+
 async def subir_video(video_path, titulo, descripcion, tags, privacidad=None,
                       miniatura=None):
     """Sube el MP4 a YouTube. Devuelve {'id', 'url'} o None. Si `miniatura`
-    es una ruta a una imagen, la fija como portada del video."""
+    es una ruta a una imagen, la fija como portada del video.
+
+    Cuando devuelve None, `ultimo_fallo()` dice por qué.
+    """
+    global _ULTIMO_FALLO
     if not oauth_configurado():
         log.warning("OAuth de YouTube sin configurar: no se sube "
                     "(faltan YOUTUBE_CLIENT_ID / SECRET / REFRESH_TOKEN)")
+        _ULTIMO_FALLO = "auth"
         return None
     privacidad = privacidad or os.environ.get("YOUTUBE_PRIVACIDAD", "public")
     try:
@@ -1247,10 +1288,21 @@ async def subir_video(video_path, titulo, descripcion, tags, privacidad=None,
         if vid:
             log.info("📤 Subido a YouTube: https://youtu.be/%s (%s)",
                      vid, privacidad)
+            _ULTIMO_FALLO = None
             if miniatura:
                 await subir_miniatura(vid, miniatura)
             return {"id": vid, "url": f"https://youtu.be/{vid}"}
+        _ULTIMO_FALLO = "video"
         return None
     except Exception as e:
-        log.error("Falló la subida a YouTube (%s)", e)
+        _ULTIMO_FALLO = _clasificar_fallo(e)
+        if _ULTIMO_FALLO == "cuota":
+            log.error("📤 CUOTA DIARIA DE YOUTUBE AGOTADA. No se sube nada "
+                      "más hasta que se renueve (medianoche del Pacífico, "
+                      "~07:00-08:00 UTC). Cada subida cuesta ~1600 de las "
+                      "10000 unidades diarias: son ~6 videos al día "
+                      "contando shorts Y videos largos. Lo pendiente NO se "
+                      "pierde, sale mañana. (%s)", e)
+        else:
+            log.error("Falló la subida a YouTube [%s] (%s)", _ULTIMO_FALLO, e)
         return None

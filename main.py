@@ -6532,6 +6532,22 @@ async def _fotos_variadas(short, n=6):
     return fotos
 
 
+def _espera_cuota_youtube():
+    """Segundos hasta que YouTube renueva la cuota diaria.
+
+    Se renueva a medianoche del Pacífico, que son las 07:00 u 08:00 UTC
+    según el horario de verano. Se toma la más tardía y se le suman unos
+    minutos: adelantarse solo gastaría intentos para nada.
+    """
+    ahora = dt.datetime.now(dt.timezone.utc)
+    reset = ahora.replace(hour=8, minute=15, second=0, microsecond=0)
+    if reset <= ahora:
+        reset += dt.timedelta(days=1)
+    # Nunca más de una hora seguida: así el bucle sigue dando señales de
+    # vida en el log y recoge cualquier cambio (reinicio, clave nueva).
+    return min(3600, max(300, (reset - ahora).total_seconds()))
+
+
 async def bucle_youtube():
     """Arma un video vertical de cada short y lo sube a YouTube.
 
@@ -6744,8 +6760,24 @@ async def bucle_youtube():
                             await _poner_subtitulos(res["id"], short,
                                                     audio_ruta)
                 else:
-                    short["yt_intentos"] = short.get("yt_intentos", 0) + 1
-                    _guardar_short(sid, short)
+                    # Un "hoy no hay cuota" NO es culpa del short. Antes
+                    # contaba como intento igual que un video roto, y como
+                    # el bucle reintenta cada 5 minutos, los tres intentos
+                    # de TODOS los pendientes se agotaban en un cuarto de
+                    # hora: un día entero de shorts perdido para siempre
+                    # por algo que se arregla solo a medianoche.
+                    motivo = youtube_subir.ultimo_fallo()
+                    if motivo in youtube_subir.FALLOS_TEMPORALES:
+                        log.warning("📤 Short %s NO subido por '%s' — se "
+                                    "reintenta más tarde sin gastarle "
+                                    "intentos", sid, motivo)
+                        if motivo == "cuota":
+                            # Los demás pendientes van a chocar con el mismo
+                            # muro: no tiene sentido probarlos uno a uno.
+                            break
+                    else:
+                        short["yt_intentos"] = short.get("yt_intentos", 0) + 1
+                        _guardar_short(sid, short)
 
                 # 5) Publicar TAMBIÉN en Instagram Reels / TikTok — el mismo
                 # MP4 vertical sirve igual, sin reprocesar. Instagram DESCARGA
@@ -6772,7 +6804,11 @@ async def bucle_youtube():
                 await asyncio.sleep(30)  # espaciar subidas (cuota API)
         except Exception as e:
             log.warning("Subida a YouTube: %s", e)
-        await asyncio.sleep(300)
+        # Con la cuota agotada no sirve de nada volver dentro de 5 minutos:
+        # se espera a que YouTube la renueve.
+        await asyncio.sleep(_espera_cuota_youtube()
+                            if youtube_subir.ultimo_fallo() == "cuota"
+                            else 300)
 
 
 # ---------- VOD de sesiones (NUESTRA narración, cero video de F1TV) ----------
