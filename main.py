@@ -323,23 +323,51 @@ async def _tts_openai(quien, texto):
         return r.content
 
 
-# Si la clave de ElevenLabs es inválida (401/403), se desactiva por esta
-# sesión: sin esto, CADA línea reintenta ElevenLabs, recibe 401 y recién
-# entonces cae a OpenAI — un martilleo que ralentiza toda la producción.
-_elevenlabs_estado = {"desactivado": False}
-# OpenAI TTS necesita lo mismo, y por la misma razón: sin cortacircuitos, un
-# documental de 57 líneas hacía 57 llamadas seguidas que fallaban todas. Se
-# distingue el motivo: una clave mala (401/403) no se arregla sola y se
-# desactiva la sesión entera; un límite de ritmo o cuota (429) sí puede
-# pasarse, así que solo se pausa un rato.
-_TTS_PAUSA_S = 300.0
-_openai_tts_estado = {"desactivado": False, "pausa_hasta": 0.0}
+# Cortacircuitos de las dos voces. Hacen falta porque, sin ellos, un
+# documental de 57 líneas hace 57 llamadas seguidas que fallan todas: un
+# martilleo que ralentiza toda la producción y no consigue ni un audio.
+#
+# Pero NINGUNO desactiva nada "para el resto de la sesión". El motivo más
+# común de que una voz rechace es que se acabó el saldo, y cuando recargas
+# no deberías tener que reiniciar el Repl para que vuelva la voz — eso ya
+# nos ha costado días de producción. Por eso todo son PAUSAS con hora de
+# vuelta: el canal se recupera solo en cuanto hay saldo otra vez.
+_TTS_PAUSA_S = 300.0            # 429: límite de ritmo o cuota momentánea
+_TTS_PAUSA_CLAVE_S = 1800.0     # 401/403: clave o saldo; se reintenta luego
+_elevenlabs_estado = {"pausa_hasta": 0.0}
+_openai_tts_estado = {"pausa_hasta": 0.0}
+
+
+def _tts_disponible(estado):
+    return time.monotonic() >= estado["pausa_hasta"]
+
+
+def _tts_pausar(estado, segundos):
+    estado["pausa_hasta"] = time.monotonic() + segundos
+    return int(segundos // 60)
 
 
 def _openai_tts_disponible():
-    if _openai_tts_estado["desactivado"]:
-        return False
-    return time.monotonic() >= _openai_tts_estado["pausa_hasta"]
+    return _tts_disponible(_openai_tts_estado)
+
+
+def _voz_en_pausa():
+    """Explicación corta de por qué no hay voz ahora mismo, o "" si la hay.
+
+    Sin esto, quedarse sin saldo en las DOS voces se veía en el log como un
+    escueto "short sin audio — se pospone", repetido, sin decir la causa. Y
+    sin voz no sale ningún video: ni shorts, ni documentales, ni resúmenes.
+    """
+    falta = []
+    if not (ELEVENLABS_API_KEY and _tts_disponible(_elevenlabs_estado)):
+        falta.append("ElevenLabs")
+    if not (OPENAI_API_KEY and _tts_disponible(_openai_tts_estado)):
+        falta.append("OpenAI")
+    if len(falta) < 2:
+        return ""
+    return ("las DOS voces están sin servicio (%s) — casi siempre es saldo "
+            "agotado. Sin voz no sale ningún video. Se reintenta solo en "
+            "cuanto recargues, sin reiniciar" % " y ".join(falta))
 
 
 async def sintetizar(quien, texto):
@@ -351,34 +379,41 @@ async def sintetizar(quien, texto):
 
     # Si no está en caché, generar y guardar
     audio = None
-    if ELEVENLABS_API_KEY and not _elevenlabs_estado["desactivado"]:
+    if ELEVENLABS_API_KEY and _tts_disponible(_elevenlabs_estado):
         try:
             audio = await _tts_elevenlabs(quien, texto)
         except Exception as e:
             code = getattr(getattr(e, "response", None), "status_code", None)
             if code in (401, 403):
-                _elevenlabs_estado["desactivado"] = True
-                log.error("ElevenLabs rechazó la clave (%s) — DESACTIVADO por "
-                          "esta sesión; se usa OpenAI TTS. Revisa el Secret "
-                          "ELEVENLABS_API_KEY.", code)
+                m = _tts_pausar(_elevenlabs_estado, _TTS_PAUSA_CLAVE_S)
+                log.error("ElevenLabs rechazó la clave (%s) — en pausa %d min "
+                          "y luego se vuelve a probar SOLO (no hace falta "
+                          "reiniciar). Casi siempre es saldo agotado: mira "
+                          "elevenlabs.io. Mientras, se usa OpenAI TTS.",
+                          code, m)
+            elif code == 429:
+                m = _tts_pausar(_elevenlabs_estado, _TTS_PAUSA_S)
+                log.error("ElevenLabs al límite (429) — en pausa %d min; "
+                          "mientras, se usa OpenAI TTS.", m)
             else:
                 log.error("ElevenLabs falló (%s) — probando OpenAI", e)
-    if not audio and OPENAI_API_KEY and _openai_tts_disponible():
+    if not audio and OPENAI_API_KEY and _tts_disponible(_openai_tts_estado):
         try:
             audio = await _tts_openai(quien, texto)
         except Exception as e:
             code = getattr(getattr(e, "response", None), "status_code", None)
             if code in (401, 403):
-                _openai_tts_estado["desactivado"] = True
-                log.error("OpenAI TTS rechazó la clave (%s) — DESACTIVADO por "
-                          "esta sesión. Revisa el Secret OPENAI_API_KEY.", code)
+                m = _tts_pausar(_openai_tts_estado, _TTS_PAUSA_CLAVE_S)
+                log.error("OpenAI TTS rechazó la clave (%s) — en pausa %d min "
+                          "y luego se vuelve a probar SOLO (no hace falta "
+                          "reiniciar). Revisa el Secret OPENAI_API_KEY.",
+                          code, m)
             elif code == 429:
-                _openai_tts_estado["pausa_hasta"] = (time.monotonic()
-                                                     + _TTS_PAUSA_S)
-                log.error("OpenAI TTS sin cuota o al límite (429) — en pausa "
-                          "%d min. Suele ser saldo agotado: revisa la "
-                          "facturación en platform.openai.com.",
-                          int(_TTS_PAUSA_S // 60))
+                m = _tts_pausar(_openai_tts_estado, _TTS_PAUSA_S)
+                log.error("OpenAI TTS sin saldo o al límite (429) — en pausa "
+                          "%d min y se reintenta solo. Suele ser saldo "
+                          "agotado: mira la facturación en "
+                          "platform.openai.com.", m)
             else:
                 log.error("OpenAI TTS falló (%s) — la Mac usará su voz", e)
 
@@ -6622,7 +6657,11 @@ async def bucle_youtube():
                         with open(audio_ruta, "wb") as f:
                             f.write(audio)
                 if not os.path.exists(audio_ruta):
-                    log.info("📤 Short %s sin audio — se pospone", sid)
+                    motivo = _voz_en_pausa()
+                    if motivo:
+                        log.error("📤 Short %s sin audio: %s", sid, motivo)
+                    else:
+                        log.info("📤 Short %s sin audio — se pospone", sid)
                     continue
 
                 # 1b) Si ya se pospuso por falta de fotos, esperar antes de
