@@ -6695,6 +6695,10 @@ _CTA_HABLADA = {
         "mejor. Suscríbete.",
         "Analizamos la telemetría nosotros mismos para traerte esto. "
         "Suscríbete y sigue aprendiendo.",
+        "¿Quieres la historia completa? El análisis entero está en el "
+        "canal. Suscríbete.",
+        "Esta es la versión corta — el video completo ya está en el "
+        "canal. Sígueme para más.",
     ],
     "en": [
         "Follow to understand Formula 1 like an engineer.",
@@ -6707,6 +6711,14 @@ _CTA_HABLADA = {
         "better. Subscribe.",
         "We crunch the telemetry ourselves to bring you this. Subscribe "
         "and keep learning.",
+        # Empujar el tráfico del short hacia los videos largos: los Shorts
+        # traen gente, pero las horas de visionado que cuentan para
+        # monetizar salen de los largos. El enlace concreto va en la
+        # descripción (_enlace_largo); la voz solo siembra la idea.
+        "Want the full story? The complete breakdown is on the channel. "
+        "Subscribe.",
+        "This is the short version — the deep dive is already on the "
+        "channel. Follow for more.",
     ],
 }
 
