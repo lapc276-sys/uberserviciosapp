@@ -6245,11 +6245,12 @@ _TEMAS_ANIMACION = (
      ("aero_drs_on", "aero_suelo", "trazada", "carga_frenada", "aero_ala")),
     (("aero", "aerodynamics", "aerodynamic", "wing", "wings", "downforce",
       "diffuser", "floor", "airflow", "drag", "dirty", "porpoising"),
-     ("aero_ala", "aero_suelo", "aero_drs_on", "carga_curva", "trazada")),
+     ("aero_ala", "aero_suelo", "aero_drs_on", "aero_ala_carga",
+      "carga_curva", "trazada")),
     (("brake", "brakes", "braking", "disc", "discs", "caliper", "calipers",
       "stopping"),
-     ("freno_caliente", "freno_frio", "carga_frenada", "trazada",
-      "neum_slick")),
+     ("freno_caliente", "freno_frio", "freno_sin_ventilar", "carga_frenada",
+      "trazada", "neum_slick")),
     (("tyre", "tyres", "tire", "tires", "compound", "compounds", "grip",
       "degradation", "graining", "blistering", "slick", "slicks", "wet",
       "wets", "rain", "intermediate", "intermediates", "rubber"),
@@ -6278,11 +6279,86 @@ _ANIMACIONES_RELLENO = ("aero_ala", "trazada", "carga_frenada", "neum_slick",
                         "carga_curva")
 _PALABRAS_RE = re.compile(r"[a-z]+")
 
+# Palabras que ANCLAN cada animación a un momento del guion. Cuando alguna
+# aparece en la narración, el clip se coloca en la parte del video en la que
+# se dice — el disco de freno sale cuando se habla de frenos, no donde caiga.
+# Son deliberadamente más específicas que las de _TEMAS_ANIMACION: aquellas
+# deciden QUÉ animaciones pegan con el short; estas deciden CUÁNDO.
+_CLAVES_ANCLA = {
+    "aero_ala":         ("wing", "wings", "airflow", "downwash"),
+    "aero_suelo":       ("floor", "ground", "diffuser", "porpoising",
+                         "underbody"),
+    "aero_drs_on":      ("drs", "slipstream", "tow"),
+    "aero_ala_carga":   ("downforce", "drag"),
+    "freno_caliente":   ("brake", "brakes", "braking", "disc", "discs",
+                         "caliper"),
+    "freno_frio":       ("cold", "lockup", "locking"),
+    "freno_sin_ventilar": ("cooling", "ventilation", "vented", "overheating",
+                           "overheat", "fade"),
+    "neum_slick":       ("slick", "slicks", "compound", "compounds",
+                         "rubber"),
+    "neum_mojado":      ("wet", "wets", "rain", "intermediate",
+                         "intermediates", "aquaplaning", "spray"),
+    "neum_gastado":     ("worn", "wear", "graining", "blistering"),
+    "ers_deploy":       ("deploy", "deployment", "battery", "ers", "mgu",
+                         "electric"),
+    "ers_harvest":      ("harvest", "harvesting", "recovery",
+                         "regeneration"),
+    "carga_frenada":    ("dive", "weight", "load"),
+    "carga_acelera":    ("squat", "traction", "acceleration",
+                         "accelerating"),
+    "carga_curva":      ("cornering", "lateral", "roll"),
+    "trazada":          ("apex", "entry", "exit", "line"),
+    "trazada_mala":     ("understeer", "oversteer", "early"),
+    "degradacion":      ("degradation", "stint", "stints"),
+    "degradacion_pit":  ("pit", "pits", "pitstop", "undercut", "overcut",
+                         "window"),
+}
+
+# Memoria corta de qué animaciones salieron en los últimos shorts, para no
+# repetir siempre las mismas. Vive junto a los MP4 cacheados (carpeta ya
+# fuera de git). Solo afecta a las NO ancladas: si el guion menciona el DRS,
+# el clip del DRS va aunque saliera ayer — quitarlo por "repetido" sería
+# quitar justo el que ilustra lo que se está diciendo.
+_ANIM_RECIENTES = os.path.join("cache", "animaciones", "recientes.json")
+_ANIM_RECIENTES_MAX = 12
+
+
+def _animaciones_recientes():
+    with contextlib.suppress(Exception):
+        with open(_ANIM_RECIENTES, encoding="utf-8") as f:
+            return [str(a) for a in json.load(f)]
+    return []
+
+
+def _guardar_animaciones_recientes(nuevos):
+    if not nuevos:
+        return
+    with contextlib.suppress(Exception):
+        os.makedirs(os.path.dirname(_ANIM_RECIENTES), exist_ok=True)
+        r = [a for a in _animaciones_recientes() if a not in nuevos]
+        r += list(nuevos)
+        with open(_ANIM_RECIENTES, "w", encoding="utf-8") as f:
+            json.dump(r[-_ANIM_RECIENTES_MAX:], f)
+
+
+def _ancla_en_guion(alias, guion):
+    """Posición 0..1 del guion donde se menciona lo que dibuja `alias`,
+    o None si no se menciona (o el guion es muy corto para ubicar nada)."""
+    if len(guion) < 40:
+        return None
+    mejor = None
+    for kw in _CLAVES_ANCLA.get(alias, ()):
+        m = re.search(rf"\b{re.escape(kw)}\b", guion)
+        if m and (mejor is None or m.start() < mejor):
+            mejor = m.start()
+    return None if mejor is None else mejor / len(guion)
+
 
 async def animaciones_para_short(short):
     """Clips propios que ilustran el tema del short. Lista (posiblemente
-    vacía) de rutas a MP4. Nunca lanza: si algo falla, el short se arma con
-    fotos como siempre.
+    vacía) de (ruta_mp4, posicion 0..1 o None). Nunca lanza: si algo falla,
+    el short se arma con fotos como siempre.
 
     Solo se anima lo que es TÉCNICO. Un short sobre el mercado de pilotos no
     mejora por meterle un disco de freno: sería relleno, y se nota.
@@ -6290,66 +6366,106 @@ async def animaciones_para_short(short):
     if not (ANIMACIONES_ON and ANIMACIONES_POR_SHORT):
         return []
     cat = (short.get("categoria") or "").strip()
-    texto = f"{short.get('consulta', '')} {short.get('guion', '')}".lower()
+    guion = (short.get("guion") or "").lower()
+    texto = f"{short.get('consulta', '')} {guion}".lower()
     palabras = set(_PALABRAS_RE.findall(texto))
 
-    elegidas, encajo = [], cat in _CATEGORIAS_TECNICAS
+    candidatas, encajo = [], cat in _CATEGORIAS_TECNICAS
     for claves, animaciones_tema in _TEMAS_ANIMACION:
         if not palabras.intersection(claves):
             continue
         encajo = True
         for a in animaciones_tema:
-            if a not in elegidas:
-                elegidas.append(a)
+            if a not in candidatas:
+                candidatas.append(a)
     if not encajo:
         return []
     for a in _ANIMACIONES_RELLENO:          # completar hasta el objetivo
-        if len(elegidas) >= ANIMACIONES_POR_SHORT:
-            break
-        if a not in elegidas:
-            elegidas.append(a)
-    elegidas = elegidas[:ANIMACIONES_POR_SHORT]
+        if a not in candidatas:
+            candidatas.append(a)
 
-    clips, nuevas = [], 0
+    # Primero las ANCLADAS (el guion menciona exactamente lo que dibujan):
+    # esas van fijo y llevan su posición. El resto rota: las que salieron en
+    # los últimos shorts pasan al final de la cola, que es lo que evita ver
+    # siempre los mismos clips.
+    ancla = {a: p for a in candidatas
+             if (p := _ancla_en_guion(a, guion)) is not None}
+    ancladas = [a for a in candidatas if a in ancla]
+    resto = [a for a in candidatas if a not in ancla]
+    recientes = _animaciones_recientes()
+    orden_reciente = {a: i for i, a in enumerate(recientes)}
+    resto.sort(key=lambda a: (a in orden_reciente, orden_reciente.get(a, -1)))
+    elegidas = (ancladas + resto)[:ANIMACIONES_POR_SHORT]
+
+    clips, nuevas, usadas = [], 0, []
     try:
         import animaciones
-        # Primero lo que ya está dibujado: es instantáneo y garantiza que el
-        # short lleva movimiento aunque hoy no dé tiempo a generar nada.
-        pendientes = []
         for a in elegidas:
+            # Lo cacheado es instantáneo; dibujar de cero se raciona para no
+            # dejar el ciclo parado minutos (~100 fotogramas por clip).
             ruta = animaciones.ruta_cacheada(a)
-            (clips if ruta else pendientes).append(ruta or a)
-        for a in pendientes:
-            if nuevas >= ANIMACIONES_NUEVAS_MAX:
-                break
-            ruta = await animaciones.clip(a)
+            if not ruta and nuevas < ANIMACIONES_NUEVAS_MAX:
+                ruta = await animaciones.clip(a)
+                if ruta:
+                    nuevas += 1
             if ruta:
-                clips.append(ruta)
-                nuevas += 1
+                clips.append((ruta, ancla.get(a)))
+                usadas.append(a)
     except Exception as e:
         log.info("Animaciones no disponibles (%s) — se usan solo fotos", e)
+    _guardar_animaciones_recientes(usadas)
     if nuevas:
         log.info("🎬 %d animación(es) dibujada(s) de cero (quedan %d por "
                  "cachear)", nuevas, max(0, len(elegidas) - len(clips)))
+    if clips:
+        log.info("🎬 Animaciones del short: %s",
+                 ", ".join(f"{a}@{ancla[a]:.0%}" if a in ancla else a
+                           for a in usadas))
     return clips
 
 
-def _intercalar_animaciones(fotos, clips):
-    """Mezcla los clips propios con las fotos, una y una.
+def _colocar_clips(fotos, clips):
+    """Reparte los clips entre las fotos SEGÚN EL GUION.
+
+    `clips` acepta rutas sueltas o (ruta, posicion 0..1). El video se monta
+    en rebanadas de tiempo iguales, así que el puesto en la lista ES el
+    momento del video: un clip anclado al 70% del guion va a ~70% de la
+    lista y aparece cuando la voz llega a esa parte. Los que no tienen
+    posición se reparten uniformes, que era el comportamiento de antes.
 
     La primera SIEMPRE es una foto real: el primer fotograma es la portada
     del short en el feed, y un esquema técnico ahí rinde peor que una foto.
     """
+    clips = [c if isinstance(c, tuple) else (c, None) for c in (clips or [])]
     if not clips:
         return list(fotos)
-    salida = list(fotos[:1])
-    resto, pendientes = list(fotos[1:]), list(clips)
-    while resto or pendientes:
-        if pendientes:
-            salida.append(pendientes.pop(0))
-        if resto:
-            salida.append(resto.pop(0))
-    return salida
+    fotos = list(fotos)
+    n = len(fotos) + len(clips)
+    salida = [None] * n
+    if fotos:
+        salida[0] = fotos.pop(0)
+
+    sueltos = 0
+    ordenados = []
+    for ruta, pos in clips:
+        if pos is None:
+            sueltos += 1
+            pos = sueltos / (len(clips) + 1.0)
+        ordenados.append((max(0.0, min(1.0, float(pos))), ruta))
+    for pos, ruta in sorted(ordenados):
+        idx = min(n - 1, max(1, int(pos * (n - 1) + 0.5)))
+        for delta in range(n):          # hueco libre más cercano al momento
+            for cand in (idx + delta, idx - delta):
+                if 1 <= cand < n and salida[cand] is None:
+                    salida[cand] = ruta
+                    break
+            else:
+                continue
+            break
+    for i in range(n):                   # las fotos rellenan lo que queda
+        if salida[i] is None and fotos:
+            salida[i] = fotos.pop(0)
+    return [x for x in salida if x is not None]
 
 
 # ── Tarjetas de comparación (estilo viral, con datos REALES) ─────────────
@@ -6960,7 +7076,7 @@ async def bucle_youtube():
                 if not short.get("sin_overlay"):
                     clips = await animaciones_para_short(short)
                     if clips:
-                        fotos = _intercalar_animaciones(fotos, clips)
+                        fotos = _colocar_clips(fotos, clips)
                         log.info("🎬 %d animación(es) propia(s) en el short %s",
                                  len(clips), sid)
 
@@ -6973,7 +7089,7 @@ async def bucle_youtube():
                         short["video_stock"] = bool(stock)
                         _guardar_short(sid, short)
                     if stock:
-                        fotos = _intercalar_animaciones(fotos, stock)
+                        fotos = _colocar_clips(fotos, stock)
                         log.info("🎞️  %d clip(s) de stock en el short %s "
                                  "(grupo CON vídeo)", len(stock), sid)
 

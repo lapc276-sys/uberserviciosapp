@@ -443,6 +443,8 @@ def fotograma_freno(fase, ventilado=True, frio=False):
              nota="≈400-1000 °C")
     if frio:
         _pie(d, "Cold carbon brakes", "Out of the window they barely bite")
+    elif not ventilado:
+        _pie(d, "Brake cooling", "Without vents the heat has nowhere to go")
     else:
         _pie(d, "Carbon brake disc", "Heat is what makes carbon grip")
     return im
@@ -1139,10 +1141,18 @@ CATALOGO = {
                         {"drs": False, "suelo": True}),
     "aero_drs_on":     ("flujo", fotograma_flujo,
                         {"drs": True, "suelo": True}),
+    # Ala con mucho más ángulo de ataque: el flujo se desvía el doble y se
+    # LEE la carga extra — para guiones que hablan de downforce vs drag.
+    "aero_ala_carga":  ("flujo", fotograma_flujo,
+                        {"drs": False, "suelo": False, "ang": -0.30}),
     "freno_caliente":  ("freno", fotograma_freno,
                         {"ventilado": True, "frio": False}),
     "freno_frio":      ("freno", fotograma_freno,
                         {"ventilado": True, "frio": True}),
+    # Disco liso, sin canales ni taladros: la variante para explicar por qué
+    # la ventilación existe (sin ella el calor no tiene por dónde salir).
+    "freno_sin_ventilar": ("freno", fotograma_freno,
+                           {"ventilado": False, "frio": False}),
     "neum_slick":      ("neumatico", fotograma_neumatico,
                         {"mojado": False, "desgastado": False}),
     "neum_mojado":     ("neumatico", fotograma_neumatico,
