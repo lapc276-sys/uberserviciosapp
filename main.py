@@ -3812,21 +3812,88 @@ def _fuentes_fotos_activas():
 
 SYSTEM_VISION_FOTO = """You are the photo editor of a professional \
 motorsport TV channel. Decide if this image can air FULL-SCREEN in a \
-documentary about the given topic. REJECT (apta=false) if it is: a \
-collage/montage/photo grid (several images stacked together), a scanned \
-magazine or newspaper page, a screenshot, a diagram/map/logo, an image \
-with heavy text or watermarks, people at desks/computers/offices/sim \
-rigs, or clearly unrelated to motorsport and the topic. Otherwise ACCEPT \
+documentary about the given topic.
+
+REJECT (apta=false) if it is: a collage/montage/photo grid (several images \
+stacked together), a scanned magazine or newspaper page, a screenshot, a \
+diagram/map/logo, an image with heavy text or watermarks, people at \
+desks/computers/offices/sim rigs, a posed studio/stock portrait of an \
+anonymous model, or clearly unrelated to motorsport. Otherwise ACCEPT \
 (apta=true) — a clean generic racing photo is fine even if not exactly \
-on-topic. Be strict about collages and text, lenient about relevance."""
+on-topic.
+
+Also report persona_protagonista: true when a recognisable HUMAN FACE or \
+a single person is the main subject of the frame. A driver sealed in a \
+car with the helmet on, a distant crowd, or a pit crew working as a group \
+are NOT persona_protagonista — nobody's identity is being asserted there. \
+A portrait, a podium close-up, or a person filling the frame IS.
+
+Be strict about collages, text and stock portraits; lenient about topic \
+relevance. Never guess WHO somebody is: just say whether a person is the \
+subject."""
 
 VISION_FOTO_SCHEMA = {
     "type": "object",
     "properties": {"apta": {"type": "boolean"},
+                   "persona_protagonista": {"type": "boolean"},
                    "motivo": {"type": "string"}},
-    "required": ["apta", "motivo"],
+    "required": ["apta", "persona_protagonista", "motivo"],
     "additionalProperties": False,
 }
+
+# ── Identidad: nunca enseñar a alguien como si fuera otro ────────────────
+# El fallo que hay que matar: buscar "Lewis Hamilton" y que salga un señor
+# cualquiera de un banco de imágenes. Eso no es una foto floja, es una
+# MENTIRA — el canal está afirmando que ese hombre es Hamilton.
+#
+# La solución NO es pedirle a la IA que reconozca caras: no es fiable y
+# además no es algo que queramos hacer. Se resuelve con metadatos: Wikimedia
+# nombra sus archivos con la persona que sale (Lewis_Hamilton_2016.jpg), así
+# que si el tema nombra a alguien y la foto tiene una persona de
+# protagonista, esa foto solo entra si el archivo confirma que es quien
+# decimos. Si no, fuera.
+_APELLIDOS_F1 = {
+    "verstappen", "hamilton", "leclerc", "norris", "piastri", "russell",
+    "alonso", "sainz", "perez", "tsunoda", "gasly", "ocon", "stroll",
+    "albon", "hulkenberg", "magnussen", "bottas", "zhou", "ricciardo",
+    "bearman", "colapinto", "lawson", "antonelli", "hadjar", "doohan",
+    "bortoleto", "schumacher", "senna", "prost", "vettel", "raikkonen",
+    "rosberg", "button", "webber", "massa", "barrichello", "montoya",
+    "villeneuve", "mansell", "lauda", "fittipaldi", "hakkinen", "hill",
+    "horner", "wolff", "vasseur", "brown", "domenicali", "newey", "binotto",
+    "steiner", "marko", "krack", "stella", "waché", "wache",
+}
+# Nombres de pila que por sí solos ya identifican a alguien del paddock
+_NOMBRES_F1 = {"lewis", "max", "charles", "lando", "oscar", "george",
+               "fernando", "carlos", "sergio", "yuki", "checo", "kimi",
+               "ayrton", "michael", "sebastian", "niki", "toto", "christian"}
+
+
+def _persona_en_consulta(consulta):
+    """Apellido de la persona que nombra la consulta, o None.
+
+    Devuelve el apellido porque es lo que aparece en el nombre de archivo de
+    Wikimedia, que es con lo que después se comprueba la identidad.
+    """
+    palabras = _PALABRAS_RE.findall((consulta or "").lower())
+    for p in palabras:
+        if p in _APELLIDOS_F1:
+            return p
+    # Un nombre de pila conocido también cuenta: "why lewis struggled"
+    return next((p for p in palabras if p in _NOMBRES_F1), None)
+
+
+def _foto_confirma_persona(url, quien):
+    """¿El nombre del archivo confirma que en la foto sale `quien`?
+
+    Wikimedia y Flickr ponen el nombre en la URL; Pexels y los bancos de
+    stock nunca, porque sus fotos no son de personas reales conocidas. Esa
+    diferencia es justo la que aquí queremos.
+    """
+    if not quien:
+        return True
+    u = re.sub(r"[^a-z]+", " ", (url or "").lower())
+    return f" {quien} " in f" {u} "
 
 
 def _cargar_veredictos():
@@ -3898,7 +3965,7 @@ async def _jpeg_para_vision(src):
         return None
 
 
-async def _foto_aprobada_vision(client, src, tema):
+async def _foto_aprobada_vision(client, src, tema, quien=None):
     """Veredicto del editor con visión. TRI-ESTADO:
         True  → aprobada
         False → rechazada
@@ -3907,11 +3974,17 @@ async def _foto_aprobada_vision(client, src, tema):
     Antes, "no se pudo verificar" devolvía True y la foto entraba al video sin
     revisar: por ahí se colaban las fotos de oficinas cuando Wikimedia daba
     429 o la API fallaba. Ahora el llamador decide (usa las sin verificar solo
-    si se quedaría sin fotos)."""
+    si se quedaría sin fotos).
+
+    `quien` es el apellido de la persona que nombra el tema, si lo hay: con
+    él, una foto protagonizada por alguien solo pasa si el archivo confirma
+    que es esa persona."""
     if not VALIDAR_FOTOS:
         return True
     veredictos = _cargar_veredictos()
-    clave = str(src)
+    # El veredicto cacheado depende también de a quién se busca: la misma
+    # foto puede valer para un tema y ser una suplantación en otro.
+    clave = str(src) if not quien else f"{src}#{quien}"
     if clave in veredictos:
         return bool(veredictos[clave])
     b64 = await _jpeg_para_vision(src)
@@ -3933,9 +4006,18 @@ async def _foto_aprobada_vision(client, src, tema):
         data = json.loads(next(
             (b.text for b in r.content if b.type == "text"), "{}"))
         apta = bool(data.get("apta", True))
+        motivo = data.get("motivo", "?")
+        # Regla de identidad: si el tema nombra a alguien y esta foto está
+        # protagonizada por una persona, el archivo tiene que confirmar que
+        # es quien decimos. Un desconocido presentado como Hamilton es
+        # exactamente lo que el canal no puede permitirse.
+        if (apta and quien and bool(data.get("persona_protagonista"))
+                and not _foto_confirma_persona(src, quien)):
+            apta = False
+            motivo = f"persona sin confirmar como '{quien}'"
         if not apta:
             log.info("👁️  Foto descartada por visión (%s): %s",
-                     data.get("motivo", "?"), clave[-80:])
+                     motivo, str(src)[-80:])
         veredictos[clave] = apta
         _guardar_veredictos()
         return apta
@@ -3950,14 +4032,21 @@ async def _filtrar_con_vision(candidatas, tema, n):
     Corta en cuanto junta n (no gasta validando de más)."""
     if not candidatas:
         return []
+    quien = _persona_en_consulta(tema)
     if not (VALIDAR_FOTOS and os.environ.get("ANTHROPIC_API_KEY")):
+        # Sin visión no se puede saber si una foto está protagonizada por
+        # alguien. Con un tema de persona, al menos se exige que el archivo
+        # la nombre: es la única garantía que queda.
+        candidatas = [c for c in candidatas
+                      if _foto_confirma_persona(c, quien)]
         return list(candidatas)[:n]
     client = anthropic.AsyncAnthropic()
     veredictos = _cargar_veredictos()
     aprobadas, sin_verificar = [], []
     for src in candidatas:
-        en_cache = str(src) in veredictos
-        veredicto = await _foto_aprobada_vision(client, src, tema)
+        en_cache = f"{src}#{quien}" if quien else str(src)
+        en_cache = en_cache in veredictos
+        veredicto = await _foto_aprobada_vision(client, src, tema, quien)
         if veredicto is True:
             aprobadas.append(src)
         elif veredicto is None:
@@ -3969,10 +4058,17 @@ async def _filtrar_con_vision(candidatas, tema, n):
     # Las que NO se pudieron verificar solo se usan si nos quedaríamos sin
     # fotos: es preferible una genérica de carreras a un video vacío, pero
     # nunca deben desplazar a las aprobadas (por ahí entraban las oficinas).
+    # Con un tema de persona, además, tienen que venir nombradas: sin haber
+    # podido mirarlas, meter un retrato cualquiera sería suplantar.
     if len(aprobadas) < n and sin_verificar:
+        if quien:
+            sin_verificar = [s for s in sin_verificar
+                             if _foto_confirma_persona(s, quien)]
         faltan = n - len(aprobadas)
-        log.info("👁️  %d foto(s) sin verificar usadas como relleno (visión no "
-                 "disponible)", min(faltan, len(sin_verificar)))
+        if sin_verificar:
+            log.info("👁️  %d foto(s) sin verificar usadas como relleno "
+                     "(visión no disponible)",
+                     min(faltan, len(sin_verificar)))
         aprobadas += sin_verificar[:faltan]
     # Si la visión tumbó casi todo, completar con las restantes sin validar
     # es peor que quedarse corto: mejor pocas fotos buenas que collages.
@@ -4232,7 +4328,18 @@ async def fotos_para_tema(consulta, n=10):
         except Exception:
             pass
 
-    await sumar(imagenes_pexels(consulta, n=faltan * 2))
+    # Si el tema nombra a una persona, los BANCOS DE STOCK quedan fuera.
+    # Pexels no tiene ni una foto de un piloto real: ante "Lewis Hamilton"
+    # devuelve modelos de catálogo, y de ahí salía el señor desconocido que
+    # el canal enseñaba como si fuera Hamilton. Wikimedia y Flickr sí tienen
+    # fotos reales de paddock, y además nombradas.
+    quien = _persona_en_consulta(consulta)
+    if quien:
+        log.info("🖼️  '%s' nombra a una persona (%s): se buscan solo fuentes "
+                 "con fotos reales del paddock, sin bancos de stock",
+                 consulta, quien)
+    else:
+        await sumar(imagenes_pexels(consulta, n=faltan * 2))
     await sumar(imagenes_openverse(consulta, n=faltan * 2))
     await sumar(imagenes_flickr(consulta, n=faltan * 2))
     await sumar(imagenes_wikimedia(consulta, n=faltan * 2))
