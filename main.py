@@ -839,7 +839,69 @@ async def datos_vistas(short: str = ""):
             {"ok": False, "error": "Aún no hay muestras. Se toman cada "
              f"{metricas.CADA_S // 60} min desde que se publica un short."},
             status_code=404)
+    r["experimento_video"] = _comparar_video_stock(r["shorts"])
     return JSONResponse({"ok": True, **r})
+
+
+def _comparar_video_stock(filas):
+    """Compara los shorts CON vídeo de stock contra los que no lo llevan.
+
+    Es la respuesta a "¿la gente se aburre de nuestras imágenes fijas?".
+    Mientras no haya al menos tres de cada lado no se da veredicto: con dos
+    shorts por grupo, un solo short que se viralice decide el resultado y no
+    habríamos aprendido nada.
+    """
+    grupo = {}
+    with contextlib.suppress(Exception):
+        for archivo in os.listdir("shorts"):
+            if not (archivo.startswith("short_")
+                    and archivo.endswith(".json")):
+                continue
+            with contextlib.suppress(Exception):
+                with open(f"shorts/{archivo}") as f:
+                    s = json.load(f)
+                if s.get("id") is not None and "video_stock" in s:
+                    grupo[s["id"]] = bool(s["video_stock"])
+
+    con = [f for f in filas if grupo.get(f.get("short")) is True]
+    sin = [f for f in filas if grupo.get(f.get("short")) is False]
+
+    def media(fs, campo):
+        vs = [f[campo] for f in fs if f.get(campo) is not None]
+        return round(sum(vs) / len(vs), 1) if vs else None
+
+    salida = {
+        "con_video": {"shorts": len(con),
+                      "vistas_media": media(con, "vistas"),
+                      "vistas_24h_media": media(con, "primeras_24h")},
+        "sin_video": {"shorts": len(sin),
+                      "vistas_media": media(sin, "vistas"),
+                      "vistas_24h_media": media(sin, "primeras_24h")},
+    }
+    if len(con) < 3 or len(sin) < 3:
+        salida["veredicto"] = (
+            f"Todavía no. Hacen falta al menos 3 shorts por grupo y van "
+            f"{len(con)} con vídeo y {len(sin)} sin. Sigue publicando.")
+        return salida
+    a, b = media(con, "vistas"), media(sin, "vistas")
+    if not (a and b):
+        salida["veredicto"] = "Sin vistas suficientes para comparar."
+        return salida
+    dif = round(100 * (a - b) / b, 1)
+    salida["diferencia_pct"] = dif
+    if abs(dif) < 15:
+        salida["veredicto"] = (
+            f"Empate ({dif:+}%). El vídeo de stock no cambia las vistas: no "
+            f"merece la pena pagar una membresía por esto.")
+    elif dif > 0:
+        salida["veredicto"] = (
+            f"El vídeo GANA ({dif:+}%). Aquí sí tiene sentido plantearse "
+            f"una membresía de metraje.")
+    else:
+        salida["veredicto"] = (
+            f"El vídeo PIERDE ({dif:+}%). Las fotos reales retienen mejor "
+            f"que el metraje genérico: apaga VIDEO_STOCK.")
+    return salida
 
 
 @app.get("/datos/pases")
@@ -3917,6 +3979,158 @@ async def _filtrar_con_vision(candidatas, tema, n):
     return aprobadas
 
 
+# ── Vídeo de stock: el experimento de "¿aburren las fotos fijas?" ────────
+# Pexels da VÍDEO gratis con la MISMA clave que las fotos, y su licencia
+# permite uso comercial sin atribución. Así se puede probar si el canal
+# retiene mejor con imagen en movimiento SIN pagar todavía una membresía.
+#
+# Lo que NO se busca aquí es metraje de F1: no existe libre de derechos, y
+# usarlo sería exactamente lo que este canal no hace. Se busca TEXTURA —
+# asfalto corriendo, una goma girando, chispas, un taller — que rompe la
+# monotonía sin fingir que tenemos imágenes de carrera.
+VIDEO_STOCK_ON = os.environ.get("VIDEO_STOCK", "on").lower() not in (
+    "off", "0", "", "no")
+VIDEO_STOCK_POR_SHORT = max(0, min(4, int(
+    os.environ.get("VIDEO_STOCK_POR_SHORT", "2") or 2)))
+VIDEO_STOCK_DIR = os.path.join("cache", "videos_stock")
+VIDEO_STOCK_USADOS = os.path.join(VIDEO_STOCK_DIR, "usados.json")
+# El 4K de Pexels pasa de 100 MB por clip. En Replit eso es disco y ancho de
+# banda que no tenemos, y en un short de 1080 de ancho no se nota.
+VIDEO_STOCK_MAX_MB = 30
+_CONSULTAS_VIDEO = (
+    "car tire close up", "asphalt road speed", "race car track",
+    "motorsport racing", "pit lane garage", "mechanic tools workshop",
+    "speedometer dashboard", "racing helmet", "sparks metal welding",
+    "highway night speed", "engine parts macro", "checkered flag",
+    "wheel spinning", "car headlights night", "wind tunnel smoke",
+)
+
+
+def _videos_stock_usados():
+    with contextlib.suppress(Exception):
+        with open(VIDEO_STOCK_USADOS, encoding="utf-8") as f:
+            return set(json.load(f))
+    return set()
+
+
+def _guardar_videos_stock_usados(usados):
+    with contextlib.suppress(Exception):
+        os.makedirs(VIDEO_STOCK_DIR, exist_ok=True)
+        with open(VIDEO_STOCK_USADOS, "w", encoding="utf-8") as f:
+            json.dump(sorted(usados)[-400:], f)
+
+
+def _mejor_fichero_video(ficheros):
+    """El rendition más pequeño que aún sirva para un short 1080x1920.
+
+    Tras recortar a 9:16 lo que manda es el lado corto, así que se exige
+    720 ahí y se coge el archivo más ligero que lo cumpla.
+    """
+    aptos = []
+    for f in ficheros or ():
+        if (f.get("file_type") or "") != "video/mp4" or not f.get("link"):
+            continue
+        an, al = f.get("width") or 0, f.get("height") or 0
+        if min(an, al) < 720:
+            continue
+        aptos.append((an * al, f["link"]))
+    return min(aptos)[1] if aptos else None
+
+
+async def _descargar_video(c, url, destino):
+    """Descarga por trozos con tope de tamaño. True si quedó el archivo."""
+    tope = VIDEO_STOCK_MAX_MB * 1024 * 1024
+    tmp = destino + ".parcial"
+    total = 0
+    try:
+        async with c.stream("GET", url) as r:
+            r.raise_for_status()
+            with open(tmp, "wb") as f:
+                async for trozo in r.aiter_bytes(65536):
+                    total += len(trozo)
+                    if total > tope:
+                        raise ValueError(
+                            f"clip de más de {VIDEO_STOCK_MAX_MB} MB")
+                    f.write(trozo)
+        os.replace(tmp, destino)
+        log.info("🎞️  Clip de stock descargado (%.1f MB)", total / 1e6)
+        return True
+    except Exception as e:
+        log.info("No se pudo bajar el clip de stock (%s)", e)
+        with contextlib.suppress(OSError):
+            os.remove(tmp)
+        return False
+
+
+async def videos_pexels(query, n=2):
+    """Clips de stock de Pexels ya descargados. Rutas a MP4 locales, o [].
+
+    Nunca lanza: si Pexels falla o nada sirve, el short sale con lo demás.
+    """
+    if not (PEXELS_API_KEY and VIDEO_STOCK_ON and n > 0):
+        return []
+    os.makedirs(VIDEO_STOCK_DIR, exist_ok=True)
+    usados = _videos_stock_usados()
+    salida = []
+    try:
+        async with httpx.AsyncClient(timeout=40) as c:
+            r = await c.get("https://api.pexels.com/videos/search",
+                            params={"query": query, "per_page": 15,
+                                    "orientation": "portrait"},
+                            headers={"Authorization": PEXELS_API_KEY})
+            r.raise_for_status()
+            for v in r.json().get("videos", []):
+                if len(salida) >= n:
+                    break
+                vid = str(v.get("id") or "")
+                dur = v.get("duration") or 0
+                # Ni un parpadeo ni un cortometraje: lo que se usa son 4-6 s
+                if not vid or vid in usados or not 3 <= dur <= 30:
+                    continue
+                if _foto_sospechosa(v.get("url", "")):
+                    continue
+                destino = os.path.join(VIDEO_STOCK_DIR, f"pexels_{vid}.mp4")
+                if os.path.exists(destino) and os.path.getsize(destino) > 0:
+                    salida.append(destino)
+                    usados.add(vid)
+                    continue
+                enlace = _mejor_fichero_video(v.get("video_files"))
+                if enlace and await _descargar_video(c, enlace, destino):
+                    salida.append(destino)
+                    usados.add(vid)
+    except Exception as e:
+        log.info("Pexels sin vídeo para '%s' (%s)", query, e)
+    _guardar_videos_stock_usados(usados)
+    return salida
+
+
+def _en_grupo_video(sid):
+    """¿Le toca vídeo de stock a este short?
+
+    La mitad sí y la mitad no, de forma estable. Sin grupo de control no hay
+    experimento: si se lo ponemos a todos, dentro de una semana seguiremos
+    sin saber si el vídeo ayudó o si lo que cambió fue otra cosa (haber
+    vuelto a publicar a diario, por ejemplo).
+    """
+    if not sid:
+        return False
+    return int(hashlib.md5(str(sid).encode()).hexdigest(), 16) % 2 == 0
+
+
+async def video_stock_para_short(short):
+    """Clips de stock para este short. [] si no le toca o si no hay clave."""
+    if not (VIDEO_STOCK_ON and PEXELS_API_KEY and VIDEO_STOCK_POR_SHORT):
+        return []
+    if not _en_grupo_video(short.get("id", "")):
+        return []
+    clips = []
+    for q in random.sample(_CONSULTAS_VIDEO, k=4):
+        if len(clips) >= VIDEO_STOCK_POR_SHORT:
+            break
+        clips += await videos_pexels(q, n=VIDEO_STOCK_POR_SHORT - len(clips))
+    return clips[:VIDEO_STOCK_POR_SHORT]
+
+
 async def imagenes_pexels(query, n=6):
     """Fotos de stock de alta calidad y libres de Pexels (crédito al autor
     recomendado). Necesita PEXELS_API_KEY. Devuelve [] si no hay clave."""
@@ -6749,6 +6963,19 @@ async def bucle_youtube():
                         fotos = _intercalar_animaciones(fotos, clips)
                         log.info("🎬 %d animación(es) propia(s) en el short %s",
                                  len(clips), sid)
+
+                    # 2d) Experimento del vídeo de stock: a la MITAD de los
+                    # shorts se les mete metraje en movimiento y a la otra
+                    # mitad no. Se apunta en el short a qué grupo fue, que es
+                    # lo que después permite comparar en /datos/vistas.
+                    stock = await video_stock_para_short(short)
+                    if short.get("video_stock") != bool(stock):
+                        short["video_stock"] = bool(stock)
+                        _guardar_short(sid, short)
+                    if stock:
+                        fotos = _intercalar_animaciones(fotos, stock)
+                        log.info("🎞️  %d clip(s) de stock en el short %s "
+                                 "(grupo CON vídeo)", len(stock), sid)
 
                 # 3) Armar video vertical: rótulo grande estilo F1 Shorts (solo
                 # el gancho limpio, sin hashtags), chip de serie arriba y
