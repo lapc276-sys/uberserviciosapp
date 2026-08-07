@@ -24,6 +24,10 @@ export const verticals: Vertical[] = [
   { slug: 'landscaping', name: 'Landscaping', icon: 'Trees', tagline: 'Yards that turn heads.', status: 'soon', accent: 'green' },
   { slug: 'pressure-washing', name: 'Pressure Washing', icon: 'Droplets', tagline: 'Like-new surfaces.', status: 'soon', accent: 'sky' },
   { slug: 'junk-removal', name: 'Junk Removal', icon: 'Trash2', tagline: 'Gone in a day.', status: 'soon', accent: 'rose' },
+  // Laundry is the first *delivery* vertical: the customer never meets the
+  // merchant, so the platform's job is time and capacity rather than labor.
+  // It runs on lib/delivery/*, which is vertical-agnostic by construction.
+  { slug: 'laundry', name: 'Laundry & Delivery', icon: 'Shirt', tagline: 'Picked up, washed, folded, returned.', status: 'soon', accent: 'cyan' },
 ];
 
 export const liveVerticals = verticals.filter((v) => v.status === 'live');

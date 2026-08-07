@@ -180,6 +180,223 @@ export async function payoutToPro(input: {
   return { id: data.id };
 }
 
+// ── Card on file: charging an amount nobody knows yet ────────────────────────
+
+/**
+ * Delivery verticals invert the usual payment order. A laundry customer texts
+ * "pick up 3 bags" and the price does not exist until someone puts the bags on
+ * a scale — so there is nothing to charge at order time, and an authorization
+ * hold is the wrong instrument (it expires, and it cannot be increased past the
+ * amount authorized, which is exactly the case that happens).
+ *
+ * The right instrument is a saved card: collect the payment method up front
+ * with a SetupIntent (charging $0), then charge off-session once the real
+ * amount is known. Same pattern as a ride ending.
+ */
+async function stripeGet(path: string): Promise<any> {
+  const res = await fetch(`${API}${path}`, {
+    headers: { Authorization: `Bearer ${process.env.STRIPE_SECRET_KEY}` },
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(`Stripe ${path} ${res.status}: ${data?.error?.message ?? 'error'}`);
+  return data;
+}
+
+export interface CardOnFileSession {
+  url: string;
+  customerId: string;
+  sessionId: string;
+}
+
+/**
+ * A hosted page where the customer saves a card. Charges nothing.
+ * `setup_future_usage` is implicit in setup mode: the resulting payment method
+ * is explicitly authorized for later off-session charges, which is what makes
+ * charging after the weigh-in legitimate rather than a surprise.
+ */
+export async function createCardOnFileSession(p: {
+  ref: string;
+  email?: string | null;
+  phone?: string | null;
+  name?: string | null;
+  successUrl: string;
+  cancelUrl: string;
+}): Promise<CardOnFileSession | null> {
+  if (!isStripeConfigured) {
+    if (process.env.NODE_ENV !== 'production') console.log(`[stripe] (dry-run) card-on-file session for ${p.ref}`);
+    return null;
+  }
+
+  const customerParams: Record<string, string> = { 'metadata[ref]': p.ref };
+  if (p.email) customerParams.email = p.email;
+  if (p.phone) customerParams.phone = p.phone;
+  if (p.name) customerParams.name = p.name;
+  const customer = await stripe('/customers', customerParams);
+
+  const session = await stripe('/checkout/sessions', {
+    mode: 'setup',
+    customer: customer.id,
+    'payment_method_types[0]': 'card',
+    success_url: p.successUrl,
+    cancel_url: p.cancelUrl,
+    'metadata[ref]': p.ref,
+  });
+
+  return { url: session.url, customerId: customer.id, sessionId: session.id };
+}
+
+/** The saved card, read back after the customer completes the setup page. */
+export async function getSavedPaymentMethod(setupIntentId: string): Promise<string | null> {
+  if (!isStripeConfigured) return null;
+  const intent = await stripeGet(`/setup_intents/${setupIntentId}`);
+  return typeof intent.payment_method === 'string' ? intent.payment_method : (intent.payment_method?.id ?? null);
+}
+
+export interface OffSessionCharge {
+  ok: boolean;
+  paymentIntentId: string | null;
+  /** Set when the bank demands the customer authenticate. Not a failure — a redirect. */
+  requiresAction: boolean;
+  error?: string;
+}
+
+/**
+ * Charges a saved card without the customer present.
+ *
+ * The idempotency key is derived from the order ref *and* the amount, so a
+ * retried request can never double-charge, while a legitimately corrected
+ * amount still goes through.
+ */
+export async function chargeSavedCard(p: {
+  customerId: string;
+  paymentMethodId: string;
+  amountCents: number;
+  ref: string;
+  description: string;
+}): Promise<OffSessionCharge> {
+  if (!isStripeConfigured) {
+    if (process.env.NODE_ENV !== 'production') {
+      console.log(`[stripe] (dry-run) off-session charge $${(p.amountCents / 100).toFixed(2)} for ${p.ref}`);
+    }
+    return { ok: false, paymentIntentId: null, requiresAction: false, error: 'stripe_not_configured' };
+  }
+
+  const res = await fetch(`${API}/payment_intents`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${process.env.STRIPE_SECRET_KEY}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'Idempotency-Key': `charge_${p.ref}_${p.amountCents}`,
+    },
+    body: new URLSearchParams({
+      amount: String(p.amountCents),
+      currency: 'usd',
+      customer: p.customerId,
+      payment_method: p.paymentMethodId,
+      off_session: 'true',
+      confirm: 'true',
+      description: p.description,
+      transfer_group: p.ref,
+      'metadata[ref]': p.ref,
+    }),
+  });
+
+  const data = await res.json();
+  if (res.ok && data.status === 'succeeded') {
+    return { ok: true, paymentIntentId: data.id, requiresAction: false };
+  }
+
+  const code = data?.error?.code ?? data?.status;
+  return {
+    ok: false,
+    paymentIntentId: data?.error?.payment_intent?.id ?? data?.id ?? null,
+    requiresAction: code === 'authentication_required',
+    error: data?.error?.message ?? code ?? 'charge failed',
+  };
+}
+
+/**
+ * A hosted page to pay one exact amount. Two jobs: the customer-confirms path
+ * when the final price outran the estimate, and the fallback when an
+ * off-session charge needs the customer to authenticate.
+ */
+export async function createPaymentCheckout(p: {
+  ref: string;
+  amountCents: number;
+  description: string;
+  customerId?: string | null;
+  successUrl: string;
+  cancelUrl: string;
+}): Promise<string | null> {
+  if (!isStripeConfigured) {
+    if (process.env.NODE_ENV !== 'production') {
+      console.log(`[stripe] (dry-run) payment link $${(p.amountCents / 100).toFixed(2)} for ${p.ref}`);
+    }
+    return null;
+  }
+
+  const params: Record<string, string> = {
+    mode: 'payment',
+    'line_items[0][price_data][currency]': 'usd',
+    'line_items[0][price_data][product_data][name]': p.description,
+    'line_items[0][price_data][unit_amount]': String(p.amountCents),
+    'line_items[0][quantity]': '1',
+    'payment_intent_data[transfer_group]': p.ref,
+    'metadata[ref]': p.ref,
+    success_url: p.successUrl,
+    cancel_url: p.cancelUrl,
+  };
+  if (p.customerId) params.customer = p.customerId;
+
+  const session = await stripe('/checkout/sessions', params);
+  return session.url ?? null;
+}
+
+/**
+ * Generic Connect transfer, used to pay both sides of a delivery order (the
+ * merchant for the service, the courier for the trip) out of one charge.
+ * The transfer_group ties them back to the payment for reconciliation.
+ */
+export async function transferTo(p: {
+  accountId: string;
+  amountCents: number;
+  transferGroup: string;
+  idempotencyKey: string;
+  metadata?: Record<string, string>;
+}): Promise<{ id: string } | null> {
+  if (!isStripeConfigured) {
+    if (process.env.NODE_ENV !== 'production') {
+      console.log(`[stripe] (dry-run) transfer $${(p.amountCents / 100).toFixed(2)} → ${p.accountId}`);
+    }
+    return null;
+  }
+
+  const body: Record<string, string> = {
+    amount: String(p.amountCents),
+    currency: 'usd',
+    destination: p.accountId,
+    transfer_group: p.transferGroup,
+  };
+  for (const [k, v] of Object.entries(p.metadata ?? {})) body[`metadata[${k}]`] = v;
+
+  const res = await fetch(`${API}/transfers`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${process.env.STRIPE_SECRET_KEY}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'Idempotency-Key': p.idempotencyKey,
+    },
+    body: new URLSearchParams(body),
+  });
+
+  const data = await res.json();
+  if (!res.ok) {
+    console.error('[stripe] transfer failed', res.status, data?.error?.message);
+    return null;
+  }
+  return { id: data.id };
+}
+
 /** Verifies a Stripe webhook signature (t=,v1= scheme) without the SDK. */
 export function verifyStripeSignature(rawBody: string, signatureHeader: string | null): boolean {
   const secret = process.env.STRIPE_WEBHOOK_SECRET;

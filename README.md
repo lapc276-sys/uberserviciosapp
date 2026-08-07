@@ -86,6 +86,152 @@ video → frames (in-browser) → vision model → rooms + objects + soil scores
 > tuned per market. **Until that page shows real accuracy data, treat quotes as
 > provisional.**
 
+## Delivery optimization engine — laundry first
+
+The second business shape: the customer never meets the provider. A laundry
+customer texts "recoger 3 bolsas en 1234 SW 8th St apt 502"; a courier picks up,
+the laundromat washes, a courier brings it back. What the platform sells here is
+not labor — it is **time and capacity**.
+
+So the technology is not a map with pins on it. It is a model of *the whole job*.
+
+### Why distance is the wrong unit
+
+A maps API answers "how long is the trip?". Nobody is paid for trips. The real
+question is "how long is the whole job?", and it decomposes into ten components:
+
+```
+travel to merchant → prep wait → park → counter → line haul
+  → park → building entry → elevator/stairs → walk → handoff
+```
+
+Run the simulator (`npm run delivery:sim`) and the consequence is immediate.
+Two orders, half a mile apart, from the same kind of laundromat:
+
+| | Order A ($6) | Order B ($7) |
+|---|---|---|
+| Distance | 0.8 mi | 0.6 mi |
+| Total job | **11.8 min** | **31.9 min** |
+| Of which waiting | 0 | 16.1 min |
+| Of which stairs | 1.5 min (elevator, 3rd) | 5.1 min (6th floor walk-up) |
+| Complexity | 26/100 | 57/100 |
+| Courier earns | **$30.60/hr** | **$13.20/hr** |
+
+B pays a dollar more and is worth less than half as much. No distance-based
+system can see that, which is why couriers on those platforms learn to
+cherry-pick and the hard jobs rot in the queue.
+
+### What the engine does with that
+
+**Pay follows the minutes** (`lib/delivery/pricing.ts`). A job's fee is derived
+from its modeled time — waiting paid at a reduced rate — so the 6th-floor
+walk-up pays more and gets taken, without anyone being incentivized into it.
+
+**Batching is arithmetic, not policy** (`lib/delivery/batching.ts`). Doubles are
+neither banned nor blindly allowed: both route orderings are simulated and the
+batch is accepted only if it clears every guard, each of which reports the
+number that decided it.
+
+```
+Same merchant, drops a block apart, both ready → BATCH
+  sequential 25.6 min → batched 17 min (saves 8.6 min)
+  ✓ Same direction   4° apart      ✓ Second customer +5 min (max 10)
+  ✓ $0.71/min batched vs $0.51 solo (1.39×)
+
+Same merchant, opposite directions → DO NOT BATCH
+  ✗ Same direction   129° apart    ✗ Second customer +10.5 min
+  ✗ $0.42/min batched vs $0.51 solo (0.82×)
+```
+
+**Assignment maximizes dollars-per-minute, not proximity**
+(`lib/delivery/dispatch.ts`). The closest courier is frequently the worst
+choice, because they arrive early and stand there:
+
+```
+81.7  Luis (finishing in 9 min)  $0.46/min · idle gap 6.9 min
+72.1  Ana  (closest, free now)   $0.31/min · idle gap 14 min (12.8 standing)
+50.5  Dee  (far, free now)       $0.26/min · idle gap 17.8 min
+```
+
+And the engine will say **not yet** — if the only free courier would stand at
+the counter for 13 minutes, it holds the offer instead of burning their time.
+
+**Idle gap is the metric everything serves** (`lib/delivery/metrics.ts`): the
+minutes between "delivered" and the next productive action. Holding an offer,
+batching, staging (`lib/delivery/staging.ts`) — every decision moves this one
+number.
+
+### The building is the asset
+
+`lib/delivery/buildings.ts` models what happens after the front door — entry
+type, elevator wait (which scales with building height), stairs with a fatigue
+penalty, corridor walk, handoff — and gives each building an **access score**.
+Then it learns. Starting from nothing but "8 floors, elevator unknown":
+
+```
+before any delivery:  3.99 min to floor 6 · access score 72 · basis prior
+after 12 drops:       6.33 min to floor 6 · access score 44 · basis observed
+                      learned factor 1.72× · p50 6.28 · p90 7.82
+elevator inference:   no (confidence 0.80) — 12/12 high-floor drops
+                      match the stairs model
+```
+
+Nobody entered "no elevator". The timings said so. Distance is free from any
+maps API; how long it takes to reach the 6th floor of one specific building is
+knowledge only an operation that has been there possesses — and it compounds.
+
+### How the customer pays when the price doesn't exist yet
+
+The hard part of laundry is that **the price is unknown at order time** — it
+depends on weight, which is measured after a courier has already been paid to
+drive across town. Three options, one of which works:
+
+| | Why not |
+|---|---|
+| Charge at intake | You are guessing, and you are wrong in both directions |
+| Authorization hold | Expires in ~7 days and **cannot be increased** above the amount authorized — which is exactly the overweight-bag case it would exist for |
+| **Card on file** ✅ | SetupIntent at intake charges **$0** and authorizes later off-session charges. Charge once it's weighed. Same shape as a ride ending |
+
+The guardrail is what makes it honest rather than presumptuous
+(`lib/delivery/payments.ts`): a final price that outruns the quoted estimate is
+**never charged silently** — it goes back to the customer as a payment link.
+
+```
+3 bags (~36 lb) quoted $63.15–$91.23 · card saved · $0.00 charged
+  weighed 34 lb → $73.29   charge the saved card off-session
+  weighed 61 lb → $125.94  ASK the customer to approve — not charged silently
+```
+
+One charge, split three ways through Connect (laundromat / courier / platform),
+with the order ref as both transfer group and idempotency key so retries and
+double-clicks can't pay anyone twice.
+
+### The flow, end to end
+
+```
+customer texts  →  /api/delivery/sms       parse, geocode, create order + building
+                →  card-on-file link       $0 charged
+                →  /api/delivery/dispatch  rank couriers by $/min, batch or don't, hold or offer
+                →  courier collects        pickup leg (building access on the way OUT)
+                →  laundromat weighs       /api/delivery/orders/[ref]/weigh → charge or ask
+                →  courier returns         return leg
+                →  /api/delivery/orders/[ref]/events
+                                           access + counter + prep observations,
+                                           predicted vs. actual, courier pace
+```
+
+`/admin/delivery` shows the whole thing: idle gap, per-component calibration,
+what each building and merchant has taught the system.
+
+> ⚠️ **Every constant in `lib/delivery/` is a hypothesis.** Stair seconds,
+> elevator waits, parking, prep times — honest starting estimates, not
+> measurements. What makes them safe to ship is that each is blended with
+> observations (`shrink()` in `stats.ts`), so a wrong prior corrects itself in
+> ~10 deliveries. **Until `/admin/delivery` shows real accuracy, treat ETAs and
+> complexity scores as provisional.** Courier pay derived from modeled minutes
+> must also be checked against local minimum-pay rules — several cities, New
+> York among them, regulate pay per hour of engaged time.
+
 ## What's built (Phases 1–5 + marketplace + vision — live & verified)
 
 **Vision AI** ✅
@@ -265,6 +411,24 @@ lib/
   schema.ts    JSON-LD builders
   seo.ts       Metadata factory
   automations.ts  Env-gated booking automation pipeline
+  delivery/    Delivery optimization engine (pure, no DB, no clock of its own)
+    types.ts        Domain model — jobs, couriers, buildings, merchants
+    geo.ts          Travel time: route factor, mode speeds, traffic curve
+    buildings.ts    Access model + score + elevator inference
+    merchants.ts    Prep-time model, hierarchical by weekday/hour
+    time-model.ts   The ten components; delivery and pickup legs
+    complexity.ts   Delivery Complexity Score + pay appraisal
+    batching.ts     Double orders as arithmetic, with per-guard reasons
+    dispatch.ts     Rank by $/min; hold the offer when it's worth holding
+    staging.ts      Strategic points + pre-assignment matching
+    metrics.ts      Idle gap + per-component calibration
+    pricing.ts      Laundry pricing, pay from minutes, three-way split
+    payments.ts     Card on file → charge after the weigh-in → split
+    intake.ts       Bilingual SMS/WhatsApp order parsing
+    orders.ts       The only file here that touches the database
+    store.ts        Prisma + in-memory backends
+scripts/
+  delivery-sim.ts   `npm run delivery:sim` — the engine, arguable, in one screen
 ```
 
 ---

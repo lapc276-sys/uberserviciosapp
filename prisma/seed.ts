@@ -71,6 +71,36 @@ async function main() {
     },
   });
 
+  // ── Delivery engine: a small market so /admin/delivery isn't empty ────────
+  // Buildings are seeded with what a dispatcher could plausibly know on day
+  // one — including "elevator unknown", which the engine resolves from timings.
+  const merchants = [
+    { slug: 'sudz-little-havana', name: 'Sudz Laundromat — Little Havana', lat: 25.7651, lng: -80.2201, parking: 'moderate', quotedPrepMinutes: 180, quotedCounterMinutes: 2.4 },
+    { slug: 'brickell-wash-fold', name: 'Brickell Wash & Fold', lat: 25.7607, lng: -80.1935, parking: 'hard', quotedPrepMinutes: 240, quotedCounterMinutes: 3.1 },
+  ];
+  for (const m of merchants) {
+    await prisma.deliveryMerchant.upsert({ where: { slug: m.slug }, update: {}, create: m });
+  }
+
+  const buildings = [
+    { label: '183 W Flagler St', lat: 25.7742, lng: -80.1962, floors: 6, elevator: 'yes', entry: 'locked_lobby', parking: 'moderate' },
+    { label: '241 SW 8th St', lat: 25.7663, lng: -80.2072, floors: 5, elevator: 'no', entry: 'buzzer', parking: 'hard', notes: 'Walk-up. Buzzer is unreliable.' },
+    { label: '1100 Brickell Bay Dr', lat: 25.7589, lng: -80.1897, floors: 20, elevator: 'yes', entry: 'doorman', parking: 'hard' },
+    { label: '2900 Coral Way', lat: 25.75, lng: -80.2385, floors: 3, elevator: 'unknown', entry: 'unknown', parking: 'easy' },
+  ];
+  for (const b of buildings) {
+    await prisma.deliveryBuilding.upsert({ where: { label: b.label }, update: {}, create: b });
+  }
+
+  const couriers = [
+    { name: 'Luis', email: 'luis@homigo.com', mode: 'scooter', lat: 25.7689, lng: -80.2015 },
+    { name: 'María', email: 'maria.d@homigo.com', mode: 'car', lat: 25.7601, lng: -80.2 },
+    { name: 'Dee', email: 'dee@homigo.com', mode: 'ebike', lat: 25.7725, lng: -80.1994 },
+  ];
+  for (const c of couriers) {
+    await prisma.courier.upsert({ where: { email: c.email }, update: {}, create: { ...c, status: 'APPROVED' } });
+  }
+
   console.log('✅ Seed complete');
 }
 

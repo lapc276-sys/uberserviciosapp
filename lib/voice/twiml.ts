@@ -49,6 +49,11 @@ export function say(text: string): string {
   return `<Say voice="${VOICE}" language="${LANGUAGE}">${escapeXml(speakable(text))}</Say>`;
 }
 
+/** An SMS reply. The inbound-message counterpart to `say`. */
+export function message(text: string): string {
+  return `<Message>${escapeXml(text)}</Message>`;
+}
+
 export interface GatherOptions {
   action: string;
   /** Seconds of silence before Twilio decides the caller is done talking. */

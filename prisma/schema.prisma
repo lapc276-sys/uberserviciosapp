@@ -352,6 +352,218 @@ model TrainingSample {
   @@index([jobSequence])
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Delivery optimization engine
+//
+// Laundry is the first vertical, but nothing below says "laundry": a merchant
+// is anywhere an order is collected, a building is anywhere it is carried into.
+// The tables that matter are the OBSERVATION tables — they are what turn a set
+// of guessed constants into a model that knows this city.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model DeliveryMerchant {
+  id       String @id @default(cuid())
+  slug     String @unique
+  name     String
+  vertical String @default("laundry")
+  lat      Float
+  lng      Float
+  phone    String?
+  /** easy | moderate | hard | unknown */
+  parking  String @default("unknown")
+  /** What the merchant claims prep takes — a prior, replaced by measurement. */
+  quotedPrepMinutes    Int    @default(20)
+  quotedCounterMinutes Float?
+  /** Stripe Connect account the service revenue is transferred to. */
+  stripeAccountId String?
+  active          Boolean @default(true)
+  createdAt       DateTime @default(now())
+
+  orders   DeliveryOrder[]
+  prepObs  PrepObservation[]
+  counterObs CounterObservation[]
+}
+
+/**
+ * A building the operation delivers into.
+ *
+ * `elevator` starts as "unknown" and is resolved from delivery timings — see
+ * inferElevator() in lib/delivery/buildings.ts. This record is the asset: it
+ * cannot be bought, only accumulated by doing the work.
+ */
+model DeliveryBuilding {
+  id      String  @id @default(cuid())
+  label   String  @unique
+  lat     Float
+  lng     Float
+  floors  Int?
+  /** yes | no | unknown */
+  elevator String @default("unknown")
+  /** street | buzzer | locked_lobby | gate_code | doorman | unknown */
+  entry    String @default("unknown")
+  parking  String @default("unknown")
+  notes    String?
+  createdAt DateTime @default(now())
+
+  accessObs AccessObservation[]
+  orders    DeliveryOrder[]
+}
+
+model Courier {
+  id     String  @id @default(cuid())
+  name   String
+  phone  String? @unique
+  email  String? @unique
+  /** walk | bike | ebike | scooter | car */
+  mode   String  @default("car")
+  status String  @default("APPROVED")
+  lat    Float?
+  lng    Float?
+  /** Learned: actual ÷ predicted time. <1 means faster than the model. */
+  paceFactor      Float  @default(1)
+  stripeAccountId String?
+  createdAt       DateTime @default(now())
+
+  orders   DeliveryOrder[]
+  outcomes DeliveryOutcome[]
+}
+
+enum DeliveryPaymentState {
+  AWAITING_CARD
+  CARD_ON_FILE
+  NEEDS_CONFIRMATION
+  PAID
+  FAILED
+}
+
+model DeliveryOrder {
+  id       String @id @default(cuid())
+  ref      String @unique
+  vertical String @default("laundry")
+  /** NEW | SCHEDULED | PICKED_UP | AT_MERCHANT | READY | OUT_FOR_DELIVERY | DELIVERED | CANCELED */
+  status   String @default("NEW")
+  /** sms | whatsapp | web | admin */
+  channel  String @default("sms")
+
+  customerName  String?
+  customerPhone String
+  customerEmail String?
+  addressLine   String
+  lat           Float?
+  lng           Float?
+  /** 1 = ground floor. Null when the customer never said. */
+  floor         Int?
+  handoff       String  @default("hand_to_customer")
+  items         Int     @default(1)
+  notes         String?
+
+  placedAt        DateTime  @default(now())
+  promisedReadyAt DateTime?
+
+  // Money. The estimate is a range because the weight is unknown at intake;
+  // finalTotal only exists after someone puts the bags on a scale.
+  estimateLow    Float?
+  estimateHigh   Float?
+  weighedPounds  Float?
+  finalTotal     Float?
+  courierPay     Float?
+  merchantPayout Float?
+  platformTake   Float?
+
+  /**
+   * Card on file, not a hold: a hold expires and cannot be increased past the
+   * amount authorized — which is exactly what happens when the bags weigh more
+   * than expected. The card is saved at intake and charged after the weigh-in.
+   */
+  paymentState          DeliveryPaymentState @default(AWAITING_CARD)
+  stripeCustomerId      String?
+  stripePaymentMethodId String?
+  stripePaymentIntentId String?
+  /** Sent when the final price outran the estimate and needs a human "yes". */
+  confirmUrl            String?
+  cardLinkSentAt        DateTime?
+  paidAt                DateTime?
+
+  merchant   DeliveryMerchant @relation(fields: [merchantId], references: [id])
+  merchantId String
+  building   DeliveryBuilding? @relation(fields: [buildingId], references: [id])
+  buildingId String?
+  courier    Courier?          @relation(fields: [courierId], references: [id])
+  courierId  String?
+  outcome    DeliveryOutcome?
+
+  createdAt DateTime @default(now())
+
+  @@index([status])
+  @@index([merchantId])
+  @@index([placedAt])
+  @@index([paymentState])
+}
+
+/** Measured: order placed → merchant marked it ready. */
+model PrepObservation {
+  id         String   @id @default(cuid())
+  merchant   DeliveryMerchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  merchantId String
+  weekday    Int
+  hour       Int
+  minutes    Float
+  at         DateTime @default(now())
+
+  @@index([merchantId, weekday, hour])
+}
+
+/** Measured: courier walked in → walked out with the order. */
+model CounterObservation {
+  id         String   @id @default(cuid())
+  merchant   DeliveryMerchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  merchantId String
+  seconds    Int
+  at         DateTime @default(now())
+
+  @@index([merchantId])
+}
+
+/**
+ * Measured: arrived at the address → back at the vehicle.
+ *
+ * The single most valuable row in this schema. Distance is free from any maps
+ * API; how long it takes to get to the 6th floor of one specific building on
+ * SW 8th is knowledge only an operation that has been there possesses.
+ */
+model AccessObservation {
+  id           String   @id @default(cuid())
+  building     DeliveryBuilding @relation(fields: [buildingId], references: [id], onDelete: Cascade)
+  buildingId   String
+  floor        Int?
+  seconds      Int
+  usedElevator Boolean?
+  at           DateTime @default(now())
+
+  @@index([buildingId])
+}
+
+/** Predicted vs. actual for one completed delivery, component by component. */
+model DeliveryOutcome {
+  id      String @id @default(cuid())
+  order   DeliveryOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderId String @unique
+  courier Courier? @relation(fields: [courierId], references: [id])
+  courierId String?
+
+  predictedTotalMinutes Float
+  actualTotalMinutes    Float
+  /** Component maps, keyed by TimeComponent. */
+  predicted Json
+  actual    Json
+  /** Minutes between the last delivery and productive work on this one. */
+  idleGapMinutes Float?
+  completedAt    DateTime @default(now())
+
+  @@index([completedAt])
+  @@index([courierId])
+}
+
 /**
  * Spent magic-link tokens, so a sign-in link can only be used once.
  */
