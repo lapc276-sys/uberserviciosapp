@@ -96,6 +96,11 @@ export interface MerchantProfile {
   quotedPrepMinutes: number;
   /** Counter time (in the door → order in hand → out) when nothing is learned. */
   quotedCounterMinutes?: number;
+  /**
+   * The laundromat's own price per pound. Theirs to set, and they keep all of
+   * it — we only add the delivery surcharge on top. See lib/delivery/pricing.
+   */
+  ratePerPound?: number;
   /** Stripe Connect account the service revenue is transferred to. */
   stripeAccountId?: string | null;
 }

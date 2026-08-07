@@ -121,6 +121,39 @@ B pays a dollar more and is worth less than half as much. No distance-based
 system can see that, which is why couriers on those platforms learn to
 cherry-pick and the hard jobs rot in the queue.
 
+### The business model: we don't touch the laundromat's money
+
+The laundromat sets its own rate per pound and **keeps 100% of it**. Our only
+income is a flat round-trip surcharge the customer pays on top. Two consequences:
+
+- **Customer acquisition cost collapses.** We aren't buying consumers, we're
+  signing laundromats — and they arrive with their customers already. A 15–30%
+  cut is a hard negotiation with a thin-margin cash business; zero percent is a
+  thirty-second conversation.
+- **Every dollar of margin comes out of one number**, which has to cover *both*
+  legs of courier pay. There's no service revenue to hide a bad route inside,
+  which is exactly why the time model has to be right.
+
+The surcharge is set by the hardest job, not the easy one:
+
+```
+lobby / ground floor, 8 blocks out      5th floor walk-up, same 8 blocks
+  pickup   8.7 min → $4.50                pickup  13.7 min → $5.75
+  return   8.3 min → $4.50                return  13.4 min → $5.63
+  margin   $5.26 (35%)  ✓                 margin  $2.88 (19%)  ✓
+```
+
+At $12 that walk-up lands at **zero margin** — genuinely unservable, and
+batching doesn't fix it, because what makes it expensive is the stairs, not the
+road. $15 clears both. `contributionFor()` reports this per order so a bad mix
+shows up immediately instead of at the end of the quarter.
+
+One price for everyone is a deliberate choice, not an oversight: the customers
+who need this most are elderly people in walk-ups, and charging them extra for
+the stairs is both bad business and hard to say out loud. So the complexity
+model is used on the *other* side of the transaction — to pay the courier more
+for the hard job — and the mix absorbs the difference.
+
 ### What the engine does with that
 
 **Pay follows the minutes** (`lib/delivery/pricing.ts`). A job's fee is derived
@@ -197,14 +230,15 @@ The guardrail is what makes it honest rather than presumptuous
 **never charged silently** — it goes back to the customer as a payment link.
 
 ```
-3 bags (~36 lb) quoted $63.15–$91.23 · card saved · $0.00 charged
-  weighed 34 lb → $73.29   charge the saved card off-session
-  weighed 61 lb → $125.94  ASK the customer to approve — not charged silently
+3 bags (~36 lb) quoted $71.16–$99.24 · card saved · $0.00 charged
+  weighed 34 lb → $81.30   charge the saved card off-session
+  weighed 61 lb → $133.95  ASK the customer to approve — not charged silently
+
+split: laundromat $66.30 (100% of the wash) · courier $7.40 · us $6.86
 ```
 
-One charge, split three ways through Connect (laundromat / courier / platform),
-with the order ref as both transfer group and idempotency key so retries and
-double-clicks can't pay anyone twice.
+One charge, split through Connect, with the order ref as both transfer group
+and idempotency key so retries and double-clicks can't pay anyone twice.
 
 ### The flow, end to end
 

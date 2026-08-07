@@ -63,6 +63,11 @@ export async function POST(req: Request) {
       })
     : null;
 
+  // Re-price against the laundromat that will actually do the wash — it is
+  // their rate per pound, not ours, so the estimate can't be built until the
+  // merchant is chosen.
+  const priced = parseIntake(body, { merchant });
+
   const order = await createOrder({
     merchantId: merchant.id,
     buildingId: building?.id ?? null,
@@ -75,13 +80,13 @@ export async function POST(req: Request) {
     handoff: parsed.handoff,
     items: parsed.items,
     notes: body,
-    estimateLow: parsed.estimate.low,
-    estimateHigh: parsed.estimate.high,
+    estimateLow: priced.estimate.low,
+    estimateHigh: priced.estimate.high,
   });
 
   // Card on file — charging nothing now, because the price does not exist yet.
   // `notify: false`: the link rides back on this reply instead of a second text.
   const card = await requestCardOnFile(order, { notify: false });
 
-  return xmlResponse(message(intakeReply(parsed, { ref: order.ref, cardUrl: card.url })));
+  return xmlResponse(message(intakeReply(priced, { ref: order.ref, cardUrl: card.url })));
 }

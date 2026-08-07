@@ -1,4 +1,4 @@
-import type { ElevatorState, HandoffType } from './types';
+import type { ElevatorState, HandoffType, MerchantProfile } from './types';
 import { estimateLaundry, type LaundryEstimate } from './pricing';
 
 /**
@@ -37,7 +37,10 @@ export interface ParsedIntake {
 
 const ES_MARKERS = /\b(bolsa|bolsas|recoger|lavander|piso|ascensor|hoy|mañana|manana|ropa|necesito|apartamento)\b/i;
 
-export function parseIntake(text: string): ParsedIntake {
+export function parseIntake(
+  text: string,
+  opts: { merchant?: Pick<MerchantProfile, 'ratePerPound'> | null } = {},
+): ParsedIntake {
   const raw = text.trim();
   const language: 'es' | 'en' = ES_MARKERS.test(raw) ? 'es' : 'en';
 
@@ -87,7 +90,7 @@ export function parseIntake(text: string): ParsedIntake {
     elevatorHint,
     handoff,
     when: whenMatch ? whenMatch[0].trim() : null,
-    estimate: estimateLaundry(items),
+    estimate: estimateLaundry(items, { merchant: opts.merchant }),
     missing,
     language,
   };
@@ -135,16 +138,22 @@ export function intakeReply(parsed: ParsedIntake, opts: { ref?: string; cardUrl?
       : 'Which floor are you on? It helps us plan the trip properly.';
   }
 
-  const estimate = parsed.estimate;
-  const money = `$${estimate.low.toFixed(2)}–$${estimate.high.toFixed(2)}`;
+  // The breakdown is stated, not buried: the laundromat's price by weight, and
+  // our flat surcharge for the round trip. A customer who can see which part is
+  // whose does not feel overcharged when the wash comes in heavier than hoped.
+  const e = parsed.estimate;
+  const bags = `${parsed.items} ${parsed.items === 1 ? (es ? 'bolsa' : 'bag') : es ? 'bolsas' : 'bags'}`;
+  const money = es
+    ? `lavado aprox. $${e.washLow.toFixed(2)}–$${e.washHigh.toFixed(2)} (precio de la lavandería, por peso) + $${e.surcharge.toFixed(2)} de recogida y entrega`
+    : `wash about $${e.washLow.toFixed(2)}–$${e.washHigh.toFixed(2)} (the laundromat's price, by weight) + $${e.surcharge.toFixed(2)} pickup and delivery`;
 
   if (opts.cardUrl) {
     return es
-      ? `Perfecto — ${parsed.items} ${parsed.items === 1 ? 'bolsa' : 'bolsas'} (~${estimate.estimatedPounds} lb), aprox. ${money} con recogida y entrega. Guarda tu tarjeta aquí (no se cobra nada ahora, solo después de pesar): ${opts.cardUrl}`
-      : `Perfect — ${parsed.items} ${parsed.items === 1 ? 'bag' : 'bags'} (~${estimate.estimatedPounds} lb), about ${money} including pickup and delivery. Save your card here (nothing is charged now, only after it's weighed): ${opts.cardUrl}`;
+      ? `Perfecto — ${bags} (~${e.estimatedPounds} lb): ${money}. Guarda tu tarjeta aquí (no se cobra nada ahora, solo después de pesar): ${opts.cardUrl}`
+      : `Perfect — ${bags} (~${e.estimatedPounds} lb): ${money}. Save your card here (nothing is charged now, only after it's weighed): ${opts.cardUrl}`;
   }
 
   return es
-    ? `Perfecto — ${parsed.items} ${parsed.items === 1 ? 'bolsa' : 'bolsas'} (~${estimate.estimatedPounds} lb), aprox. ${money}. Te mandamos el enlace de pago en un momento${opts.ref ? ` (orden ${opts.ref})` : ''}.`
-    : `Perfect — ${parsed.items} ${parsed.items === 1 ? 'bag' : 'bags'} (~${estimate.estimatedPounds} lb), about ${money}. We'll text you the payment link in a moment${opts.ref ? ` (order ${opts.ref})` : ''}.`;
+    ? `Perfecto — ${bags} (~${e.estimatedPounds} lb): ${money}. Te mandamos el enlace en un momento${opts.ref ? ` (orden ${opts.ref})` : ''}.`
+    : `Perfect — ${bags} (~${e.estimatedPounds} lb): ${money}. We'll text you the link in a moment${opts.ref ? ` (order ${opts.ref})` : ''}.`;
 }

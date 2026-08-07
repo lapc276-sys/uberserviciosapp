@@ -75,8 +75,9 @@ async function main() {
   // Buildings are seeded with what a dispatcher could plausibly know on day
   // one — including "elevator unknown", which the engine resolves from timings.
   const merchants = [
-    { slug: 'sudz-little-havana', name: 'Sudz Laundromat — Little Havana', lat: 25.7651, lng: -80.2201, parking: 'moderate', quotedPrepMinutes: 180, quotedCounterMinutes: 2.4 },
-    { slug: 'brickell-wash-fold', name: 'Brickell Wash & Fold', lat: 25.7607, lng: -80.1935, parking: 'hard', quotedPrepMinutes: 240, quotedCounterMinutes: 3.1 },
+    // `ratePerPound` is the laundromat's own price — they keep all of it.
+    { slug: 'sudz-little-havana', name: 'Sudz Laundromat — Little Havana', lat: 25.7651, lng: -80.2201, parking: 'moderate', quotedPrepMinutes: 180, quotedCounterMinutes: 2.4, ratePerPound: 1.85 },
+    { slug: 'brickell-wash-fold', name: 'Brickell Wash & Fold', lat: 25.7607, lng: -80.1935, parking: 'hard', quotedPrepMinutes: 240, quotedCounterMinutes: 3.1, ratePerPound: 2.25 },
   ];
   for (const m of merchants) {
     await prisma.deliveryMerchant.upsert({ where: { slug: m.slug }, update: {}, create: m });

@@ -374,6 +374,11 @@ model DeliveryMerchant {
   /** What the merchant claims prep takes — a prior, replaced by measurement. */
   quotedPrepMinutes    Int    @default(20)
   quotedCounterMinutes Float?
+  /**
+   * The laundromat's own price per pound. They set it and keep all of it —
+   * the platform's income is the delivery surcharge only.
+   */
+  ratePerPound         Float  @default(1.95)
   /** Stripe Connect account the service revenue is transferred to. */
   stripeAccountId String?
   active          Boolean @default(true)

@@ -16,13 +16,19 @@ import type {
   MerchantProfile,
   PrepObservation,
 } from '../lib/delivery/types';
-import { estimateJob, timeline, type JobContext } from '../lib/delivery/time-model';
+import { estimateJob, estimatePickupLeg, timeline, type JobContext } from '../lib/delivery/time-model';
 import { appraise } from '../lib/delivery/complexity';
 import { courierPayFor } from '../lib/delivery/pricing';
 import { evaluateBatch } from '../lib/delivery/batching';
 import { planDispatch } from '../lib/delivery/dispatch';
 import { buildingAccessScore, estimateAccess, inferElevator } from '../lib/delivery/buildings';
-import { estimateLaundry, finalLaundryPrice, splitOrder } from '../lib/delivery/pricing';
+import {
+  ROUND_TRIP_SURCHARGE,
+  contributionFor,
+  estimateLaundry,
+  finalLaundryPrice,
+  splitOrder,
+} from '../lib/delivery/pricing';
 import { suggestStaging, type DemandSample } from '../lib/delivery/staging';
 import { overrunsEstimate } from '../lib/delivery/payments';
 
@@ -284,17 +290,85 @@ console.log(`  elevator inference: ${inference.elevator} (confidence ${inference
 
 heading('5. Paying for an order whose price is unknown at intake');
 
-const quote = estimateLaundry(3);
+const quote = estimateLaundry(3, { merchant: sudz });
 console.log(`  intake:    ${quote.summary}`);
 console.log(`  card on file saved at intake — $0.00 charged`);
 
 for (const pounds of [34, 61]) {
-  const total = finalLaundryPrice(pounds);
-  const overruns = overrunsEstimate(quote.high, total);
-  const split = splitOrder({ total, serviceSubtotal: total - quote.deliveryFee, courierPay: 7.4 });
-  console.log(`\n  weighed ${pounds} lb → $${total.toFixed(2)} (estimate topped out at $${quote.high.toFixed(2)})`);
+  const price = finalLaundryPrice(pounds, { merchant: sudz });
+  const overruns = overrunsEstimate(quote.high, price.total);
+  const split = splitOrder({ total: price.total, wash: price.wash, courierPay: 7.4 });
+  console.log(`\n  weighed ${pounds} lb → $${price.total.toFixed(2)} (estimate topped out at $${quote.high.toFixed(2)})`);
   console.log(`    ${overruns ? 'ASK the customer to approve — not charged silently' : 'charge the saved card off-session'}`);
-  console.log(`    split: laundromat $${split.merchant.toFixed(2)} · courier $${split.courier.toFixed(2)} · platform $${split.platform.toFixed(2)}`);
+  console.log(
+    `    split: laundromat $${split.merchant.toFixed(2)} (100% of the wash) · courier $${split.courier.toFixed(2)} · us $${split.platform.toFixed(2)}`,
+  );
 }
+
+// ── 6. Does the flat surcharge survive contact with a walk-up? ───────────────
+
+heading('6. One price to the customer, real pay to the courier — does it hold?');
+
+console.log(
+  `  We take nothing from the wash. Everything we earn comes out of one number:\n` +
+    `  the $${ROUND_TRIP_SURCHARGE.toFixed(2)} round-trip surcharge, which has to cover BOTH legs of courier pay.\n`,
+);
+
+// An 8-block bubble around the laundromat — the geometry the model assumes.
+const lobbyDrop: BuildingProfile = {
+  id: 'b_lobby',
+  label: 'lobby / ground floor, 8 blocks out',
+  location: { lat: 25.7655, lng: -80.2145 },
+  floors: 3,
+  elevator: 'yes',
+  entry: 'street',
+  parking: 'moderate',
+};
+
+const fifthFloorWalkUp: BuildingProfile = {
+  ...lobbyDrop,
+  id: 'b_5th',
+  label: '5th floor walk-up, same 8 blocks',
+  floors: 5,
+  elevator: 'no',
+  entry: 'buzzer',
+  parking: 'hard',
+};
+
+for (const [building, floor] of [
+  [lobbyDrop, 1],
+  [fifthFloorWalkUp, 5],
+] as const) {
+  const c = ctx(sudz, building);
+  const leg = job({ ref: 'X', merchantId: sudz.id, building, floor, payout: 0, placedAt: readySoon });
+
+  // Out to collect the bags, and back with the clean ones.
+  const pickup = estimatePickupLeg(leg, luis, c, { now: NOW });
+  const ret = estimateJob(leg, luis, c, { now: NOW });
+  const solo = contributionFor({ pickupPay: courierPayFor(pickup), returnPay: courierPayFor(ret) });
+
+  // The same return leg as the second stop of a batched run: the ride out and
+  // the counter are already paid for by the first order.
+  const batchedReturn = estimateJob(leg, luis, c, {
+    now: NOW,
+    skipMerchantLegs: true,
+    originOverride: { lat: 25.7658, lng: -80.2151 },
+  });
+  const batched = contributionFor({ pickupPay: courierPayFor(pickup), returnPay: courierPayFor(batchedReturn) });
+
+  console.log(`  ${building.label}`);
+  console.log(`    pickup leg  ${pickup.totalMinutes.toString().padStart(5)} min → $${courierPayFor(pickup).toFixed(2)}`);
+  console.log(`    return leg  ${ret.totalMinutes.toString().padStart(5)} min → $${courierPayFor(ret).toFixed(2)}   (solo)`);
+  console.log(`                ${batchedReturn.totalMinutes.toString().padStart(5)} min → $${courierPayFor(batchedReturn).toFixed(2)}   (2nd stop of a batched run)`);
+  console.log(
+    `    margin: solo $${solo.margin.toFixed(2)} (${solo.marginPct}%)  ${solo.healthy ? '✓' : '✗ below the floor'}` +
+      `   ·  batched $${batched.margin.toFixed(2)} (${batched.marginPct}%)  ${batched.healthy ? '✓' : '✗ below the floor'}\n`,
+  );
+}
+
+console.log('  The walk-up is the job that decides the business — and the flat price is a');
+console.log('  deliberate choice: the customers who need this most live in walk-ups, so the');
+console.log('  complexity model pays the courier more and the mix absorbs it. What is not');
+console.log('  acceptable is not knowing which orders lose money. Now you know, per order.');
 
 console.log('\nEvery constant above is a hypothesis until deliveries report back.\n');

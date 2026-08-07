@@ -9,7 +9,7 @@ import {
   isStripeConfigured,
   transferTo,
 } from '../stripe';
-import { DELIVERY_FEE, finalLaundryPrice, splitOrder } from './pricing';
+import { ROUND_TRIP_SURCHARGE, finalLaundryPrice, splitOrder } from './pricing';
 import { getMerchant, updateOrder, type DeliveryOrderRecord } from './store';
 
 /**
@@ -131,10 +131,15 @@ export async function chargeAfterWeighIn(
   order: DeliveryOrderRecord,
   input: { pounds: number; extras?: number },
 ): Promise<ChargeResult> {
-  const finalTotal = finalLaundryPrice(input.pounds, input.extras ?? 0);
+  // The laundromat's rate, not ours — we only add the delivery surcharge.
+  const merchant = await getMerchant(order.merchantId);
+  const price = finalLaundryPrice(input.pounds, { merchant, extras: input.extras ?? 0 });
+  const finalTotal = price.total;
   const cents = Math.round(finalTotal * 100);
 
-  await updateOrder(order.ref, { weighedPounds: input.pounds, finalTotal });
+  // `merchantPayout` is recorded now so settlement never has to re-derive which
+  // part of the charge was the wash and which part was ours.
+  await updateOrder(order.ref, { weighedPounds: input.pounds, finalTotal, merchantPayout: price.wash });
 
   // ── The guardrail ─────────────────────────────────────────────────────────
   if (overrunsEstimate(order.estimateHigh, finalTotal)) {
@@ -230,10 +235,10 @@ export async function settleOrder(
 ): Promise<SettlementResult> {
   const total = order.finalTotal ?? 0;
   const courierPay = order.courierPay ?? 0;
-  // The laundromat is paid on the service, not on the delivery fee — that fee
-  // is ours to spend on the courier.
-  const serviceSubtotal = Math.max(0, total - DELIVERY_FEE);
-  const split = splitOrder({ total, serviceSubtotal, courierPay });
+  // The wash passes straight through to the laundromat. Our margin is whatever
+  // survives paying the courier out of the surcharge.
+  const wash = order.merchantPayout ?? Math.max(0, total - ROUND_TRIP_SURCHARGE);
+  const split = splitOrder({ total, wash, courierPay });
 
   await updateOrder(order.ref, {
     merchantPayout: split.merchant,

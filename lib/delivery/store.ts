@@ -99,6 +99,7 @@ const memMerchants: MerchantProfile[] = [
     parking: 'moderate',
     quotedPrepMinutes: 180,
     quotedCounterMinutes: 2.4,
+    ratePerPound: 1.85,
   },
   {
     id: 'm_brickell',
@@ -108,6 +109,7 @@ const memMerchants: MerchantProfile[] = [
     parking: 'hard',
     quotedPrepMinutes: 240,
     quotedCounterMinutes: 3.1,
+    ratePerPound: 2.25,
   },
 ];
 
@@ -179,6 +181,7 @@ export async function listMerchants(): Promise<MerchantProfile[]> {
     parking: r.parking as ParkingDifficulty,
     quotedPrepMinutes: r.quotedPrepMinutes,
     quotedCounterMinutes: r.quotedCounterMinutes ?? undefined,
+    ratePerPound: r.ratePerPound,
     stripeAccountId: r.stripeAccountId,
   }));
 }
