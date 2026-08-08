@@ -8390,34 +8390,49 @@ _TEMAS_SEMILLA = [
 
 # Estructura fija de cada episodio (nombre, indicación, palabras objetivo).
 # La reconoce la audiencia y hace los episodios consistentes.
+# Longitud objetivo: ~950 palabras ≈ 6-7 minutos hablados. Antes eran 1510
+# (~10 min) y eso hacía daño por dos lados:
+#
+#   · retención — un explicativo técnico de 10 minutos se abandona a la
+#     mitad, y YouTube premia el PORCENTAJE visto, no los minutos brutos.
+#   · imágenes repetidas — el armador repite fotos cuando cada una tendría
+#     que aguantar más de 18 s en pantalla. Diez minutos con el material
+#     libre que hay obligaba a repetir; seis minutos, no. Era justo la
+#     queja del dueño sobre ver siempre lo mismo.
+#
+# Es el formato de los canales técnicos que funcionan (Driver61 ronda los
+# 6 min): gancho, contexto, explicación, casos reales, cierre.
 _SECCIONES_TEMA = [
-    ("hook", "THE HOOK (20-30 seconds): open with a surprising question or "
+    ("hook", "THE HOOK (15-20 seconds): open with a surprising question or "
      "scene that makes it impossible to stop watching. Adapt the provided "
-     "intro — keep its spirit, sharpen it for spoken delivery.", 70),
-    ("contexto", "CONTEXT (1 minute): why this topic matters in Formula 1 "
-     "— what's at stake, who wins or loses because of it.", 150),
-    ("explicacion", "VISUAL EXPLANATION (3-4 minutes): explain the concept "
-     "step by step for a curious fan, using vivid concrete imagery "
+     "intro — keep its spirit, sharpen it for spoken delivery.", 60),
+    ("contexto", "CONTEXT (40 seconds): why this topic matters in Formula 1 "
+     "— what's at stake, who wins or loses because of it. Get to the point "
+     "fast; no throat-clearing.", 110),
+    ("explicacion", "VISUAL EXPLANATION (2-2.5 minutes): explain the "
+     "concept step by step for a curious fan, using vivid concrete imagery "
      "(airflow, rubber, temperatures, forces) a viewer can picture. No "
-     "jargon without explaining it.", 520),
-    ("casos", "REAL CASES (3 minutes): 2-3 real, verifiable moments in F1 "
+     "jargon without explaining it. This is the heart of the episode.", 330),
+    ("casos", "REAL CASES (1.5-2 minutes): 2 real, verifiable moments in F1 "
      "history where this concept decided a race or a season. Use only "
-     "well-known real events — NEVER invent results or quotes.", 430),
-    ("y_si", "WHAT IF...? (1-2 minutes): one thought experiment or "
-     "alternative scenario that makes the viewer think (clearly framed "
-     "as hypothetical).", 220),
-    ("resumen", "FINAL SUMMARY (30-60 seconds): the three key ideas to "
+     "well-known real events — NEVER invent results or quotes.", 250),
+    ("y_si", "WHAT IF...? (30-40 seconds): one short thought experiment "
+     "that makes the viewer think (clearly framed as hypothetical). Keep "
+     "it tight — it is a spice, not a course.", 90),
+    ("resumen", "FINAL SUMMARY (30 seconds): the three key ideas to "
      "remember, then invite viewers to comment which topic we should "
-     "cover next and to subscribe.", 120),
+     "cover next and to subscribe.", 100),
 ]
 
 SYSTEM_TEMA = f"""You are the writer-presenter of an educational \
-motorsport documentary channel. Write the narration for ONE section of an \
-8-12 minute episode, in {IDIOMA_NOMBRE}, as flowing spoken lines (each \
+motorsport documentary channel. Write the narration for ONE section of a \
+6-7 minute episode, in {IDIOMA_NOMBRE}, as flowing spoken lines (each \
 line 1-3 sentences, natural to read aloud with pauses). Educational but \
 warm and passionate — think National Geographic meets a paddock insider. \
-Facts must be real and verifiable; never invent statistics, results or \
-quotes. Return the lines in order; no headings, no stage directions."""
+Be DENSE: every line must add information or tension, never padding — a \
+tight six minutes beats a loose ten. Facts must be real and verifiable; \
+never invent statistics, results or quotes. Return the lines in order; no \
+headings, no stage directions."""
 
 TEMA_SCHEMA = {
     "type": "object",

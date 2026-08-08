@@ -58,6 +58,47 @@ nombre de archivo:
 NUNCA se debe usar. Quédate con noticiarios y carreras antiguas marcadas
 como dominio público: para documentales de historia son oro puro.
 
+### Metraje de VIDEOJUEGO grabado por ti 🎮 (lo que hace Driver61)
+
+Es la vía **más segura** para tener imagen de F1 moderna en movimiento, y
+la que usan los canales técnicos grandes como relleno. La clave: tiene que
+grabarlo **tú**. Descargar el gameplay de otro es usar SU material.
+
+Por qué es legal cuando lo grabas tú: la mayoría de editoras publican una
+política de video que permite subir y MONETIZAR gameplay propio. Búscala
+como "«nombre del juego» video policy" y léela antes de grabar. Juegos
+razonables para esto: los F1 oficiales de EA/Codemasters, Assetto Corsa,
+rFactor, iRacing. Lo que NO cambia nada: si grabas una **retransmisión**
+dentro del juego o metes música del juego con licencia de terceros.
+
+Cómo grabarlo en tu Mac, sin instalar nada:
+
+1. Abre el juego y ponlo en una repetición o en cámara TV.
+2. `Cmd + Shift + 5` → **Grabar porción seleccionada** → encuadra el juego.
+3. Graba **10-20 segundos** por toma. Cortas, muchas y variadas: una
+   frenada, una curva de apoyo, un adelantamiento, una salida de boxes.
+4. Para el vídeo. Se guarda en el Escritorio como `.mov`.
+5. Renómbralo con etiquetas y súbelo a esta carpeta:
+
+   - `braking_late_corner_gameplay.mov`
+   - `overtake_drs_straight_gameplay.mov`
+   - `pit-stop_entry_gameplay.mov`
+   - `wet_race_spray_gameplay.mov`
+
+Consejos para que se vea bien y no como relleno:
+
+- **Sin HUD**: quita telemetría, mapa y marcadores en los ajustes del
+  juego. Un HUD encima delata el videojuego y ensucia el plano.
+- **Cámara TV o trasera**, no cabina: se lee mejor en vertical.
+- **Grande y sin comprimir de más**: 1080p mínimo; el canal ya recorta a
+  9:16 y silencia el audio (manda la narración).
+- Con **15-20 clips** bien etiquetados ya tienes relleno para meses,
+  porque el canal arranca cada toma en un punto al azar.
+
+Etiqueta con el CONCEPTO, no con el juego: el canal cruza tus etiquetas
+con lo que dice el guion, así que `braking` y `overtake` sirven; `f1-24`
+o `gameplay-01` no le dicen nada.
+
 ## Fuentes de imágenes automáticas (además de la biblioteca)
 
 El canal completa lo que falte buscando en fuentes de licencia libre y
