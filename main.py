@@ -4182,13 +4182,29 @@ async def videos_pexels(query, n=2):
     usados = _videos_stock_usados()
     salida = []
     try:
-        async with httpx.AsyncClient(timeout=40) as c:
-            r = await c.get("https://api.pexels.com/videos/search",
-                            params={"query": query, "per_page": 15,
-                                    "orientation": "portrait"},
-                            headers={"Authorization": PEXELS_API_KEY})
-            r.raise_for_status()
-            for v in r.json().get("videos", []):
+        async with httpx.AsyncClient(timeout=40,
+                                     follow_redirects=True) as c:
+            # Se pide vertical PRIMERO porque encaja en el short sin
+            # recortar, pero no se exige: el metraje de motor de los bancos
+            # de stock es casi todo horizontal, y filtrando por vertical se
+            # volvía con las manos vacías. Lo horizontal se recorta a 9:16
+            # al preparar el clip, que es lo que ya se hace con las fotos.
+            videos, vistos = [], set()
+            for orientacion in ("portrait", None):
+                if len(videos) >= n * 4:
+                    break
+                params = {"query": query, "per_page": 15}
+                if orientacion:
+                    params["orientation"] = orientacion
+                r = await c.get("https://api.pexels.com/videos/search",
+                                params=params,
+                                headers={"Authorization": PEXELS_API_KEY})
+                r.raise_for_status()
+                for v in r.json().get("videos", []):
+                    if v.get("id") not in vistos:
+                        vistos.add(v.get("id"))
+                        videos.append(v)
+            for v in videos:
                 if len(salida) >= n:
                     break
                 vid = str(v.get("id") or "")
