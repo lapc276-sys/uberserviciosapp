@@ -77,7 +77,10 @@ KEN_BURNS = os.environ.get("KEN_BURNS", "on").strip().lower() not in (
 # Clips de VIDEO de la biblioteca curada (dominio público / CC0 — p. ej.
 # noticiarios antiguos de archive.org): se intercalan como tomas en
 # movimiento entre las fotos. Solo archivos locales aprobados por el dueño.
-_EXT_CLIP = (".mp4", ".mov", ".webm", ".m4v", ".mpg", ".mpeg", ".avi")
+# .ogv/.ogg entran por Wikimedia Commons, que publica mucho vídeo en
+# formatos libres; ffmpeg los decodifica igual que el resto.
+_EXT_CLIP = (".mp4", ".mov", ".webm", ".m4v", ".mpg", ".mpeg", ".avi",
+             ".ogv", ".ogg")
 _DIR_BASE = os.path.dirname(os.path.abspath(__file__))
 _MUSICA_CACHE = os.path.join(_DIR_BASE, "musica_docu.mp3")   # track del usuario
 _MUSICA_GEN = os.path.join(_DIR_BASE, "musica_ambiente.mp3")  # bed generado

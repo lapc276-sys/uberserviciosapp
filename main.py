@@ -4102,18 +4102,31 @@ _CONSULTAS_VIDEO = (
 )
 
 
+# Ventana de NO repetición. No es un veto permanente: el catálogo de vídeo
+# libre es pequeño (sobre todo el de Commons) y excluir para siempre lo ya
+# usado lo agotaría en una semana y dejaría los shorts sin metraje. Con una
+# ventana, un clip puede volver cuando ya nadie se acuerda de él.
+VIDEO_STOCK_VENTANA = 40
+
+
 def _videos_stock_usados():
+    """Clips usados RECIENTEMENTE, en orden (el último es el más nuevo)."""
     with contextlib.suppress(Exception):
         with open(VIDEO_STOCK_USADOS, encoding="utf-8") as f:
-            return set(json.load(f))
-    return set()
+            datos = json.load(f)
+        if isinstance(datos, list):
+            return list(dict.fromkeys(str(x) for x in datos))
+    return []
 
 
 def _guardar_videos_stock_usados(usados):
     with contextlib.suppress(Exception):
         os.makedirs(VIDEO_STOCK_DIR, exist_ok=True)
         with open(VIDEO_STOCK_USADOS, "w", encoding="utf-8") as f:
-            json.dump(sorted(usados)[-400:], f)
+            # Se recorta por el FINAL: son los últimos usados. Antes se
+            # guardaba `sorted(set)[-400:]`, que recortaba por orden
+            # alfabético y por tanto no era una ventana de nada.
+            json.dump(list(usados)[-VIDEO_STOCK_VENTANA:], f)
 
 
 def _mejor_fichero_video(ficheros):
@@ -4188,14 +4201,77 @@ async def videos_pexels(query, n=2):
                 destino = os.path.join(VIDEO_STOCK_DIR, f"pexels_{vid}.mp4")
                 if os.path.exists(destino) and os.path.getsize(destino) > 0:
                     salida.append(destino)
-                    usados.add(vid)
+                    usados.append(vid)
                     continue
                 enlace = _mejor_fichero_video(v.get("video_files"))
                 if enlace and await _descargar_video(c, enlace, destino):
                     salida.append(destino)
-                    usados.add(vid)
+                    usados.append(vid)
     except Exception as e:
         log.info("Pexels sin vídeo para '%s' (%s)", query, e)
+    _guardar_videos_stock_usados(usados)
+    return salida
+
+
+async def videos_wikimedia(query, n=2):
+    """Clips de Wikimedia Commons ya descargados. Rutas a MP4/WEBM, o [].
+
+    Es la única fuente de vídeo que NO necesita ninguna clave: usa la misma
+    API de Commons que ya trae las fotos y que ya funciona en el Repl. Todo
+    lo de Commons tiene licencia libre, así que es material usable sin
+    depender de que el dueño se dé de alta en ningún sitio.
+
+    El catálogo de vídeo de Commons es MUCHO más pequeño que el de fotos:
+    esto suma variedad, no sustituye a Pexels.
+    """
+    if not (VIDEO_STOCK_ON and query and n > 0):
+        return []
+    os.makedirs(VIDEO_STOCK_DIR, exist_ok=True)
+    usados = _videos_stock_usados()
+    salida = []
+    try:
+        async with httpx.AsyncClient(timeout=40,
+                                     follow_redirects=True) as c:
+            r = await _wiki_get(
+                c, "https://commons.wikimedia.org/w/api.php",
+                {"action": "query", "generator": "search",
+                 "gsrsearch": f"{query} filetype:video", "gsrnamespace": 6,
+                 "gsrlimit": 12, "prop": "imageinfo",
+                 "iiprop": "url|mime|size", "format": "json"})
+            if r is None:
+                return []
+            paginas = r.json().get("query", {}).get("pages", {})
+            for p in sorted(paginas.values(),
+                            key=lambda p: p.get("index", 99)):
+                if len(salida) >= n:
+                    break
+                for ii in p.get("imageinfo", []):
+                    url = ii.get("url") or ""
+                    if not (ii.get("mime", "").startswith("video/") and url):
+                        continue
+                    # El tamaño viene en la respuesta: se descarta ANTES de
+                    # bajar nada, que en Commons hay vídeos de cientos de MB
+                    if (ii.get("size") or 0) > VIDEO_STOCK_MAX_MB * 1024 ** 2:
+                        continue
+                    clave = f"wm:{os.path.basename(url)}"
+                    if clave in usados or _foto_sospechosa(url):
+                        continue
+                    ext = os.path.splitext(url)[1].lower() or ".webm"
+                    destino = os.path.join(
+                        VIDEO_STOCK_DIR,
+                        "wm_" + re.sub(r"[^A-Za-z0-9._-]", "_",
+                                       os.path.basename(url))[-60:])
+                    if not destino.lower().endswith(ext):
+                        destino += ext
+                    if os.path.exists(destino) and os.path.getsize(destino):
+                        salida.append(destino)
+                        usados.append(clave)
+                    elif await _descargar_video(c, url, destino):
+                        salida.append(destino)
+                        usados.append(clave)
+                    break
+    except Exception as e:
+        log.info("Commons sin vídeo para '%s' (%s)", query, e)
     _guardar_videos_stock_usados(usados)
     return salida
 
@@ -4214,16 +4290,26 @@ def _en_grupo_video(sid):
 
 
 async def video_stock_para_short(short):
-    """Clips de stock para este short. [] si no le toca o si no hay clave."""
-    if not (VIDEO_STOCK_ON and PEXELS_API_KEY and VIDEO_STOCK_POR_SHORT):
+    """Clips de stock para este short, o [] si no le toca.
+
+    Pexels da mucho más material pero pide clave; Commons da poco y no pide
+    nada. Se usan los dos para que el experimento pueda correr aunque el
+    dueño no haya configurado ninguna clave.
+    """
+    if not (VIDEO_STOCK_ON and VIDEO_STOCK_POR_SHORT):
         return []
     if not _en_grupo_video(short.get("id", "")):
         return []
     clips = []
     for q in random.sample(_CONSULTAS_VIDEO, k=4):
-        if len(clips) >= VIDEO_STOCK_POR_SHORT:
+        faltan = VIDEO_STOCK_POR_SHORT - len(clips)
+        if faltan <= 0:
             break
-        clips += await videos_pexels(q, n=VIDEO_STOCK_POR_SHORT - len(clips))
+        if PEXELS_API_KEY:
+            clips += await videos_pexels(q, n=faltan)
+            faltan = VIDEO_STOCK_POR_SHORT - len(clips)
+        if faltan > 0:
+            clips += await videos_wikimedia(q, n=faltan)
     return clips[:VIDEO_STOCK_POR_SHORT]
 
 
@@ -4268,7 +4354,8 @@ BIBLIOTECA_MANIFIESTO = os.path.join(BIBLIOTECA_DIR, "biblioteca.json")
 # También acepta CLIPS de video (dominio público/CC0, p. ej. noticiarios
 # antiguos de archive.org): se intercalan como tomas en movimiento.
 _EXT_IMG = (".jpg", ".jpeg", ".png", ".webp",
-            ".mp4", ".mov", ".webm", ".m4v", ".mpg", ".mpeg", ".avi")
+            ".mp4", ".mov", ".webm", ".m4v", ".mpg", ".mpeg", ".avi",
+            ".ogv", ".ogg")
 
 
 def fotos_biblioteca(consulta, n=6):
