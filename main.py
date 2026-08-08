@@ -6822,9 +6822,32 @@ _CREDITO = {
            "images; no broadcast footage."),
 }
 
+# Atribución de las fuentes de imagen. La LICENCIA de Pexels no exige
+# crédito, pero los TÉRMINOS DE SU API sí ("always credit photographers"),
+# y es lo que se promete al pedir la clave. Wikimedia y Openverse lo piden
+# por licencia. Se nombran solo las fuentes realmente activas: acreditar a
+# Pexels sin usar Pexels sería tan incorrecto como no acreditarlo usándolo.
+_FUENTES_CREDITO = {
+    "es": "Imágenes y vídeo: {fuentes}.",
+    "en": "Images and footage: {fuentes}.",
+}
+
+
+def _credito_fuentes():
+    """Línea de atribución con las fuentes de imagen activas, o ""."""
+    fuentes = []
+    if PEXELS_API_KEY:
+        fuentes.append("Pexels")
+    if FLICKR_API_KEY:
+        fuentes.append("Flickr")
+    fuentes += ["Wikimedia Commons", "Openverse"]
+    plantilla = _FUENTES_CREDITO.get(IDIOMA, _FUENTES_CREDITO["en"])
+    return plantilla.format(fuentes=", ".join(fuentes))
+
 
 def _credito_canal():
-    return _CREDITO.get(IDIOMA, _CREDITO["en"])
+    base = _CREDITO.get(IDIOMA, _CREDITO["en"])
+    return f"{base}\n{_credito_fuentes()}"
 
 
 def _cta_hablada():
