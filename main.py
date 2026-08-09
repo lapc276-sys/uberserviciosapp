@@ -338,6 +338,40 @@ _elevenlabs_estado = {"pausa_hasta": 0.0}
 _openai_tts_estado = {"pausa_hasta": 0.0}
 
 
+def _motivo_http(e):
+    """Motivo EXACTO que devuelve la API, sacado del cuerpo de la respuesta.
+
+    El código por sí solo no distingue lo que importa: un 401 de ElevenLabs
+    puede ser la clave mal puesta o el saldo agotado, y el arreglo es
+    distinto en cada caso. El cuerpo sí lo dice —"invalid_api_key" o
+    "quota_exceeded"— y sin esto había que adivinar.
+    """
+    r = getattr(e, "response", None)
+    if r is None:
+        return ""
+    with contextlib.suppress(Exception):
+        d = r.json()
+        # ElevenLabs: {"detail": {"status": ..., "message": ...}}
+        det = d.get("detail")
+        if isinstance(det, dict):
+            partes = [str(det.get(k)) for k in ("status", "message")
+                      if det.get(k)]
+            if partes:
+                return " — ".join(partes)[:200]
+        if isinstance(det, str) and det:
+            return det[:200]
+        # OpenAI: {"error": {"code": ..., "message": ...}}
+        err = d.get("error")
+        if isinstance(err, dict):
+            partes = [str(err.get(k)) for k in ("code", "message")
+                      if err.get(k)]
+            if partes:
+                return " — ".join(partes)[:200]
+    with contextlib.suppress(Exception):
+        return (r.text or "")[:200]
+    return ""
+
+
 def _tts_disponible(estado):
     return time.monotonic() >= estado["pausa_hasta"]
 
@@ -386,11 +420,12 @@ async def sintetizar(quien, texto):
             code = getattr(getattr(e, "response", None), "status_code", None)
             if code in (401, 403):
                 m = _tts_pausar(_elevenlabs_estado, _TTS_PAUSA_CLAVE_S)
-                log.error("ElevenLabs rechazó la clave (%s) — en pausa %d min "
-                          "y luego se vuelve a probar SOLO (no hace falta "
-                          "reiniciar). Casi siempre es saldo agotado: mira "
-                          "elevenlabs.io. Mientras, se usa OpenAI TTS.",
-                          code, m)
+                log.error("ElevenLabs rechazó la petición (%s): %s — en pausa "
+                          "%d min y se reintenta SOLO (no hace falta "
+                          "reiniciar). Si dice 'quota' es saldo; si dice "
+                          "'api_key' o 'unauthorized' es la clave del Secret "
+                          "ELEVENLABS_API_KEY. Mientras, se usa OpenAI TTS.",
+                          code, _motivo_http(e) or "sin detalle", m)
             elif code == 429:
                 m = _tts_pausar(_elevenlabs_estado, _TTS_PAUSA_S)
                 log.error("ElevenLabs al límite (429) — en pausa %d min; "
@@ -404,16 +439,20 @@ async def sintetizar(quien, texto):
             code = getattr(getattr(e, "response", None), "status_code", None)
             if code in (401, 403):
                 m = _tts_pausar(_openai_tts_estado, _TTS_PAUSA_CLAVE_S)
-                log.error("OpenAI TTS rechazó la clave (%s) — en pausa %d min "
-                          "y luego se vuelve a probar SOLO (no hace falta "
-                          "reiniciar). Revisa el Secret OPENAI_API_KEY.",
-                          code, m)
+                log.error("OpenAI TTS rechazó la petición (%s): %s — en pausa "
+                          "%d min y se reintenta SOLO. Revisa el Secret "
+                          "OPENAI_API_KEY.",
+                          code, _motivo_http(e) or "sin detalle", m)
             elif code == 429:
                 m = _tts_pausar(_openai_tts_estado, _TTS_PAUSA_S)
-                log.error("OpenAI TTS sin saldo o al límite (429) — en pausa "
-                          "%d min y se reintenta solo. Suele ser saldo "
-                          "agotado: mira la facturación en "
-                          "platform.openai.com.", m)
+                motivo = _motivo_http(e) or "sin detalle"
+                log.error("OpenAI TTS 429: %s — en pausa %d min y se "
+                          "reintenta solo. Si dice 'insufficient_quota' es "
+                          "que ESE proyecto no tiene créditos (mira "
+                          "platform.openai.com > Billing, y comprueba que la "
+                          "clave sea del mismo proyecto donde cargaste). Si "
+                          "dice 'rate_limit' es solo ritmo y se pasa solo.",
+                          motivo, m)
             else:
                 log.error("OpenAI TTS falló (%s) — la Mac usará su voz", e)
 
@@ -6652,6 +6691,11 @@ def _colocar_clips(fotos, clips):
     fotos = list(fotos)
     n = len(fotos) + len(clips)
     salida = [None] * n
+    # El puesto 0 se reserva para una foto real solo si HAY fotos. Si no las
+    # hay, reservarlo igualmente dejaba un clip sin sitio y se perdía en
+    # silencio. Hoy el pipeline nunca llega aquí sin fotos, pero un guardia
+    # que depende de otro guardia acaba fallando el día que el otro cambia.
+    primero = 1 if fotos else 0
     if fotos:
         salida[0] = fotos.pop(0)
 
@@ -6663,10 +6707,10 @@ def _colocar_clips(fotos, clips):
             pos = sueltos / (len(clips) + 1.0)
         ordenados.append((max(0.0, min(1.0, float(pos))), ruta))
     for pos, ruta in sorted(ordenados):
-        idx = min(n - 1, max(1, int(pos * (n - 1) + 0.5)))
-        for delta in range(n):          # hueco libre más cercano al momento
+        idx = min(n - 1, max(primero, int(pos * (n - 1) + 0.5)))
+        for delta in range(n + 1):      # hueco libre más cercano al momento
             for cand in (idx + delta, idx - delta):
-                if 1 <= cand < n and salida[cand] is None:
+                if primero <= cand < n and salida[cand] is None:
                     salida[cand] = ruta
                     break
             else:
