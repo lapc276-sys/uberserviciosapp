@@ -855,22 +855,24 @@ async def datos_carreras(limite: int = 50):
     return JSONResponse({"total": len(regs), "carreras": regs})
 
 
-@app.get("/datos/informe")
-async def datos_informe():
+def informe_texto():
     """Las métricas del canal en TEXTO, para leerlas de un vistazo.
 
     /datos/vistas devuelve JSON, que es lo correcto para un programa pero
     ilegible en el móvil. Esto responde en texto plano a las preguntas que
     de verdad se hacen: ¿bajan las vistas?, ¿cuáles funcionan y cuáles no?,
     ¿el vídeo de stock está ayudando?
+
+    Es una función normal, no solo un endpoint, para que se pueda leer
+    también desde el Shell (`python3 informe.py`): el panel web de Replit
+    solo se abre al arrancar con el botón Run, y el dueño arranca a mano.
     """
     datos = metricas.cargar()
     r = metricas.resumen(datos)
     filas = r.get("shorts") or []
     if not filas:
-        return PlainTextResponse(
-            "Todavía no hay muestras. Se toma una cada "
-            f"{metricas.CADA_S // 60} min desde que se publica un short.")
+        return ("Todavía no hay muestras. Se toma una cada "
+                f"{metricas.CADA_S // 60} min desde que se publica un short.")
 
     L = ["=" * 46, " INFORME DEL CANAL", "=" * 46, ""]
     L.append(f"Shorts medidos: {r['shorts_seguidos']}")
@@ -923,7 +925,13 @@ async def datos_informe():
           f"  SIN vídeo: {exp['sin_video']['shorts']} shorts, "
           f"media {exp['sin_video']['vistas_media']}",
           f"  → {exp.get('veredicto', '')}"]
-    return PlainTextResponse("\n".join(L))
+    return "\n".join(L)
+
+
+@app.get("/datos/informe")
+async def datos_informe():
+    """El mismo informe, por web."""
+    return PlainTextResponse(informe_texto())
 
 
 @app.get("/datos/vistas")
