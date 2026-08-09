@@ -7092,8 +7092,9 @@ def _guardar_fotos_usadas(usadas):
 
 async def _fotos_variadas(short, n=6):
     """Fotos de libre uso VARIADAS y de buena calidad para un short: mezcla
-    Pexels (stock limpio) + Wikimedia (pilotos/equipos reales), evitando
-    las ya usadas, las sospechosas (oficina, simuladores) y repetir."""
+    biblioteca curada + Pexels (stock limpio) + Wikimedia (pilotos/equipos
+    reales), evitando las ya usadas, las sospechosas (oficina, simuladores)
+    y repetir."""
     usadas = _cargar_fotos_usadas()
     guion = (short.get("guion", "") + " " + (short.get("tema") or "")).lower()
     fotos = []
@@ -7103,6 +7104,16 @@ async def _fotos_variadas(short, n=6):
             if (url and url not in usadas and url not in fotos
                     and not _foto_sospechosa(url)):
                 fotos.append(url)
+
+    # 0) La biblioteca curada manda. Este camino es el de los shorts SIN
+    # tema de búsqueda, y hasta ahora se saltaba la biblioteca entera: el
+    # material aprobado a mano (clips propios, metraje generado, fotos que
+    # el dueño ha revisado) solo lo veían los shorts con consulta, o sea
+    # la mitad. Se le reserva como mucho la mitad de los huecos para que
+    # el short no acabe siendo solo biblioteca.
+    for r in fotos_biblioteca(guion, max(1, n // 2)):
+        if r not in fotos:
+            fotos.append(r)
 
     # 1) Stock genérico limpio: Pexels + Openverse (2-3 fotos de carreras)
     for t in random.sample(_TEMAS_PEXELS, k=2):
