@@ -38,7 +38,8 @@ import anthropic
 import httpx
 import uvicorn
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.responses import (HTMLResponse, JSONResponse,
+                               PlainTextResponse, Response)
 
 import telemetria
 import youtube_subir
@@ -852,6 +853,77 @@ async def datos_carreras(limite: int = 50):
     estrategia."""
     regs = cargar_datos_carreras(min(max(1, limite), 200))
     return JSONResponse({"total": len(regs), "carreras": regs})
+
+
+@app.get("/datos/informe")
+async def datos_informe():
+    """Las métricas del canal en TEXTO, para leerlas de un vistazo.
+
+    /datos/vistas devuelve JSON, que es lo correcto para un programa pero
+    ilegible en el móvil. Esto responde en texto plano a las preguntas que
+    de verdad se hacen: ¿bajan las vistas?, ¿cuáles funcionan y cuáles no?,
+    ¿el vídeo de stock está ayudando?
+    """
+    datos = metricas.cargar()
+    r = metricas.resumen(datos)
+    filas = r.get("shorts") or []
+    if not filas:
+        return PlainTextResponse(
+            "Todavía no hay muestras. Se toma una cada "
+            f"{metricas.CADA_S // 60} min desde que se publica un short.")
+
+    L = ["=" * 46, " INFORME DEL CANAL", "=" * 46, ""]
+    L.append(f"Shorts medidos: {r['shorts_seguidos']}")
+
+    # 1) La pregunta del dueño: ¿las vistas BAJAN o solo se frenan?
+    if r["shorts_con_bajada_real"]:
+        L += ["",
+              f"⚠️  {r['shorts_con_bajada_real']} short(s) PERDIERON vistas de "
+              f"verdad ({r['vistas_retiradas_por_youtube']} retiradas por "
+              f"YouTube por considerarlas inválidas). No es el algoritmo "
+              f"castigándote: es depuración normal."]
+    else:
+        L += ["",
+              "✅ Ninguna vista bajó nunca. Lo que baja es el RITMO, no el "
+              "total — eso le pasa a todos los Shorts y es normal."]
+    pct = r.get("media_porcentaje_primera_hora")
+    if pct is not None:
+        L.append("")
+        L.append(f"El {pct}% de las vistas llega en la primera hora.")
+        if pct >= 85:
+            L.append("   → Viven del empujón inicial y no consiguen segunda "
+                     "ola. El gancho funciona; la retención, no tanto.")
+        elif pct <= 55:
+            L.append("   → Muy bueno: siguen sumando vistas días después.")
+
+    def linea(f):
+        v = f.get("vistas") or 0
+        eng = ((f.get("likes", 0) + f.get("comentarios", 0)) / v * 1000
+               if v else 0)
+        return (f"  {v:>6} vistas · {f.get('likes', 0):>3} 👍 · "
+                f"{f.get('comentarios', 0):>2} 💬 · {eng:4.1f} por mil  "
+                f"{str(f.get('short'))[:24]}")
+
+    ordenados = sorted(filas, key=lambda f: f.get("vistas") or 0, reverse=True)
+    L += ["", "-" * 46, "LO QUE MEJOR FUNCIONA", "-" * 46]
+    L += [linea(f) for f in ordenados[:5]]
+    if len(ordenados) > 5:
+        L += ["", "-" * 46, "LO QUE PEOR FUNCIONA", "-" * 46]
+        L += [linea(f) for f in ordenados[-5:]]
+
+    total = sum(f.get("vistas") or 0 for f in filas)
+    media = total // len(filas)
+    L += ["", "-" * 46,
+          f"Total medido: {total} vistas · media {media} por short"]
+
+    exp = _comparar_video_stock(filas)
+    L += ["", "-" * 46, "EXPERIMENTO DEL VÍDEO DE STOCK", "-" * 46,
+          f"  CON vídeo: {exp['con_video']['shorts']} shorts, "
+          f"media {exp['con_video']['vistas_media']}",
+          f"  SIN vídeo: {exp['sin_video']['shorts']} shorts, "
+          f"media {exp['sin_video']['vistas_media']}",
+          f"  → {exp.get('veredicto', '')}"]
+    return PlainTextResponse("\n".join(L))
 
 
 @app.get("/datos/vistas")
