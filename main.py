@@ -6668,8 +6668,19 @@ _TEMAS_ANIMACION = (
       "trazada")),
     (("apex", "corner", "corners", "cornering", "understeer", "oversteer",
       "balance", "trail", "kerb", "kerbs", "line"),
-     ("trazada", "trazada_mala", "carga_curva", "carga_frenada",
-      "carga_acelera")),
+     ("trazada", "trazada_mala", "carga_curva", "suspension",
+      "carga_frenada", "carga_acelera")),
+    (("start", "lights", "grid", "launch", "getaway", "reaction",
+      "jump"),
+     ("semaforo", "semaforo_falsa", "marchas", "carga_acelera")),
+    (("suspension", "damper", "spring", "ride", "bump", "kerb",
+      "setup", "stiff"),
+     ("suspension", "suspension_dura", "carga_frenada", "carga_curva")),
+    (("slipstream", "tow", "straight", "drag", "topspeed"),
+     ("rebufo", "rebufo_drs", "aero_drs_on", "aero_ala")),
+    (("gear", "gears", "gearbox", "shift", "shifts", "revs", "rpm",
+      "downshift", "upshift"),
+     ("marchas", "marchas_bajando", "carga_acelera", "ers_deploy")),
 )
 # Categorías del canal que ya dicen por sí solas que el short es técnico
 _CATEGORIAS_TECNICAS = {"Aero", "Tecnica", "Técnica", "Motor", "Neumaticos",
@@ -6714,6 +6725,14 @@ _CLAVES_ANCLA = {
     "degradacion":      ("degradation", "stint", "stints"),
     "degradacion_pit":  ("pit", "pits", "pitstop", "undercut", "overcut",
                          "window"),
+    "semaforo":         ("start", "lights", "grid", "launch", "getaway"),
+    "semaforo_falsa":   ("jump", "penalty", "false"),
+    "suspension":       ("suspension", "damper", "spring", "bump", "ride"),
+    "suspension_dura":  ("stiff", "setup", "kerb", "kerbs"),
+    "rebufo":           ("slipstream", "tow", "straight"),
+    "rebufo_drs":       ("drs", "topspeed"),
+    "marchas":          ("gear", "gears", "gearbox", "upshift", "revs"),
+    "marchas_bajando":  ("downshift", "downshifts", "rpm"),
 }
 
 # Memoria corta de qué animaciones salieron en los últimos shorts, para no

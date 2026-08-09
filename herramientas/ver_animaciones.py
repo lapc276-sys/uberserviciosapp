@@ -46,6 +46,14 @@ TOMAS = {
     "trazada_mala":     (A.fotograma_trazada, {"mala": True}),
     "degradacion":      (A.fotograma_degradacion, {}),
     "degradacion_pit":  (A.fotograma_degradacion, {"parada_temprana": True}),
+    "semaforo":         (A.fotograma_semaforo, {}),
+    "semaforo_falsa":   (A.fotograma_semaforo, {"salida_falsa": True}),
+    "suspension":       (A.fotograma_suspension, {}),
+    "suspension_dura":  (A.fotograma_suspension, {"dura": True}),
+    "rebufo":           (A.fotograma_rebufo, {}),
+    "rebufo_drs":       (A.fotograma_rebufo, {"drs": True}),
+    "marchas":          (A.fotograma_marchas, {}),
+    "marchas_bajando":  (A.fotograma_marchas, {"bajando": True}),
 }
 
 

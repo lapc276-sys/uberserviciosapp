@@ -1029,6 +1029,247 @@ def fotograma_degradacion(fase, parada_temprana=False):
     return im
 
 
+# ───────────────────── generador: semáforo de salida ────────────────────
+
+def fotograma_semaforo(fase, salida_falsa=False):
+    """Las cinco luces rojas se encienden y se APAGAN: así arranca una
+    carrera. Es la imagen más reconocible del deporte.
+
+    Lo que explica: no se sale cuando se encienden, se sale cuando se
+    apagan — y el tiempo que tardan en apagarse es ALEATORIO, entre uno y
+    cinco segundos. Por eso no se puede cronometrar la salida.
+    """
+    im, d = _lienzo()
+    cx, cy = ANCHO * 0.5, ALTO * 0.44
+    r = ANCHO * 0.058
+    sep = r * 2.5
+    # 0-0.62 se van encendiendo una a una; 0.62-0.75 todas fijas;
+    # a partir de 0.75 se APAGAN de golpe y sale la luz verde de la pista.
+    encendidas = min(5, int(fase / 0.124)) if fase < 0.62 else 5
+    apagadas = fase >= 0.75
+
+    # Estructura del pórtico
+    d.rectangle([cx - sep * 2.6, cy - r * 2.2, cx + sep * 2.6, cy + r * 2.2],
+                fill=(18, 20, 27), outline=(70, 78, 98), width=5)
+    for k in range(5):
+        x = cx + (k - 2) * sep
+        for fila, activa in ((-1, True), (1, False)):
+            yy = cy + fila * r * 0.95
+            on = (not apagadas) and activa and k < encendidas
+            col = (235, 30, 20) if on else (44, 24, 26)
+            d.ellipse([x - r * 0.62, yy - r * 0.62, x + r * 0.62,
+                       yy + r * 0.62], fill=col, outline=(90, 96, 112),
+                      width=3)
+    if not apagadas and encendidas:
+        # Halo de las luces encendidas
+        from PIL import Image, ImageDraw
+        capa = Image.new("RGB", (ANCHO, ALTO), (0, 0, 0))
+        cd = ImageDraw.Draw(capa)
+        for k in range(min(encendidas, 5)):
+            x = cx + (k - 2) * sep
+            yy = cy - r * 0.95
+            cd.ellipse([x - r, yy - r, x + r, yy + r], fill=(180, 24, 16))
+        im = _halo(im, capa, 0.55, 26)
+        d = ImageDraw.Draw(im)
+
+    # Sin medidor a propósito: el panel ya ocupa el ancho y el propio
+    # contador dice todo lo que hay que saber.
+    if apagadas:
+        _texto(d, cx, cy + r * 3.4, "GO", 190, (255, 255, 255))
+    else:
+        _texto(d, cx, cy + r * 3.4, f"{encendidas} / 5", 150, _TENUE)
+
+    if salida_falsa:
+        _pie(d, "Jump start", "Move before they go out and it is a penalty")
+    else:
+        _pie(d, "Lights out", "The delay is random: 1 to 5 seconds")
+    return im
+
+
+# ─────────────────────── generador: suspensión ──────────────────────────
+
+def fotograma_suspension(fase, dura=False):
+    """Una rueda pasa por un piano y la suspensión absorbe el golpe: el
+    muelle se comprime y la carrocería apenas se mueve.
+
+    Lo que explica: la suspensión no está para la comodidad, está para que
+    el neumático NO despegue del suelo. Con reglaje duro (`dura`) el coche
+    copia el bache y la rueda salta — más precisión, menos agarre.
+    """
+    im, d = _lienzo()
+    y_suelo = ALTO * 0.62
+    cx = ANCHO * 0.46
+    r_rueda = ANCHO * 0.115
+
+    d.rectangle([0, y_suelo, ANCHO, ALTO], fill=(13, 15, 21))
+    d.line([(0, y_suelo), (ANCHO, y_suelo)], fill=(70, 78, 98), width=5)
+    # Pianos pasando por debajo
+    for k in range(7):
+        x = ((fase * 1.0 + k / 7) % 1.0) * (ANCHO + 300) - 150
+        d.polygon([(x, y_suelo), (x + 90, y_suelo),
+                   (x + 74, y_suelo - 34), (x + 16, y_suelo - 34)],
+                  fill=(210, 60, 48) if k % 2 else (232, 236, 244))
+
+    # Altura del piano justo bajo la rueda
+    dist = min(abs(((fase * 1.0 + k / 7) % 1.0) * (ANCHO + 300) - 150
+                   + 45 - cx) for k in range(7))
+    golpe = math.exp(-(dist / 110) ** 2)
+    subida = golpe * 34
+    # Reglaje duro: la carrocería copia el bache; blando: lo absorbe
+    absorbe = 0.85 if not dura else 0.25
+    y_rueda = y_suelo - r_rueda - subida
+    y_cuerpo = ALTO * 0.40 - subida * (1 - absorbe)
+
+    # Muelle: se comprime lo que la carrocería NO subió
+    x_susp = cx
+    comp = (y_rueda - y_cuerpo)
+    d.line([(x_susp, y_cuerpo), (x_susp, y_cuerpo + comp * 0.18)],
+           fill=(150, 162, 186), width=12)
+    n_esp = 9
+    for i in range(n_esp):
+        t0 = 0.18 + 0.64 * i / n_esp
+        t1 = 0.18 + 0.64 * (i + 1) / n_esp
+        d.line([(x_susp - 34, y_cuerpo + comp * t0),
+                (x_susp + 34, y_cuerpo + comp * t1)],
+               fill=(0, 205, 215) if golpe > 0.3 else (120, 132, 156),
+               width=9)
+    d.line([(x_susp, y_cuerpo + comp * 0.86), (x_susp, y_rueda)],
+           fill=(150, 162, 186), width=12)
+
+    # Carrocería y rueda
+    d.rounded_rectangle([cx - ANCHO * 0.30, y_cuerpo - 78,
+                         cx + ANCHO * 0.30, y_cuerpo],
+                        radius=26, fill=(32, 37, 49), outline=(178, 190, 212),
+                        width=4)
+    d.ellipse([cx - r_rueda, y_rueda - r_rueda, cx + r_rueda,
+               y_rueda + r_rueda], fill=(20, 22, 29),
+              outline=(120, 130, 152), width=5)
+    rr = r_rueda * 0.55
+    d.ellipse([cx - rr, y_rueda - rr, cx + rr, y_rueda + rr],
+              fill=(30, 35, 46), outline=(130, 142, 166), width=3)
+
+    # ¿La rueda sigue tocando el suelo?
+    contacto = subida < 26 or not dura
+    _medidor(d, 1.0 if contacto else 0.15, ventana=(0.5, 1.0),
+             etiqueta="GRIP")
+    if dura:
+        _pie(d, "Stiff setup", "Sharper, but the tyre skips over the kerb")
+    else:
+        _pie(d, "Suspension travel", "Its job is to keep the tyre on the road")
+    return im
+
+
+# ──────────────────────── generador: rebufo ─────────────────────────────
+
+def fotograma_rebufo(fase, drs=False):
+    """Dos coches en fila por una recta: el de atrás va en el hueco de aire
+    del de delante y gana velocidad.
+
+    Lo que explica: el rebufo AYUDA en recta (menos resistencia) aunque el
+    aire sucio ESTORBE en curva. Son dos efectos distintos que la gente
+    mezcla.
+    """
+    im, d = _lienzo()
+    y = ALTO * 0.46
+    d.rectangle([0, y + 190, ANCHO, ALTO], fill=(13, 15, 21))
+    d.line([(0, y + 190), (ANCHO, y + 190)], fill=(70, 78, 98), width=5)
+
+    # Líneas de aire: se separan alrededor del primero y quedan calmadas
+    # justo detrás — ese hueco es el rebufo.
+    x1, x2 = ANCHO * 0.66, ANCHO * 0.22        # delantero y perseguidor
+    for i in range(16):
+        y0 = y - 240 + i * 32
+        pts = []
+        for x in range(-40, ANCHO + 40, 12):
+            dv = math.exp(-((x - x1) / 200) ** 2)
+            sep = 58 * dv * (1 if y0 < y else -1)
+            hueco = math.exp(-((x - (x1 - 210)) / 190) ** 2)
+            pts.append((x, y0 + sep * (1 - hueco * 0.9)))
+        v = 0.18 + 0.5 * math.exp(-((pts[len(pts) // 2][0] - x1) / 260) ** 2)
+        d.line(pts, fill=(34, 40, 55), width=3)
+        for k in range(5):
+            p = (fase + k / 5 + i * 0.03) % 1.0
+            idx = int(p * (len(pts) - 8))
+            a, b = pts[idx], pts[min(idx + 5, len(pts) - 1)]
+            d.line([a, b], fill=color_velocidad(v), width=7)
+
+    def coche(cx, col, alerón_abierto=False):
+        d.polygon([(cx - 250, y + 78), (cx - 178, y + 22), (cx - 48, y),
+                   (cx + 48, y - 62), (cx + 142, y - 68), (cx + 178, y + 4),
+                   (cx + 250, y + 16), (cx + 250, y + 78)],
+                  fill=col, outline=(196, 206, 226))
+        for wx in (cx - 155, cx + 155):
+            d.ellipse([wx - 58, y + 24, wx + 58, y + 126], fill=(18, 20, 27),
+                      outline=(126, 136, 158), width=5)
+        ang = -1.0 if alerón_abierto else 0.0
+        d.line([(cx + 210, y - 84), (cx + 210 + 68 * math.cos(ang),
+                                     y - 84 + 68 * math.sin(ang))],
+               fill=_ACENTO if alerón_abierto else (206, 216, 236), width=15)
+
+    coche(x1, (30, 35, 46))
+    coche(x2, (44, 34, 38), alerón_abierto=drs)
+    d.line([(x2 + 220, y + 130), (x1 - 220, y + 130)], fill=_ACENTO, width=5)
+    _texto(d, (x1 + x2) / 2, y + 146, "TOW", 42, _ACENTO)
+
+    # Sin medidor: dos coches y el corchete del rebufo ya llenan el ancho,
+    # y la barra de la derecha acababa cortando el coche de delante.
+    if drs:
+        _pie(d, "Tow plus DRS", "Less drag twice over: this is how they pass")
+    else:
+        _pie(d, "The tow", "Cleaner air behind means less drag, more speed")
+    return im
+
+
+# ────────────────────── generador: marchas y vueltas ────────────────────
+
+def fotograma_marchas(fase, bajando=False):
+    """El tablero: marcha, cuentavueltas y el momento del cambio.
+
+    Lo que explica: un F1 sube ocho marchas en pocos segundos y cambia en
+    milésimas. Con `bajando`, las reducciones de la frenada.
+    """
+    im, d = _lienzo()
+    n_marchas = 8
+    t = fase if not bajando else 1.0 - fase
+    marcha = max(1, min(n_marchas, int(t * n_marchas) + 1))
+    # Las vueltas suben dentro de cada marcha y caen de golpe al cambiar
+    dentro = (t * n_marchas) % 1.0
+    rpm = 0.45 + 0.5 * dentro
+
+    # Barra de vueltas: la zona roja arriba
+    x0, x1 = ANCHO * 0.14, ANCHO * 0.86
+    yb = ALTO * 0.34
+    d.rounded_rectangle([x0, yb, x1, yb + 92], radius=14, fill=(15, 18, 25),
+                        outline=(70, 80, 100), width=4)
+    d.rectangle([x0 + (x1 - x0) * 0.82, yb + 4, x1 - 4, yb + 88],
+                fill=(60, 20, 18))
+    ancho_rpm = (x1 - x0 - 10) * rpm
+    d.rounded_rectangle([x0 + 5, yb + 5, x0 + 5 + ancho_rpm, yb + 87],
+                        radius=10, fill=color_velocidad(rpm))
+    _texto(d, ANCHO * 0.5, yb - 62, "REVS", 40, _TENUE)
+
+    # Marcha, enorme
+    _texto(d, ANCHO * 0.5, ALTO * 0.44, str(marcha), 300, (255, 255, 255))
+    _texto(d, ANCHO * 0.5, ALTO * 0.585, "GEAR", 44, _TENUE)
+
+    # Escalera de marchas
+    for k in range(n_marchas):
+        x = ANCHO * 0.16 + k * (ANCHO * 0.68 / (n_marchas - 1))
+        activa = (k + 1) == marcha
+        h = 26 + k * 9
+        d.rectangle([x - 22, ALTO * 0.655 - h, x + 22, ALTO * 0.655],
+                    fill=color_velocidad(0.2 + k / n_marchas) if activa
+                    else (34, 40, 52))
+    if rpm > 0.86:
+        _texto(d, ANCHO * 0.5, ALTO * 0.68, "SHIFT", 56, _AVISO)
+
+    if bajando:
+        _pie(d, "Downshifts", "Eight to two while braking, in under 2 seconds")
+    else:
+        _pie(d, "Upshifts", "A gear change takes a few thousandths")
+    return im
+
+
 # ───────────────────────── montaje a MP4 + caché ─────────────────────────
 
 def _ffmpeg():
@@ -1170,6 +1411,16 @@ CATALOGO = {
                         {"parada_temprana": False}),
     "degradacion_pit": ("degradacion", fotograma_degradacion,
                         {"parada_temprana": True}),
+    "semaforo":        ("semaforo", fotograma_semaforo,
+                        {"salida_falsa": False}),
+    "semaforo_falsa":  ("semaforo", fotograma_semaforo,
+                        {"salida_falsa": True}),
+    "suspension":      ("suspension", fotograma_suspension, {"dura": False}),
+    "suspension_dura": ("suspension", fotograma_suspension, {"dura": True}),
+    "rebufo":          ("rebufo", fotograma_rebufo, {"drs": False}),
+    "rebufo_drs":      ("rebufo", fotograma_rebufo, {"drs": True}),
+    "marchas":         ("marchas", fotograma_marchas, {"bajando": False}),
+    "marchas_bajando": ("marchas", fotograma_marchas, {"bajando": True}),
 }
 
 
