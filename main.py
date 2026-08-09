@@ -4577,7 +4577,15 @@ def fotos_biblioteca(consulta, n=6):
                 continue
             texto = " ".join(str(t) for t in etiquetas.get(a, [])) + " " + a
             texto = texto.lower().replace("-", " ").replace("_", " ")
-            pts = sum(1 for w in palabras if w in texto)
+            # Se exige que la palabra empiece donde empieza una palabra del
+            # texto. Buscando subcadenas sueltas, "wing" encontraba
+            # "gloWING" y un micro-short de carga aerodinámica acababa
+            # ilustrado con un disco de freno. El README ya avisaba de esta
+            # trampa ("following" contiene "wing") pero el código no la
+            # aplicaba. El prefijo se mantiene a propósito, para que "brake"
+            # siga encontrando "brakes".
+            pts = sum(1 for w in palabras
+                      if re.search(rf"\b{re.escape(w)}", texto))
             if pts > 0:
                 puntuadas.append((pts, os.path.join(BIBLIOTECA_DIR, a)))
         puntuadas.sort(key=lambda x: -x[0])
@@ -7413,10 +7421,15 @@ async def _clip_para_micro(entrada):
     """Clip de vídeo para este micro: primero lo que el dueño aprobó a mano
     (biblioteca), y si no hay, metraje de stock. None si no hay nada."""
     etiquetas = entrada["etiquetas"]
+    # fotos_biblioteca ya devuelve ordenado por cuántas etiquetas coinciden,
+    # así que se coge el PRIMERO. Antes se elegía al azar entre los seis
+    # primeros y, con varios clips de frenos en la carpeta, el micro de
+    # "disco al rojo" podía acabar con el de "frenada" — que coincide en
+    # dos palabras pero no enseña lo que dice la tarjeta.
     propios = [r for r in fotos_biblioteca(etiquetas, 6)
                if str(r).lower().endswith(_EXT_VIDEO_LOCAL)]
     if propios:
-        return random.choice(propios)
+        return propios[0]
     clips = await videos_stock_para_tema(etiquetas, n=1)
     return clips[0] if clips else None
 
