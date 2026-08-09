@@ -3713,7 +3713,33 @@ _FOTO_MALA = ("simulator", "sim rig", "office", "computer", "keyboard",
               # devuelve gente en escritorios y tecnología genérica.
               "desk", "meeting", "business", "workspace", "coworking",
               "startup", "server", "monitor", "typing", "notebook",
-              "whiteboard", "boardroom", "colleagues", "workshop table")
+              "whiteboard", "boardroom", "colleagues", "workshop table",
+              # GENERACIÓN DE ENERGÍA. Un short sobre el motor híbrido habla
+              # de "engine", "energy", "power" y "recovery", y con esas
+              # palabras los buscadores devuelven centrales eléctricas,
+              # molinos y ruedas hidráulicas. Ya se coló una rueda de río en
+              # un short de motores. Se nombran de forma específica para no
+              # tumbar una foto legítima de un turbo de F1.
+              "hydro", "water wheel", "waterwheel", "watermill",
+              "water mill", "windmill", "wind turbine", "wind farm",
+              "power plant", "powerplant", "power station", "dam",
+              "solar panel", "nuclear", "refinery", "steam engine",
+              "locomotive", "tractor", "windpower", "hydraulic wheel")
+
+
+def _normalizar_url(texto):
+    """Separadores de nombre de archivo → espacios.
+
+    Wikimedia usa guiones bajos (Old_water_wheel_river.jpg) y otros usan
+    guiones o %20. Sin normalizar, buscar "water wheel" NO encontraba
+    "water_wheel" y una rueda hidráulica se coló en un short de motores.
+    """
+    return re.sub(r"[_\-+]+|%20", " ", (texto or "").lower())
+
+
+# Los propios términos se normalizan igual, para que "e-sport" siga
+# encontrando tanto "e-sport" como "e_sport".
+_FOTO_MALA_NORM = tuple(_normalizar_url(x) for x in _FOTO_MALA)
 
 
 def _foto_sospechosa(url):
@@ -3723,7 +3749,7 @@ def _foto_sospechosa(url):
     # circuito de Wikimedia son .svg). Igual el armador valida cada imagen.
     if u.split("?")[0].endswith(".svg"):
         return True
-    return any(x in u for x in _FOTO_MALA)
+    return any(x in _normalizar_url(u) for x in _FOTO_MALA_NORM)
 
 
 async def imagenes_openverse(query, n=6):
@@ -3933,13 +3959,23 @@ SYSTEM_VISION_FOTO = """You are the photo editor of a professional \
 motorsport TV channel. Decide if this image can air FULL-SCREEN in a \
 documentary about the given topic.
 
-REJECT (apta=false) if it is: a collage/montage/photo grid (several images \
-stacked together), a scanned magazine or newspaper page, a screenshot, a \
-diagram/map/logo, an image with heavy text or watermarks, people at \
-desks/computers/offices/sim rigs, a posed studio/stock portrait of an \
-anonymous model, or clearly unrelated to motorsport. Otherwise ACCEPT \
-(apta=true) — a clean generic racing photo is fine even if not exactly \
-on-topic.
+FIRST, the domain test. The image must plausibly belong in a MOTORSPORT \
+video: a race car, a circuit, a garage or pit lane, tyres, brakes, an \
+engine, mechanical detail, a crowd at a track, or a neutral texture \
+(asphalt, metal, sparks, rain on tarmac). REJECT anything from a different \
+world even when it looks technical or energetic — power stations, water \
+wheels, windmills, dams, solar panels, factories, farms, trains, \
+landscapes, household objects. Topics about "engine", "energy", "power" or \
+"recovery" make search engines return hydroelectric and industrial photos; \
+those are WRONG here no matter how good they look.
+
+THEN reject (apta=false) if it is: a collage/montage/photo grid (several \
+images stacked together), a scanned magazine or newspaper page, a \
+screenshot, a diagram/map/logo, an image with heavy text or watermarks, \
+people at desks/computers/offices/sim rigs, or a posed studio/stock \
+portrait of an anonymous model. Otherwise ACCEPT (apta=true) — inside \
+motorsport, a clean generic racing photo is fine even if it is not exactly \
+about the given topic.
 
 Also report persona_protagonista: true when a recognisable HUMAN FACE or \
 a single person is the main subject of the frame. A driver sealed in a \
@@ -3947,9 +3983,9 @@ car with the helmet on, a distant crowd, or a pit crew working as a group \
 are NOT persona_protagonista — nobody's identity is being asserted there. \
 A portrait, a podium close-up, or a person filling the frame IS.
 
-Be strict about collages, text and stock portraits; lenient about topic \
-relevance. Never guess WHO somebody is: just say whether a person is the \
-subject."""
+Be strict about the domain test, collages, text and stock portraits; \
+lenient only about which motorsport topic it shows. Never guess WHO \
+somebody is: just say whether a person is the subject."""
 
 VISION_FOTO_SCHEMA = {
     "type": "object",
