@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { LayoutDashboard, CalendarDays, Users, Settings, LogOut, ExternalLink, BarChart3, ScanEye, Megaphone } from 'lucide-react';
+import { LayoutDashboard, CalendarDays, Users, Settings, LogOut, ExternalLink, BarChart3, ScanEye, Megaphone, KeyRound } from 'lucide-react';
 import { site } from '@/lib/config/site';
 
 const nav = [
@@ -12,6 +12,7 @@ const nav = [
   { label: 'Analytics', href: '/admin/analytics', icon: BarChart3 },
   { label: 'AI Vision', href: '/admin/vision', icon: ScanEye },
   { label: 'Marketing', href: '/admin/marketing', icon: Megaphone },
+  { label: 'Licensing', href: '/admin/tenants', icon: KeyRound },
   { label: 'Pros', href: '/admin/pros', icon: Settings },
 ];
 

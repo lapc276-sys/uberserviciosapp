@@ -40,8 +40,12 @@ function normalizeSoil(soil: Partial<SoilScores> | undefined): SoilScores {
   return out;
 }
 
-function roomMinutes(room: RawRoomObservation, soil: SoilScores): number {
-  const base = ROOM_BASE_MINUTES[room.type] ?? ROOM_BASE_MINUTES.other;
+function roomMinutes(
+  room: RawRoomObservation,
+  soil: SoilScores,
+  baseOverrides: Partial<Record<RawRoomObservation['type'], number>>,
+): number {
+  const base = baseOverrides[room.type] ?? ROOM_BASE_MINUTES[room.type] ?? ROOM_BASE_MINUTES.other;
   const weights = soilWeightsFor(room.type);
 
   // Soil contributes its weighted minutes scaled by severity.
@@ -83,18 +87,41 @@ export interface EstimateOptions {
   serviceSlug: string;
   source: PropertyAnalysis['source'];
   warnings?: string[];
+  /**
+   * Per-tenant corrections fitted to that company's own completed jobs.
+   *
+   * Omitted, the shipped constants apply — which is what the marketplace uses.
+   * Supplied, the same footage yields a different number of minutes, because a
+   * crew that consistently finishes bathrooms in 16 minutes should not be
+   * quoting 22. This is the entire reason the engine is worth paying for.
+   */
+  calibration?: {
+    globalTimeFactor?: number;
+    roomBaseMinutes?: Partial<Record<RawRoomObservation['type'], number>>;
+    serviceMultiplier?: Record<string, number>;
+  };
+  /** Scales supply costs into the tenant's market. */
+  supplyCostMultiplier?: number;
 }
 
 export function buildAnalysis(
   observations: RawRoomObservation[],
-  { serviceSlug, source, warnings = [] }: EstimateOptions,
+  { serviceSlug, source, warnings = [], calibration, supplyCostMultiplier }: EstimateOptions,
 ): PropertyAnalysis {
   const labels = labelRooms(observations);
-  const multiplier = SERVICE_TIME_MULTIPLIER[serviceSlug] ?? 1;
+
+  const baseOverrides = calibration?.roomBaseMinutes ?? {};
+  // A calibrated factor of 0 would zero out every job, so an explicitly
+  // nonsensical value falls back to the neutral 1 rather than producing a
+  // free quote.
+  const timeFactor =
+    calibration?.globalTimeFactor && calibration.globalTimeFactor > 0 ? calibration.globalTimeFactor : 1;
+  const multiplier =
+    (calibration?.serviceMultiplier?.[serviceSlug] ?? SERVICE_TIME_MULTIPLIER[serviceSlug] ?? 1) * timeFactor;
 
   const rooms: RoomAnalysis[] = observations.map((obs, i) => {
     const soil = normalizeSoil(obs.soil);
-    const minutes = roomMinutes(obs, soil) * multiplier;
+    const minutes = roomMinutes(obs, soil, baseOverrides) * multiplier;
     return {
       type: obs.type,
       label: labels[i],
@@ -129,6 +156,7 @@ export function buildAnalysis(
     roomTypes: rooms.map((r) => r.type),
     serviceSlug,
     totalMinutes: Math.round(totalMinutes),
+    costMultiplier: supplyCostMultiplier,
   });
 
   const confidence = rooms.length

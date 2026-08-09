@@ -222,3 +222,70 @@ El panel **Marketing** te dirá cuántas reservas y cuánto dinero trajo cada ca
 | 10b | Messenger / Instagram | `META_VERIFY_TOKEN`, `META_PAGE_TOKEN`, `META_APP_SECRET` | ☐ |
 
 **¿Dudas al hacer un paso?** Pídeme ayuda con el paso exacto y te guío en detalle.
+
+---
+
+## Vender el motor a otras empresas de limpieza
+
+Esta parte no necesita ninguna cuenta ni ninguna clave. Funciona ya.
+
+La idea: en vez de conseguir clientes uno a uno, le cobras a una empresa de
+limpieza que ya tiene clientes por usar tu motor de cotización. Ellos no
+compran limpiezas, compran dejar de perder dos horas conduciendo para cotizar
+un trabajo de 200 dólares.
+
+### Cómo dar de alta a una empresa
+
+1. Entra a **`/admin/tenants`** (menú lateral → **Licensing**).
+2. **New account** → rellena:
+   - **Company name** y **contact email**
+   - **Plan** — empieza siempre en `trial` (50 cotizaciones al mes, gratis)
+   - **Currency** — la moneda de ellos: `USD`, `EUR`, `MXN`, `GBP`…
+   - **Charged per labor hour** — lo que ELLOS le cobran a su cliente por hora
+   - **Their cost per labor hour** — lo que ELLOS le pagan a su limpiador
+   - **Tax rate (%)** — su impuesto (IVA 16% en México, VAT 20% en UK…)
+   - **Supply cost multiplier** — `1.0` son precios de mayorista de EE.UU.
+     Súbelo en países caros, bájalo en países baratos.
+3. **Create and issue key.**
+
+### ⚠️ La clave se muestra UNA sola vez
+
+Sale en un recuadro amarillo. Cópiala y mándasela por un canal seguro en ese
+momento. Nosotros guardamos un hash, no la clave — si se pierde, no se
+recupera, se emite otra. Esto es a propósito: si nosotros pudiéramos leerla,
+cualquiera que entrara a la base de datos también podría.
+
+### Qué hacen ellos con la clave
+
+Su programador manda esto desde **su servidor** (nunca desde el navegador — una
+clave en JavaScript es una clave publicada):
+
+```
+POST https://tu-dominio.com/api/v1/quote
+Authorization: Bearer hk_live_...
+```
+
+La documentación completa para entregarles está en **`docs/API.md`**.
+
+### Por qué el motor mejora con el uso (y por qué eso los ata)
+
+Cada empresa tiene su propio modelo de tiempo. Al principio usan nuestras
+constantes de fábrica. A medida que acumulan trabajos terminados — minutos
+predichos contra minutos reales — se ajusta a SUS cuadrillas.
+
+Ese ajuste se guarda en su cuenta. Las mismas imágenes le dan a una empresa
+150 minutos y a otra 120, porque sus equipos realmente tardan distinto.
+
+**Esto es lo que hace que no se vayan a la competencia**: llevarse la
+suscripción es fácil, llevarse cuarenta trabajos de calibración no. Cuanto más
+tiempo usan el motor, más caro les sale cambiarlo — y más barato te sale a ti
+mantenerlos.
+
+### Ver cómo les va
+
+En `/admin/tenants` ves por empresa: plan, últimos 4 de su clave, su tarifa,
+cotizaciones del mes contra su límite, valor total cotizado y sobre cuántos
+trabajos está calibrado su modelo.
+
+El **valor cotizado** es tu mejor argumento de venta en la renovación: no les
+dices "pagas 200 al mes", les dices "cotizaste 40.000 con esto".

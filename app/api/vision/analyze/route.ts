@@ -5,13 +5,12 @@ import { buildAnalysis } from '@/lib/vision/estimate';
 import { priceFromAnalysis } from '@/lib/vision/pricing';
 import { services } from '@/lib/config/services';
 import { saveVisionAnalysis, createLead } from '@/lib/data';
+import { framesAreSafe, FRAME_ERROR } from '@/lib/vision/input';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 
 const MAX_FRAMES = 12;
-/** ~1.2MB per frame ceiling; the client downscales before upload. */
-const MAX_FRAME_CHARS = 1_600_000;
 
 const schema = z.object({
   frames: z
@@ -28,17 +27,6 @@ const schema = z.object({
     })
     .optional(),
 });
-
-function framesAreSafe(frames: string[]): boolean {
-  return frames.every(
-    (f) =>
-      f.length <= MAX_FRAME_CHARS &&
-      (f.startsWith('data:image/jpeg;base64,') ||
-        f.startsWith('data:image/png;base64,') ||
-        f.startsWith('data:image/webp;base64,') ||
-        f.startsWith('https://')),
-  );
-}
 
 export async function POST(req: Request) {
   let body: unknown;
@@ -58,7 +46,7 @@ export async function POST(req: Request) {
 
   const { frames, serviceSlug, city, contact } = parsed.data;
   if (!framesAreSafe(frames)) {
-    return NextResponse.json({ error: 'Frames must be JPEG, PNG or WebP images.' }, { status: 422 });
+    return NextResponse.json({ error: FRAME_ERROR }, { status: 422 });
   }
 
   const analyzer = getAnalyzer();

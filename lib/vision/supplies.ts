@@ -182,7 +182,15 @@ export function planSupplies(ctx: {
   roomTypes: RoomType[];
   serviceSlug: string;
   totalMinutes: number;
+  /**
+   * Scales the catalog's USD prices to the buyer's market. The catalog is
+   * priced for US wholesale; the same gallon of degreaser is not the same
+   * money in Mexico City or Oslo, and a supply figure that is off by 3x makes
+   * the margin number actively misleading rather than merely imprecise.
+   */
+  costMultiplier?: number;
 }): SupplyPlan {
+  const costMultiplier = ctx.costMultiplier && ctx.costMultiplier > 0 ? ctx.costMultiplier : 1;
   const objectNames = ctx.objects.map((o) => o.name.toLowerCase());
   const ruleContext: RuleContext = {
     soil: ctx.soil,
@@ -218,7 +226,7 @@ export function planSupplies(ctx: {
       category: supply.category,
       quantity,
       unit: supply.unit,
-      estimatedCost: Number((supply.costPerUnit * unitsConsumed).toFixed(2)),
+      estimatedCost: Number((supply.costPerUnit * unitsConsumed * costMultiplier).toFixed(2)),
       reason,
       hazard: supply.hazard,
       note: supply.note,

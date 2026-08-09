@@ -289,59 +289,76 @@ model Payout {
 
 /**
  * A labeled capture from a real job — the training asset.
- *
  * The valuable record is not the footage, it is the PAIR: what the model
  * predicted and what the person standing in the room corrected it to, plus how
  * long the work actually took. That pair is the only thing that improves the
  * model, and it can't be bought or scraped.
- *
  * `consent*` is mandatory, not decorative: footage of someone's home without
  * recorded permission is a liability, never an asset.
  */
 model TrainingSample {
-  id           String @id @default(cuid())
+  id           String  @id @default(cuid())
   capturedBy   String // pro id or admin email
   serviceSlug  String
   city         String?
-  propertyType String @default("residential")
+  propertyType String  @default("residential")
 
   // Consent record — who agreed, and when.
-  consentName String
-  consentAt   DateTime
-  /** Whether the customer agreed the footage may improve the model. */
-  consentTraining Boolean @default(false)
+  consentName     String
+  consentAt       DateTime
+  /**
+   * Whether the customer agreed the footage may improve the model.
+   */
+  consentTraining Boolean  @default(false)
 
   frameCount Int
-  /** The model's raw analysis. */
+  /**
+   * The model's raw analysis.
+   */
   predicted  Json
-  /** The human-corrected analysis — the label. */
+  /**
+   * The human-corrected analysis — the label.
+   */
   corrected  Json
 
-  predictedMinutes Int
-  actualMinutes    Int
-  /** Mean absolute soil-score correction across all rooms, 0-100. */
+  predictedMinutes    Int
+  actualMinutes       Int
+  /**
+   * Mean absolute soil-score correction across all rooms, 0-100.
+   */
   correctionMagnitude Float @default(0)
 
   /**
    * Operator context — the signal nobody outside the operation can collect.
-   *
    * The same bathroom at the same soil level does not take the same time at
    * 9am as it does on someone's fourth job of the day. Capturing who worked,
    * how far into their day they were, and how many hands were on the job is
    * what lets the time model explain variance that pure vision never will.
    */
-  /** 1 = first job of that worker's day, 2 = second, etc. */
+  /**
+   * /** 1 = first job of that worker's day, 2 = second, etc.
+   */
   jobSequence      Int?
-  /** Hours already worked before starting this job. */
+  /**
+   * Hours already worked before starting this job.
+   */
   hoursWorkedToday Float?
-  /** People on the job. actualMinutes is person-minutes, so this is separate. */
+  /**
+   * People on the job. actualMinutes is person-minutes, so this is separate.
+   */
   crewSize         Int    @default(1)
-  /** Local hour the job started, 0-23. */
+  /**
+   * Local hour the job started, 0-23.
+   */
   startHour        Int?
 
-  /** Post-service analysis, for quality scoring. */
+  /**
+   * Post-service analysis, for quality scoring.
+   */
   afterAnalysis Json?
-  /** 0-100 improvement score derived from before vs. after. */
+  /**
+   * 0-100 improvement score derived from before vs. after.
+   */
   qualityScore  Float?
 
   notes     String?
@@ -381,4 +398,72 @@ model Lead {
   createdAt DateTime @default(now())
 
   @@index([createdAt])
+}
+
+/**
+ * A company licensing the quoting engine.
+ * The marketplace is tenant zero; every other row is a cleaning company that
+ * pays for the API. Pricing and calibration are JSON because they are settings,
+ * not relations — a new knob is a code change in lib/tenants/types.ts, never a
+ * migration, which matters when the shape is still being learned from customers.
+ */
+model Tenant {
+  id           String  @id @default(cuid())
+  slug         String  @unique
+  name         String
+  contactEmail String
+  plan         String  @default("trial")
+  active       Boolean @default(true)
+  monthlyQuota Int     @default(50)
+
+  /**
+   * SHA-256 of the API key. The key itself is shown once and never stored.
+   */
+  keyHash  String @unique
+  /**
+   * Last 4 chars, so a key can be identified in the UI without revealing it.
+   */
+  keyLast4 String
+
+  /**
+   * TenantPricing — rate, minimum, currency, tax, supply multiplier.
+   */
+  pricing     Json
+  /**
+   * TenantCalibration — the time model fitted to this tenant's own actuals.
+   */
+  calibration Json
+  /**
+   * TenantBranding — display name, logo, color for the embedded widget.
+   */
+  branding    Json
+
+  createdAt DateTime      @default(now())
+  usage     TenantUsage[]
+
+  @@index([createdAt])
+}
+
+/**
+ * Metered usage per tenant per calendar month (UTC), for billing and quota.
+ */
+model TenantUsage {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  /**
+   * "YYYY-MM", UTC.
+   */
+  period      String
+  quotes      Int    @default(0)
+  /**
+   * Sum of quoted midpoints in the tenant's currency — their ROI, and ours.
+   */
+  quotedValue Float  @default(0)
+
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, period])
+  @@index([period])
 }
