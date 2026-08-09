@@ -48,6 +48,7 @@ import capitulos
 import graficos_f1
 import metricas
 import subtitulos
+import microshorts
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 log = logging.getLogger("f1tv-backend")
@@ -576,6 +577,7 @@ async def lifespan(app: FastAPI):
               asyncio.create_task(bucle_mapa()),
               asyncio.create_task(bucle_comentarios()),
               asyncio.create_task(bucle_metricas()),
+              asyncio.create_task(bucle_microshorts()),
               asyncio.create_task(bucle_chat())]
     yield
     for t in tareas:
@@ -7376,6 +7378,103 @@ async def _fotos_variadas(short, n=6):
         usadas = set(list(usadas)[-400:])
     _guardar_fotos_usadas(usadas)
     return fotos
+
+
+# ── Micro-shorts de 8 segundos ───────────────────────────────────────────
+# Formato aparte, en PARALELO a los shorts normales: un clip potente y dos
+# datos reales en pantalla, sin voz. La apuesta es la repetición — 8 s se
+# ven enteros y se vuelven a ver, y cada repetición cuenta.
+#
+# Va como experimento medible: se apunta cuáles son micro para poder
+# compararlos después contra los narrados, igual que con el vídeo de stock.
+MICRO_ON = os.environ.get("MICROSHORTS", "on").lower() not in (
+    "off", "0", "", "no")
+MICRO_CADA_H = float(os.environ.get("MICRO_CADA_H", "24") or 24)
+MICRO_ESTADO = "microshorts_hechos.json"
+
+
+def _micro_hechos():
+    with contextlib.suppress(Exception):
+        with open(MICRO_ESTADO, encoding="utf-8") as f:
+            return list(json.load(f))
+    return []
+
+
+def _micro_apuntar(mid, video_id=None):
+    with contextlib.suppress(Exception):
+        hechos = _micro_hechos()
+        hechos.append({"id": mid, "video": video_id,
+                       "cuando": dt.datetime.now(dt.timezone.utc).isoformat()})
+        with open(MICRO_ESTADO, "w", encoding="utf-8") as f:
+            json.dump(hechos[-200:], f, ensure_ascii=False, indent=1)
+
+
+async def _clip_para_micro(entrada):
+    """Clip de vídeo para este micro: primero lo que el dueño aprobó a mano
+    (biblioteca), y si no hay, metraje de stock. None si no hay nada."""
+    etiquetas = entrada["etiquetas"]
+    propios = [r for r in fotos_biblioteca(etiquetas, 6)
+               if str(r).lower().endswith(_EXT_VIDEO_LOCAL)]
+    if propios:
+        return random.choice(propios)
+    clips = await videos_stock_para_tema(etiquetas, n=1)
+    return clips[0] if clips else None
+
+
+async def bucle_microshorts():
+    """Publica un micro-short cada MICRO_CADA_H horas."""
+    if not MICRO_ON:
+        return
+    await asyncio.sleep(120)          # dejar arrancar al resto
+    log.info("⚡ Micro-shorts de %.0f s activos (uno cada %.0f h, %d en el "
+             "catálogo)", microshorts.DUR, MICRO_CADA_H,
+             len(microshorts.CATALOGO))
+    while True:
+        try:
+            listo = (youtube_subir.oauth_configurado()
+                     and await youtube_subir.asegurar_ffmpeg())
+            hechos = _micro_hechos()
+            usados = {h.get("id") for h in hechos}
+            # Se recorre el catálogo entero antes de repetir ninguno
+            pendientes = [e for e in microshorts.CATALOGO
+                          if e["id"] not in usados] or microshorts.CATALOGO
+            entrada = pendientes[0] if pendientes else None
+            if listo and entrada:
+                await _producir_microshort(entrada)
+        except Exception as e:
+            log.warning("Micro-shorts: %s", e)
+        await asyncio.sleep(max(3600, MICRO_CADA_H * 3600))
+
+
+async def _producir_microshort(entrada):
+    """Monta y sube UN micro-short. No lanza."""
+    clip = await _clip_para_micro(entrada)
+    if not clip:
+        log.info("⚡ Micro-short %s sin clip disponible — se pospone. "
+                 "Sube uno a biblioteca/ con las palabras: %s",
+                 entrada["id"], entrada["etiquetas"])
+        return
+    tmp = os.path.join("shorts", f"micro_{entrada['id']}")
+    os.makedirs(tmp, exist_ok=True)
+    salida = os.path.join(tmp, "video.mp4")
+    musica = await youtube_subir._musica_docu()
+    ok = await asyncio.to_thread(microshorts.armar, clip, entrada, salida,
+                                 tmp, musica)
+    if not ok:
+        log.info("⚡ Micro-short %s no se pudo montar", entrada["id"])
+        return
+    res = await youtube_subir.subir_video(
+        salida, entrada["titulo"], microshorts.DESCRIPCION,
+        ["F1", "Formula1", "Shorts", "Motorsport", "Engineering"])
+    if res:
+        log.info("⚡ Micro-short publicado: %s (%s)", res["url"],
+                 entrada["id"])
+        _micro_apuntar(entrada["id"], res["id"])
+        shutil.rmtree(tmp, ignore_errors=True)
+    else:
+        motivo = youtube_subir.ultimo_fallo()
+        log.info("⚡ Micro-short %s no subido (%s) — se reintenta",
+                 entrada["id"], motivo)
 
 
 def _espera_cuota_youtube():
