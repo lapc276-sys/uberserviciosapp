@@ -4331,6 +4331,32 @@ async def videos_wikimedia(query, n=2):
     return salida
 
 
+async def videos_stock_para_tema(consulta, n=4):
+    """Clips de stock para un video LARGO (16:9). Rutas a MP4, o [].
+
+    A diferencia de los shorts, aquí no hay experimento A/B: un explicativo
+    de seis minutos con veinte fotos quietas cansa, y el metraje en
+    movimiento es mejora segura. Se busca primero por el TEMA del episodio
+    (metraje que pega con lo que se cuenta) y solo se rellena con las
+    consultas genéricas si el tema no da bastante.
+    """
+    if not (VIDEO_STOCK_ON and n > 0):
+        return []
+    clips = []
+    consultas = [c for c in [consulta] if c]
+    consultas += random.sample(_CONSULTAS_VIDEO, k=4)
+    for q in consultas:
+        faltan = n - len(clips)
+        if faltan <= 0:
+            break
+        if PEXELS_API_KEY:
+            clips += await videos_pexels(q, n=faltan)
+            faltan = n - len(clips)
+        if faltan > 0:
+            clips += await videos_wikimedia(q, n=faltan)
+    return clips[:n]
+
+
 def _en_grupo_video(sid):
     """¿Le toca vídeo de stock a este short?
 
@@ -8732,6 +8758,16 @@ async def _producir_tema(tema):
     fotos = fotos[:23] + ([cierre] if cierre else [])
     if not _material_suficiente(fotos, f"El explicativo '{titulo}'"):
         return False
+    # Metraje en movimiento repartido por el episodio. Va DESPUÉS del
+    # mínimo de material, igual que en los shorts: los clips no pueden
+    # tapar que falten fotos. La tarjeta de cierre se aparta antes y se
+    # vuelve a pegar al final, que si no un clip podría desplazarla.
+    clips = await videos_stock_para_tema(tema.get("consulta") or titulo)
+    if clips:
+        cola = [fotos.pop()] if cierre else []
+        fotos = _colocar_clips(fotos, clips) + cola
+        log.info("🎞️  %d clip(s) de stock en el explicativo '%s'",
+                 len(clips), titulo[:50])
     video = os.path.join(tmp, "video.mp4")
     if not await youtube_subir.armar_video(audio_total, fotos, titulo, video,
                                            horizontal=True, con_musica=True):
