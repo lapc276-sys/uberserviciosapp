@@ -6699,6 +6699,45 @@ async def animaciones_para_short(short):
     return clips
 
 
+_EXT_VIDEO_LOCAL = (".mp4", ".mov", ".webm", ".m4v", ".mpg", ".mpeg",
+                    ".avi", ".ogv", ".ogg")
+
+
+def _anclar_clips_biblioteca(fotos, guion):
+    """Saca de `fotos` los CLIPS de la biblioteca y los devuelve con la
+    posición del guion donde toca enseñarlos.
+
+    Devuelve (fotos_sin_esos_clips, [(ruta, posicion 0..1 o None)]).
+
+    Las palabras del nombre de archivo son las etiquetas —así funciona ya
+    toda la biblioteca—, así que `brake_disc_glowing_braking.mp4` se ancla
+    a donde el guion diga "brake". Es el mismo mecanismo que ya usan las
+    animaciones propias, aplicado al material que sube el dueño a mano:
+    un clip de frenos generado por él sale cuando la voz habla de frenos,
+    no donde caiga.
+    """
+    guion = (guion or "").lower()
+    restantes, clips = [], []
+    for f in fotos:
+        r = str(f)
+        if (r.lower().endswith(_EXT_VIDEO_LOCAL)
+                and os.path.dirname(r) == BIBLIOTECA_DIR):
+            pos = None
+            if len(guion) >= 40:
+                nombre = os.path.splitext(os.path.basename(r))[0].lower()
+                for w in _PALABRAS_RE.findall(nombre.replace("_", " ")):
+                    if len(w) < 4:
+                        continue
+                    m = re.search(rf"\b{re.escape(w)}\w*", guion)
+                    if m and (pos is None or m.start() < pos):
+                        pos = m.start()
+                pos = None if pos is None else pos / len(guion)
+            clips.append((r, pos))
+        else:
+            restantes.append(f)
+    return restantes, clips
+
+
 def _colocar_clips(fotos, clips):
     """Reparte los clips entre las fotos SEGÚN EL GUION.
 
@@ -7400,6 +7439,18 @@ async def bucle_youtube():
                 # como fotos, un short sin material real pasaría el filtro
                 # gracias a los clips y saldría publicado sin una sola foto.
                 if not short.get("sin_overlay"):
+                    # Los clips que el dueño subió a biblioteca/ se reubican
+                    # según lo que diga el guion, igual que las animaciones.
+                    fotos, propios = _anclar_clips_biblioteca(
+                        fotos, short.get("guion", ""))
+                    if propios:
+                        fotos = _colocar_clips(fotos, propios)
+                        log.info("🎬 %d clip(s) de la biblioteca en el short "
+                                 "%s: %s", len(propios), sid,
+                                 ", ".join(
+                                     f"{os.path.basename(r)}"
+                                     f"{'' if p is None else f'@{p:.0%}'}"
+                                     for r, p in propios))
                     clips = await animaciones_para_short(short)
                     if clips:
                         fotos = _colocar_clips(fotos, clips)
@@ -8762,12 +8813,17 @@ async def _producir_tema(tema):
     # mínimo de material, igual que en los shorts: los clips no pueden
     # tapar que falten fotos. La tarjeta de cierre se aparta antes y se
     # vuelve a pegar al final, que si no un clip podría desplazarla.
+    cola = [fotos.pop()] if cierre else []
+    # Los clips que el dueño subió a biblioteca/ se colocan según lo que
+    # diga la narración; el resto del metraje se reparte uniforme.
+    guion_completo = " ".join(textos_ok)
+    fotos, propios = _anclar_clips_biblioteca(fotos, guion_completo)
     clips = await videos_stock_para_tema(tema.get("consulta") or titulo)
-    if clips:
-        cola = [fotos.pop()] if cierre else []
-        fotos = _colocar_clips(fotos, clips) + cola
-        log.info("🎞️  %d clip(s) de stock en el explicativo '%s'",
-                 len(clips), titulo[:50])
+    if propios or clips:
+        fotos = _colocar_clips(fotos, propios + [(c, None) for c in clips])
+        log.info("🎞️  %d clip(s) propio(s) + %d de stock en el explicativo "
+                 "'%s'", len(propios), len(clips), titulo[:50])
+    fotos = fotos + cola
     video = os.path.join(tmp, "video.mp4")
     if not await youtube_subir.armar_video(audio_total, fotos, titulo, video,
                                            horizontal=True, con_musica=True):
