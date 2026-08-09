@@ -790,6 +790,17 @@ def concat_audios(rutas, salida):
             os.remove(lista)
 
 
+# Rótulo del título superpuesto sobre el video. APAGADO por decisión del
+# dueño: el texto grande se quedaba fijo durante los 40 segundos enteros del
+# short y tapaba las imágenes, que son lo que hay que ver. El título sigue
+# estando donde importa —el de YouTube, la miniatura y la descripción—, que
+# es lo que decide si alguien entra.
+#
+# Se puede recuperar con el Secret TITULO_EN_VIDEO=on.
+TITULO_EN_VIDEO = os.environ.get("TITULO_EN_VIDEO", "off").strip().lower() in (
+    "on", "1", "yes", "si", "sí", "true")
+
+
 async def armar_video(audio_path, fotos_urls, titulo, salida_mp4,
                       horizontal=False, con_musica=False, cta_texto=None,
                       chip=None):
@@ -797,6 +808,8 @@ async def armar_video(audio_path, fotos_urls, titulo, salida_mp4,
     una píldora de suscripción en los últimos segundos (segunda pasada
     aislada: si falla, el video queda igual). `chip` = nombre de serie que se
     pinta arriba (crea sensación de serie). Devuelve True si se creó."""
+    if not TITULO_EN_VIDEO:
+        titulo = ""      # el chip de serie sí se mantiene
     ok = await _armar_video_base(audio_path, fotos_urls, titulo, salida_mp4,
                                  horizontal=horizontal, con_musica=con_musica,
                                  chip=chip)
