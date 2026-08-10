@@ -7451,8 +7451,16 @@ def _micro_apuntar(mid, video_id=None):
 
 
 async def _clip_para_micro(entrada):
-    """Clip de vídeo para este micro: primero lo que el dueño aprobó a mano
-    (biblioteca), y si no hay, metraje de stock. None si no hay nada."""
+    """Clip de vídeo para este micro. SOLO de la biblioteca. None si falta.
+
+    Nada de metraje de stock aquí, aunque en los shorts normales sí valga.
+    La diferencia es el peso: en un short narrado un clip regular es uno de
+    ocho elementos y pasa desapercibido, pero en un micro-short el clip ES
+    el vídeo entero y sostiene un dato concreto. Buscando "braking brake
+    disc" en un banco de imágenes salió un coche en el taller, sin rueda,
+    con la tarjeta de "5 G" encima. El dato correcto sobre la imagen
+    equivocada es peor que no publicar: se espera al clip bueno.
+    """
     etiquetas = entrada["etiquetas"]
     # fotos_biblioteca ya devuelve ordenado por cuántas etiquetas coinciden,
     # así que se coge el PRIMERO. Antes se elegía al azar entre los seis
@@ -7461,14 +7469,11 @@ async def _clip_para_micro(entrada):
     # dos palabras pero no enseña lo que dice la tarjeta.
     propios = [r for r in fotos_biblioteca(etiquetas, 6)
                if str(r).lower().endswith(_EXT_VIDEO_LOCAL)]
-    # ...y se exige un MÍNIMO de coincidencia. En un micro-short el clip es
-    # el vídeo entero, así que una coincidencia floja canta: un clip de
-    # lluvia ilustrando el dato del slick en seco comparte la palabra
-    # "tyre" y nada más. Con menos de dos palabras, mejor metraje de stock.
+    # ...y se exige un MÍNIMO de coincidencia. Un clip de lluvia ilustrando
+    # el dato del slick en seco comparte la palabra "tyre" y nada más.
     if propios and coincidencias_biblioteca(propios[0], etiquetas) >= 2:
         return propios[0]
-    clips = await videos_stock_para_tema(etiquetas, n=1)
-    return clips[0] if clips else None
+    return None
 
 
 async def bucle_microshorts():
@@ -7500,9 +7505,9 @@ async def _producir_microshort(entrada):
     """Monta y sube UN micro-short. No lanza."""
     clip = await _clip_para_micro(entrada)
     if not clip:
-        log.info("⚡ Micro-short %s sin clip disponible — se pospone. "
-                 "Sube uno a biblioteca/ con las palabras: %s",
-                 entrada["id"], entrada["etiquetas"])
+        log.info("⚡ Micro-short %s NO se publica: no hay clip aprobado. "
+                 "Sube uno a biblioteca/ cuyo nombre contenga al menos dos "
+                 "de estas palabras: %s", entrada["id"], entrada["etiquetas"])
         return
     tmp = os.path.join("shorts", f"micro_{entrada['id']}")
     os.makedirs(tmp, exist_ok=True)
