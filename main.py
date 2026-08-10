@@ -3726,7 +3726,16 @@ _FOTO_MALA = ("simulator", "sim rig", "office", "computer", "keyboard",
               "water mill", "windmill", "wind turbine", "wind farm",
               "power plant", "powerplant", "power station", "dam",
               "solar panel", "nuclear", "refinery", "steam engine",
-              "locomotive", "tractor", "windpower", "hydraulic wheel")
+              "locomotive", "tractor", "windpower", "hydraulic wheel",
+              # OTROS VEHÍCULOS. Un episodio de "suspension geometry" o de
+              # "ride height" describe igual de bien una moto de motocross,
+              # y eso fue lo que se coló en un vídeo de F1. Una moto en un
+              # canal de Fórmula 1 se nota tanto como una oficina.
+              "motocross", "motorcycle", "motorbike", "dirt bike",
+              "mountain bike", "bicycle", "cyclist", "scooter", "quad bike",
+              "atv", "snowmobile", "skateboard", "monster truck",
+              "forklift", "excavator", "bulldozer", "airplane", "aircraft",
+              "boat", "yacht", "drone")
 
 
 def _normalizar_url(texto):
@@ -4449,6 +4458,27 @@ async def videos_wikimedia(query, n=2):
     return salida
 
 
+_ANCLAS_MOTOR = ("formula", "f1", "grand prix", "racing", "race",
+                 "motorsport", "circuit", "pit lane")
+
+
+def _anclar_consulta(consulta):
+    """Añade "formula 1 racing" a la consulta si no lleva ya algo de motor.
+
+    Un episodio sobre "suspension geometry and ride height" es de F1, pero
+    esas palabras solas describen igual de bien una moto de motocross — y
+    eso es literalmente lo que devolvió el banco de imágenes. El ancla
+    mantiene la búsqueda dentro del deporte.
+    """
+    c = (consulta or "").strip()
+    if not c:
+        return c
+    bajo = c.lower()
+    if any(a in bajo for a in _ANCLAS_MOTOR):
+        return c
+    return f"formula 1 racing {c}"
+
+
 async def videos_stock_para_tema(consulta, n=4):
     """Clips de stock para un video LARGO (16:9). Rutas a MP4, o [].
 
@@ -4461,7 +4491,7 @@ async def videos_stock_para_tema(consulta, n=4):
     if not (VIDEO_STOCK_ON and n > 0):
         return []
     clips = []
-    consultas = [c for c in [consulta] if c]
+    consultas = [c for c in [_anclar_consulta(consulta)] if c]
     consultas += random.sample(_CONSULTAS_VIDEO, k=4)
     for q in consultas:
         faltan = n - len(clips)
