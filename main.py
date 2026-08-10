@@ -4557,6 +4557,20 @@ _EXT_IMG = (".jpg", ".jpeg", ".png", ".webp",
             ".ogv", ".ogg")
 
 
+def coincidencias_biblioteca(ruta, consulta):
+    """Cuántas palabras de `consulta` aparecen en el nombre del archivo.
+
+    Sirve para exigir un mínimo de parecido donde una coincidencia floja se
+    notaría: el mismo criterio de palabra entera que usa fotos_biblioteca,
+    pero devolviendo el número en vez de ordenar.
+    """
+    texto = os.path.basename(str(ruta)).lower()
+    texto = texto.replace("-", " ").replace("_", " ")
+    palabras = {w for w in (consulta or "").lower().split() if len(w) > 2}
+    return sum(1 for w in palabras
+               if re.search(rf"\b{re.escape(w)}", texto))
+
+
 def fotos_biblioteca(consulta, n=6):
     """Rutas locales de la biblioteca curada que mejor encajan con la
     consulta (por etiquetas del manifiesto o por nombre de archivo),
@@ -7447,7 +7461,11 @@ async def _clip_para_micro(entrada):
     # dos palabras pero no enseña lo que dice la tarjeta.
     propios = [r for r in fotos_biblioteca(etiquetas, 6)
                if str(r).lower().endswith(_EXT_VIDEO_LOCAL)]
-    if propios:
+    # ...y se exige un MÍNIMO de coincidencia. En un micro-short el clip es
+    # el vídeo entero, así que una coincidencia floja canta: un clip de
+    # lluvia ilustrando el dato del slick en seco comparte la palabra
+    # "tyre" y nada más. Con menos de dos palabras, mejor metraje de stock.
+    if propios and coincidencias_biblioteca(propios[0], etiquetas) >= 2:
         return propios[0]
     clips = await videos_stock_para_tema(etiquetas, n=1)
     return clips[0] if clips else None
