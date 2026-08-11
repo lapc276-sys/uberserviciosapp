@@ -19,6 +19,21 @@ export const DEFAULT_FRAME_COUNT = 8;
 const MAX_EDGE_PX = 768;
 const JPEG_QUALITY = 0.72;
 
+/**
+ * The client must never produce a frame the API will refuse.
+ *
+ * Encoding at a fixed quality does not bound the output: a cluttered, heavily
+ * textured room — exactly the kind we most want photographed — compresses far
+ * worse than an empty one, and the same settings that yield 11KB for a plain
+ * wall can yield several hundred for a full shelf. Since the server enforces
+ * a per-frame and a whole-request ceiling, the encoder has to target a budget
+ * rather than a quality, or a customer's dirtiest property becomes the one
+ * that fails to upload.
+ */
+const FRAME_BUDGET_CHARS = 380_000;
+const TOTAL_BUDGET_CHARS = 3_800_000;
+const QUALITY_LADDER = [JPEG_QUALITY, 0.6, 0.5, 0.4, 0.3];
+
 /** A seek that hasn't landed in this long is not going to. */
 const SEEK_TIMEOUT_MS = 8000;
 /** Metadata should arrive quickly; a long stall means the file is unreadable. */
@@ -105,19 +120,44 @@ async function resolveDuration(video: HTMLVideoElement): Promise<number> {
   return 0;
 }
 
-/** Draws one frame at `time` seconds and returns it as a JPEG data URL. */
-async function captureAt(video: HTMLVideoElement, canvas: HTMLCanvasElement, time: number): Promise<string> {
+/**
+ * Draws one frame at `time` seconds and returns it as a JPEG data URL sized to
+ * fit `budget`, dropping quality and then resolution until it does.
+ */
+async function captureAt(
+  video: HTMLVideoElement,
+  canvas: HTMLCanvasElement,
+  time: number,
+  budget: number,
+): Promise<string> {
   video.currentTime = time;
   await once(video, ['seeked'], SEEK_TIMEOUT_MS);
 
-  const scale = Math.min(1, MAX_EDGE_PX / Math.max(video.videoWidth, video.videoHeight));
-  canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
-  canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
-
   const ctx = canvas.getContext('2d');
   if (!ctx) throw new Error('Canvas unavailable');
-  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-  return canvas.toDataURL('image/jpeg', JPEG_QUALITY);
+
+  let edge = MAX_EDGE_PX;
+  let best = '';
+
+  // Two resolution steps is enough: quality alone handles almost everything,
+  // and below ~430px the model starts losing the detail it is judging.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const scale = Math.min(1, edge / Math.max(video.videoWidth, video.videoHeight));
+    canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
+    canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    for (const quality of QUALITY_LADDER) {
+      best = canvas.toDataURL('image/jpeg', quality);
+      if (best.length <= budget) return best;
+    }
+    edge = Math.round(edge * 0.75);
+  }
+
+  // Still over after every step — return the smallest we managed. The server
+  // may reject it, but a too-large frame is a better failure than a silent
+  // one, and this is already an extreme outlier.
+  return best;
 }
 
 export async function extractFrames(file: File, options: ExtractOptions = {}): Promise<string[]> {
@@ -160,6 +200,10 @@ export async function extractFrames(file: File, options: ExtractOptions = {}): P
     const frames: string[] = [];
     let failures = 0;
 
+    // Share the request budget across however many frames were asked for, so
+    // twelve frames can't individually pass and collectively fail.
+    const budget = Math.min(FRAME_BUDGET_CHARS, Math.floor(TOTAL_BUDGET_CHARS / Math.max(1, frameCount)));
+
     // Sample evenly, skipping the very first and last moments where the camera
     // is usually still moving or pointed at the floor.
     for (let i = 0; i < frameCount; i++) {
@@ -167,7 +211,7 @@ export async function extractFrames(file: File, options: ExtractOptions = {}): P
       const t = duration * ((i + 0.5) / frameCount);
 
       try {
-        frames.push(await captureAt(video, canvas, Math.min(t, Math.max(0, duration - 0.05))));
+        frames.push(await captureAt(video, canvas, Math.min(t, Math.max(0, duration - 0.05)), budget));
       } catch (err) {
         if (err instanceof UnsupportedVideoError) throw err;
         // One bad seek shouldn't throw away a walkthrough that is otherwise

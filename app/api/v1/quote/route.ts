@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { getAnalyzer } from '@/lib/vision/analyzer';
 import { buildAnalysis } from '@/lib/vision/estimate';
 import { priceFromAnalysis } from '@/lib/vision/pricing';
-import { framesAreSafe, FRAME_ERROR } from '@/lib/vision/input';
+import { validateFrames } from '@/lib/vision/input';
 import { services } from '@/lib/config/services';
 import { apiKeyFromRequest, checkQuota, getTenantByApiKey, recordQuote } from '@/lib/tenants/store';
 
@@ -73,8 +73,9 @@ export async function POST(req: Request) {
   }
 
   const { frames, serviceSlug, reference } = parsed.data;
-  if (!framesAreSafe(frames)) {
-    return NextResponse.json({ error: 'invalid_frames', message: FRAME_ERROR }, { status: 422 });
+  const frameError = validateFrames(frames);
+  if (frameError) {
+    return NextResponse.json({ error: 'invalid_frames', message: frameError }, { status: 422 });
   }
 
   const analyzer = getAnalyzer();

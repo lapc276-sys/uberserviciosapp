@@ -45,12 +45,22 @@ key in browser JavaScript is a published key. Call it from your backend.
 
 | Field | Required | Notes |
 |---|---|---|
-| `frames` | yes | 1–20 frames. Inline `data:` JPEG/PNG/WebP, or `https://` URLs. 1.2 MB per frame max. |
+| `frames` | yes | 1–20 frames. Inline `data:` JPEG/PNG/WebP, or public `https://` URLs. **400 KB per frame, 4 MB per request.** |
 | `serviceSlug` | yes | See the list below. |
 | `reference` | no | Your own job ID, echoed back so you can reconcile. |
 
 Sample 6–12 frames spread across the walkthrough. More frames from the same
 room does not improve the estimate; coverage of *different* rooms does.
+
+**Size the frames before sending.** Downscale to 768px on the long edge and
+encode as JPEG at ~0.7 quality — that lands around 60–120 KB each, well inside
+both limits, and the analysis is no worse for it. Full-resolution phone frames
+will blow the 4 MB request budget at three or four images.
+
+**On https frame URLs:** they must point at a public hostname on port 443.
+Raw IP addresses, private and internal hosts, non-standard ports and embedded
+credentials are rejected — a frame URL is fetched by our analysis backend, and
+we will not let a caller aim that at an address only they can see.
 
 **Service slugs:** `house-cleaning`, `apartment-cleaning`, `deep-cleaning`,
 `move-in-cleaning`, `move-out-cleaning`, `airbnb-cleaning`, `office-cleaning`,
