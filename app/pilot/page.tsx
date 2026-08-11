@@ -47,13 +47,15 @@ export default async function PilotPage() {
       <div className="mx-auto max-w-lg px-4 py-6">
         <PilotCapture capturedBy={capturedBy} />
 
-        <p className="mt-8 text-center text-xs text-slate-400">
-          First time on this phone?{' '}
-          <Link href="/pilot/check" className="font-medium underline">
-            Run the device check
-          </Link>{' '}
-          before your first job.
-        </p>
+        {/* Sized as a real tap target: this gets pressed with gloves on. */}
+        <div className="mt-8 text-center">
+          <Link
+            href="/pilot/check"
+            className="inline-flex min-h-[44px] items-center justify-center rounded-xl px-4 text-sm font-medium text-slate-500 underline underline-offset-4 dark:text-slate-400"
+          >
+            First time on this phone? Run the device check
+          </Link>
+        </div>
       </div>
     </main>
   );

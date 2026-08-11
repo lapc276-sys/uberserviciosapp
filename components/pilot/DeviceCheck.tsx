@@ -57,20 +57,27 @@ function probe(): Row[] {
   const h264 = video.canPlayType('video/mp4; codecs="avc1.42E01E"');
   const hevc = video.canPlayType('video/mp4; codecs="hvc1"') || video.canPlayType('video/mp4; codecs="hev1"');
 
+  // `canPlayType` is a hint, never a verdict. It returns "", "maybe" or
+  // "probably", and browsers that decode a format perfectly well still answer
+  // "" for it. Reporting a bare "" as "this phone cannot run the pilot" would
+  // stop someone whose phone works fine, so these stay advisory and step 2
+  // below is what actually decides.
   rows.push({
     label: 'H.264 video (standard)',
-    status: h264 ? 'pass' : 'fail',
-    detail: h264 ? 'Can decode — this is the format we want' : 'Cannot decode. This phone cannot run the pilot.',
+    status: h264 ? 'pass' : 'warn',
+    detail: h264
+      ? 'Reports support — this is the format we want'
+      : 'This browser reports no H.264 support. That is often wrong, so run the video test below before believing it.',
   });
 
   rows.push({
     label: 'HEVC / H.265 video',
     status: hevc ? 'pass' : 'warn',
     detail: hevc
-      ? 'Can decode'
+      ? 'Reports support'
       : isIOS
-        ? 'Cannot decode. Set Settings → Camera → Formats → "Most Compatible" before recording.'
-        : 'Cannot decode. If your camera records HEVC, turn that off in the Camera app settings.',
+        ? 'Not reported. Set Settings → Camera → Formats → "Most Compatible" before recording.'
+        : 'Not reported. If your camera records HEVC, turn that off in the Camera app settings.',
   });
 
   const hasSpeech =
@@ -137,7 +144,10 @@ export function DeviceCheck() {
   return (
     <div className="space-y-6">
       <section className="rounded-2xl border bg-white p-5 dark:bg-white/[0.03]">
-        <h2 className="font-semibold">1. What this phone can do</h2>
+        <h2 className="font-semibold">1. What this phone reports</h2>
+        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+          What the browser claims it can do. Treat it as a hint — step&nbsp;2 is the one that decides.
+        </p>
         {rows === null ? (
           <button
             type="button"
@@ -165,7 +175,7 @@ export function DeviceCheck() {
         <h2 className="font-semibold">2. The real test</h2>
         <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
           Record about 10 seconds of any room and pick it here. This runs the exact same code the job will,
-          so if it passes here it will work on a real property.
+          so if it passes here it will work on a real property — <strong>even if step 1 showed warnings</strong>.
         </p>
 
         <label className="mt-4 flex cursor-pointer items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 py-6 text-sm font-medium">
