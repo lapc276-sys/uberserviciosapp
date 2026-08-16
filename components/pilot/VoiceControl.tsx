@@ -37,6 +37,8 @@ function getRecognition(): SpeechRecognitionLike | null {
 const EXAMPLES = [
   { say: '“grasa ochenta”', does: 'sets grease to 80' },
   { say: '“cocina moho 30”', does: 'sets mold on the kitchen' },
+  { say: '“doce por diez”', does: 'room size in feet' },
+  { say: '“cinco pasos por cuatro”', does: 'room size in paces' },
   { say: '“todo limpio”', does: 'zeroes the whole room' },
   { say: '“siguiente”', does: 'next room' },
   { say: '“borrar”', does: 'removes the room' },

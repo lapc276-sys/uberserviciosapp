@@ -115,6 +115,7 @@ export async function saveTrainingSample(input: TrainingSampleInput): Promise<st
       hoursWorkedToday: input.hoursWorkedToday,
       crewSize: input.crewSize ?? 1,
       startHour: input.startHour,
+      totalAreaSqft: totalArea(input.corrected) || null,
       afterAnalysis: input.afterAnalysis as unknown as object | undefined,
       qualityScore: input.qualityScore,
       notes: input.notes,
@@ -172,6 +173,124 @@ export function fatigueBuckets(records: TrainingSampleRecord[]): FatigueBucket[]
     .filter((b) => b.samples > 0);
 }
 
+export interface AreaAnalysis {
+  /** Samples that recorded a measured area. */
+  samples: number;
+  /** Below this, the numbers below are noise and are labelled as such. */
+  sufficient: boolean;
+  totalSqftMean: number;
+  /** Minutes of labor per square foot — the ISSA-style production rate. */
+  minutesPerSqft: number;
+  /**
+   * How much that rate varies between jobs, as a percentage of its own mean.
+   * Low means area alone predicts time well; high means condition dominates.
+   */
+  minutesPerSqftVariationPct: number;
+  /** Correlation of measured area with actual minutes, -1 to 1. */
+  areaVsActualR: number;
+  /** Correlation of our soil-driven prediction with actual minutes, -1 to 1. */
+  predictedVsActualR: number;
+  /** Plain-language reading of the two correlations above. */
+  verdict: string;
+}
+
+/** Pearson correlation. Returns 0 when undefined (constant input, n < 2). */
+function correlation(xs: number[], ys: number[]): number {
+  const n = Math.min(xs.length, ys.length);
+  if (n < 2) return 0;
+  const mx = xs.reduce((a, b) => a + b, 0) / n;
+  const my = ys.reduce((a, b) => a + b, 0) / n;
+  let num = 0;
+  let dx = 0;
+  let dy = 0;
+  for (let i = 0; i < n; i++) {
+    const a = xs[i] - mx;
+    const b = ys[i] - my;
+    num += a * b;
+    dx += a * a;
+    dy += b * b;
+  }
+  const den = Math.sqrt(dx * dy);
+  return den === 0 ? 0 : Number((num / den).toFixed(2));
+}
+
+function totalArea(analysis: PropertyAnalysis): number {
+  return analysis.rooms.reduce((sum, r) => sum + (r.areaSqft ?? 0), 0);
+}
+
+/**
+ * Tests, against real jobs, whether floor area predicts cleaning time better
+ * than our condition-based model does.
+ *
+ * This exists because the answer decides what to build next, and it is not
+ * knowable from an armchair. The commercial cleaning industry bids by square
+ * feet per hour, which is evidence area matters; our model bets on soil level
+ * instead. One of those is more right for residential deep cleans, and 30 jobs
+ * will say which — far cheaper than building 3D measurement on a hunch and
+ * discovering afterwards that it moved nothing.
+ *
+ * `sufficient` is not decoration. A correlation over eight samples will look
+ * decisive and mean nothing, and acting on it is the expensive mistake this
+ * whole function is meant to prevent.
+ */
+const MIN_AREA_SAMPLES = 20;
+
+export function areaAnalysis(
+  rows: { corrected: PropertyAnalysis; record: TrainingSampleRecord }[],
+): AreaAnalysis {
+  const usable = rows.filter((r) => totalArea(r.corrected) > 0 && r.record.actualMinutes > 0);
+  const empty: AreaAnalysis = {
+    samples: usable.length,
+    sufficient: false,
+    totalSqftMean: 0,
+    minutesPerSqft: 0,
+    minutesPerSqftVariationPct: 0,
+    areaVsActualR: 0,
+    predictedVsActualR: 0,
+    verdict: `No measured areas yet. Record room sizes on ${MIN_AREA_SAMPLES} jobs and this will answer whether area or condition drives your times.`,
+  };
+  if (usable.length === 0) return empty;
+
+  const areas = usable.map((r) => totalArea(r.corrected));
+  const actuals = usable.map((r) => r.record.actualMinutes);
+  const predicted = usable.map((r) => r.record.predictedMinutes);
+  const rates = usable.map((r, i) => actuals[i] / areas[i]);
+
+  const meanArea = areas.reduce((a, b) => a + b, 0) / areas.length;
+  const meanRate = rates.reduce((a, b) => a + b, 0) / rates.length;
+  const sd = Math.sqrt(rates.reduce((s, r) => s + (r - meanRate) ** 2, 0) / rates.length);
+  const variation = meanRate === 0 ? 0 : (sd / meanRate) * 100;
+
+  const areaR = correlation(areas, actuals);
+  const predR = correlation(predicted, actuals);
+  const sufficient = usable.length >= MIN_AREA_SAMPLES;
+
+  let verdict: string;
+  if (!sufficient) {
+    verdict = `Only ${usable.length} of ${MIN_AREA_SAMPLES} jobs measured. These numbers are not yet meaningful — do not act on them.`;
+  } else if (areaR > predR + 0.15) {
+    verdict =
+      'Area predicts your times better than the condition model does. Worth investing in measuring it properly, and worth adding an area term to the estimator.';
+  } else if (predR > areaR + 0.15) {
+    verdict =
+      'The condition model beats raw area. Automatic measurement would not pay for itself — keep improving the soil scoring instead.';
+  } else {
+    verdict =
+      'Area and condition predict about equally well. The likely win is combining them: an area-based base time scaled by a condition factor.';
+  }
+
+  return {
+    samples: usable.length,
+    sufficient,
+    totalSqftMean: Math.round(meanArea),
+    minutesPerSqft: Number(meanRate.toFixed(3)),
+    minutesPerSqftVariationPct: Math.round(variation),
+    areaVsActualR: areaR,
+    predictedVsActualR: predR,
+    verdict,
+  };
+}
+
 export interface TrainingReport {
   samples: number;
   /** Signed minutes error: positive means the model over-estimates time. */
@@ -185,6 +304,8 @@ export interface TrainingReport {
   /** Mean quality score across samples that captured an after-walkthrough. */
   avgQualityScore: number;
   qualitySamples: number;
+  /** Does floor area predict time better than our condition model? */
+  area: AreaAnalysis;
   recent: TrainingSampleRecord[];
   source: 'db' | 'memory';
 }
@@ -264,6 +385,7 @@ export async function getTrainingReport(): Promise<TrainingReport> {
       ? Math.round(withQuality.reduce((s, r) => s + (r.record.qualityScore ?? 0), 0) / withQuality.length)
       : 0,
     qualitySamples: withQuality.length,
+    area: areaAnalysis(rows),
     recent: rows.slice(0, 25).map((r) => r.record),
     source: isDbConfigured ? 'db' : 'memory',
   };

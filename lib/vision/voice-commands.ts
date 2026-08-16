@@ -13,6 +13,7 @@ import { SOIL_DIMENSIONS, ROOM_TYPES, type SoilDimension, type RoomType } from '
 
 export type VoiceCommand =
   | { kind: 'set'; dimension: SoilDimension; value: number; roomType?: RoomType }
+  | { kind: 'measure'; sqft: number; roomType?: RoomType }
   | { kind: 'clearRoom'; roomType?: RoomType }
   | { kind: 'next' }
   | { kind: 'prev' }
@@ -177,6 +178,36 @@ function matchesAny(text: string, words: string[]): boolean {
  *   "todo limpio"              → zero every dimension on the current room
  *   "siguiente"                → move to the next room
  */
+/** Tokens that join two dimensions: "doce POR diez", "twelve BY ten". */
+const BY_WORDS = ['por', 'by', 'x'];
+/** Saying the unit is what switches to paces; bare numbers are read as feet. */
+const PACE_WORDS = ['paso', 'pasos', 'pace', 'paces', 'step', 'steps'];
+
+/**
+ * Reads "doce por diez" into square feet.
+ *
+ * Feet is the default for a bare pair because that is how people describe
+ * rooms out loud ("it's twelve by ten"). Paces have to be said explicitly:
+ * silently guessing paces would inflate every room by 6x, and a wrong unit is
+ * far worse here than a missing measurement, which the person can simply
+ * repeat.
+ */
+export function parseDimensions(text: string): number | null {
+  const words = normalize(text).split(' ');
+  const at = words.findIndex((w) => BY_WORDS.includes(w));
+  if (at <= 0 || at === words.length - 1) return null;
+
+  const a = parseNumber(words.slice(0, at).join(' '));
+  const b = parseNumber(words.slice(at + 1).join(' '));
+  if (a === null || b === null || a <= 0 || b <= 0) return null;
+
+  const factor = words.some((w) => PACE_WORDS.includes(w)) ? 2.5 : 1;
+  const sqft = Math.round(a * factor * b * factor);
+
+  // A room outside this range is a misheard number, not a room.
+  return sqft >= 4 && sqft <= 5000 ? sqft : null;
+}
+
 export function parseVoiceCommand(raw: string): VoiceCommand {
   const text = normalize(raw);
   if (!text) return { kind: 'unknown', heard: raw };
@@ -189,6 +220,13 @@ export function parseVoiceCommand(raw: string): VoiceCommand {
 
   const dimension = findDimension(text);
   const roomType = findRoom(text) ?? undefined;
+
+  // A measurement is two numbers joined by "por"/"by", and is checked before
+  // the soil branch so "doce por diez" is never read as a severity score.
+  const measured = parseDimensions(text);
+  if (measured !== null && !dimension) {
+    return { kind: 'measure', sqft: measured, roomType };
+  }
 
   // "todo limpio" only counts when no specific dimension was named, so
   // "manchas limpio" doesn't wipe the whole room.
@@ -223,6 +261,8 @@ export function describeCommand(command: VoiceCommand, roomLabel?: string): stri
       return 'Room removed';
     case 'done':
       return 'Done correcting';
+    case 'measure':
+      return `${command.sqft} sq ft${roomLabel ? ` · ${roomLabel}` : ''}`;
     default:
       return `Didn’t catch that: “${command.heard}”`;
   }

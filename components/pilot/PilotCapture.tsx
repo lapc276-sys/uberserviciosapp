@@ -12,6 +12,8 @@ import {
   type PropertyAnalysis, type RoomAnalysis, type RoomType,
 } from '@/lib/vision/types';
 import { VoiceControl } from '@/components/pilot/VoiceControl';
+import { RoomSize } from '@/components/pilot/RoomSize';
+import { appaLevelFor } from '@/lib/vision/appa';
 import type { VoiceCommand } from '@/lib/vision/voice-commands';
 import { services } from '@/lib/config/services';
 import { cities } from '@/lib/config/cities';
@@ -57,6 +59,8 @@ export function PilotCapture({ capturedBy }: { capturedBy: string }) {
   const [predicted, setPredicted] = useState<PropertyAnalysis | null>(null);
   const [rooms, setRooms] = useState<RoomAnalysis[]>([]);
   const [activeRoom, setActiveRoom] = useState(0);
+  /** Which slider was last moved, so only its rubric wording is shown. */
+  const [touched, setTouched] = useState<{ room: number; dim: string } | null>(null);
   const [afterAnalysis, setAfterAnalysis] = useState<PropertyAnalysis | null>(null);
   const [quality, setQuality] = useState<{ score: number; verdict: string; summary: string } | null>(null);
   const [actualMinutes, setActualMinutes] = useState('');
@@ -107,9 +111,15 @@ export function PilotCapture({ capturedBy }: { capturedBy: string }) {
   }
 
   function updateSoil(roomIndex: number, dim: string, value: number) {
+    setTouched({ room: roomIndex, dim });
     setRooms((prev) =>
       prev.map((r, i) => (i === roomIndex ? { ...r, soil: { ...r.soil, [dim]: value } } : r)),
     );
+  }
+
+  /** Undefined clears the measurement, which is different from a zero area. */
+  function updateArea(roomIndex: number, sqft: number | undefined) {
+    setRooms((prev) => prev.map((r, i) => (i === roomIndex ? { ...r, areaSqft: sqft } : r)));
   }
 
   function updateRoomType(roomIndex: number, type: RoomType) {
@@ -156,6 +166,10 @@ export function PilotCapture({ capturedBy }: { capturedBy: string }) {
         return prev.map((r, i) =>
           i === index ? { ...r, soil: { ...r.soil, [command.dimension]: command.value } } : r,
         );
+      }
+      if (command.kind === 'measure') {
+        if (index !== activeRoom) setActiveRoom(index);
+        return prev.map((r, i) => (i === index ? { ...r, areaSqft: command.sqft } : r));
       }
       if (command.kind === 'clearRoom') {
         if (index !== activeRoom) setActiveRoom(index);
@@ -493,15 +507,25 @@ export function PilotCapture({ capturedBy }: { capturedBy: string }) {
                     </button>
                   </div>
 
+                  <RoomSize value={room.areaSqft} onChange={(sqft) => updateArea(i, sqft)} />
+
                   <div className="mt-4 space-y-3">
                     {SOIL_DIMENSIONS.map((dim) => {
                       const value = room.soil[dim] ?? 0;
                       const predictedValue = original?.soil[dim] ?? 0;
                       const changed = value !== predictedValue;
+                      const level = appaLevelFor(value);
                       return (
                         <div key={dim}>
                           <div className="flex items-center justify-between text-xs">
-                            <span className="capitalize text-slate-600 dark:text-slate-300">{dim}</span>
+                            <span className="capitalize text-slate-600 dark:text-slate-300">
+                              {dim}
+                              {value > 0 && (
+                                <span className="ml-1.5 rounded bg-slate-100 px-1 py-0.5 text-[10px] font-medium text-slate-500 dark:bg-white/10 dark:text-slate-400">
+                                  APPA {level.level}
+                                </span>
+                              )}
+                            </span>
                             <span className={changed ? 'font-semibold text-brand-600' : 'text-slate-400'}>
                               {value}
                               {changed && <span className="ml-1 text-slate-400">(AI: {predictedValue})</span>}
@@ -516,6 +540,16 @@ export function PilotCapture({ capturedBy }: { capturedBy: string }) {
                             onChange={(e) => updateSoil(i, dim, Number(e.target.value))}
                             className="mt-1 w-full accent-brand-600"
                           />
+                          {/* The number alone means nothing, so the rubric has to
+                              be reachable — but printing it under all 28 sliders
+                              turned the page into a 20,000px scroll. It shows for
+                              the slider being moved, which is the only one whose
+                              wording the rater is actually weighing. */}
+                          {touched?.room === i && touched.dim === dim && value > 0 && (
+                            <p className="mt-0.5 text-[11px] leading-snug text-slate-500 dark:text-slate-400">
+                              <span className="font-medium">{level.name}</span> — {level.observableEs}
+                            </p>
+                          )}
                         </div>
                       );
                     })}

@@ -8,6 +8,7 @@ import {
   type SoilScores,
   type VisionAnalyzer,
 } from './types';
+import { appaPromptRubric } from './appa';
 
 /**
  * Vision backends.
@@ -24,7 +25,11 @@ You receive still frames sampled from a walkthrough video of a home or business.
 
 Identify each DISTINCT physical room visible across the frames. Multiple frames often show the SAME room from different angles — do not double-count. Prefer under-reporting rooms over inventing them.
 
-For each room, rate soiling on a 0-100 scale where 0 is spotless and 100 is the worst you have ever seen:
+Rate soiling against this published industry rubric, not against your own sense of "dirty". A human inspector is scoring the same rooms with these exact words, and the two of you must be able to disagree about the room rather than about what the number means:
+
+${appaPromptRubric()}
+
+For each room, rate each dimension 0-100 using that rubric:
 - dust: visible dust, cobwebs, film on surfaces
 - grease: cooking grease, oily residue (mostly kitchens)
 - stains: set-in marks on floors, counters, walls, fixtures

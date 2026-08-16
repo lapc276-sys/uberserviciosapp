@@ -353,6 +353,13 @@ model TrainingSample {
   startHour        Int?
 
   /**
+   * Measured floor area, when someone paced it out. Denormalised out of the
+   * corrected JSON so "does area predict time" is a query rather than a scan
+   * that parses every sample.
+   */
+  totalAreaSqft Int?
+
+  /**
    * Post-service analysis, for quality scoring.
    */
   afterAnalysis Json?

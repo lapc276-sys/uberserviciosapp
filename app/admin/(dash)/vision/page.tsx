@@ -228,6 +228,55 @@ export default async function VisionAdminPage() {
           </div>
         )}
       </div>
+
+      {/* Area vs. condition — deliberately outside the samples gate: its
+          zero-state text is the instruction that gets the data collected. */}
+      <div className="mt-8 rounded-2xl border bg-white p-5 shadow-soft dark:bg-white/[0.03]">
+          <div>
+            <h3 className="text-sm font-semibold">Does size or dirt drive the time?</h3>
+            <p className="text-xs text-slate-400">
+              The commercial cleaning industry bids by square feet per hour. Our model bets on condition
+              instead. Whichever correlates better with your real times is the one worth investing in.
+            </p>
+
+            <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <MiniTile
+                label="Jobs measured"
+                value={String(training.area.samples)}
+                sub={training.area.sufficient ? 'enough to read' : 'need 20'}
+              />
+              <MiniTile
+                label="Area → time"
+                value={training.area.sufficient ? training.area.areaVsActualR.toFixed(2) : '—'}
+                sub="correlation"
+              />
+              <MiniTile
+                label="Our model → time"
+                value={training.area.sufficient ? training.area.predictedVsActualR.toFixed(2) : '—'}
+                sub="correlation"
+              />
+              <MiniTile
+                label="Min / sq ft"
+                value={training.area.minutesPerSqft ? training.area.minutesPerSqft.toFixed(3) : '—'}
+                sub={
+                  training.area.samples
+                    ? `±${training.area.minutesPerSqftVariationPct}% between jobs`
+                    : 'not measured yet'
+                }
+              />
+            </div>
+
+            <p
+              className={`mt-3 rounded-xl p-3 text-xs ${
+                training.area.sufficient
+                  ? 'bg-brand-50 text-brand-800 dark:bg-brand-950/30 dark:text-brand-300'
+                  : 'bg-slate-50 text-slate-500 dark:bg-white/5 dark:text-slate-400'
+              }`}
+            >
+              {training.area.verdict}
+            </p>
+          </div>
+      </div>
     </section>
   );
 }

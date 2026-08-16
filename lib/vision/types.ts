@@ -74,6 +74,14 @@ export interface RoomAnalysis {
   condition: ConditionLevel;
   /** Minutes of cleaning work, computed by the estimator (not the model). */
   estimatedMinutes: number;
+  /**
+   * Floor area in square feet, when someone measured it.
+   *
+   * Never inferred from the footage — monocular video has no scale reference,
+   * so a guessed area would be a confident-looking number with nothing behind
+   * it. Absent until a human enters it, which is the honest state.
+   */
+  areaSqft?: number;
   notes?: string;
 }
 
