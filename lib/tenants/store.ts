@@ -60,6 +60,7 @@ export function slugify(name: string): string {
 const memory = {
   tenants: [] as (Tenant & { keyHash: string })[],
   usage: new Map<string, TenantUsage>(),
+  leads: [] as TenantLeadRecord[],
 };
 
 function usageKey(tenantId: string, period: string): string {
@@ -185,6 +186,111 @@ function safeEqualHex(a: string, b: string): boolean {
   // storage would decode to a short buffer and make timingSafeEqual throw.
   if (a.length !== b.length) return false;
   return timingSafeEqual(Buffer.from(a), Buffer.from(b));
+}
+
+/**
+ * Resolves a tenant from the slug in a public URL.
+ *
+ * The hosted quoting page cannot carry an API key — anything shipped to a
+ * browser is published — so the slug is the only identifier available. It is
+ * therefore treated as public and non-secret: it authorises nothing, it only
+ * selects whose branding and rates to apply. Everything that must not be
+ * guessable stays behind the key.
+ */
+export async function getTenantBySlug(slug: string): Promise<Tenant | null> {
+  const clean = slug.trim().toLowerCase();
+  if (!clean) return null;
+
+  if (!isDbConfigured || !prisma) {
+    const found = memory.tenants.find((t) => t.slug === clean);
+    return found && found.active ? stripHash(found) : null;
+  }
+
+  const row = await prisma.tenant.findUnique({ where: { slug: clean } });
+  return row && row.active ? fromRow(row) : null;
+}
+
+export interface TenantLeadInput {
+  tenantId: string;
+  name: string;
+  email?: string;
+  phone?: string;
+  address?: string;
+  notes?: string;
+  serviceSlug: string;
+  quoteLow: number;
+  quoteHigh: number;
+  currency: string;
+  minutes: number;
+  condition?: string;
+  analysis?: unknown;
+}
+
+export interface TenantLeadRecord extends Omit<TenantLeadInput, 'analysis'> {
+  id: string;
+  status: string;
+  createdAt: string;
+}
+
+export async function createTenantLead(input: TenantLeadInput): Promise<string> {
+  const id = `lead_${Date.now().toString(36)}${randomBytes(3).toString('hex')}`;
+
+  if (!isDbConfigured || !prisma) {
+    memory.leads.unshift({ ...input, id, status: 'new', createdAt: new Date().toISOString() });
+    return id;
+  }
+
+  const row = await prisma.tenantLead.create({
+    data: {
+      tenantId: input.tenantId,
+      name: input.name,
+      email: input.email,
+      phone: input.phone,
+      address: input.address,
+      notes: input.notes,
+      serviceSlug: input.serviceSlug,
+      quoteLow: input.quoteLow,
+      quoteHigh: input.quoteHigh,
+      currency: input.currency,
+      minutes: input.minutes,
+      condition: input.condition,
+      analysis: (input.analysis ?? undefined) as object | undefined,
+    },
+  });
+  return row.id;
+}
+
+export async function listTenantLeads(tenantId: string, limit = 100): Promise<TenantLeadRecord[]> {
+  if (!isDbConfigured || !prisma) {
+    return memory.leads.filter((l) => l.tenantId === tenantId).slice(0, limit);
+  }
+  const rows = await prisma.tenantLead.findMany({
+    where: { tenantId },
+    orderBy: { createdAt: 'desc' },
+    take: limit,
+  });
+  return rows.map((r) => ({
+    id: r.id,
+    tenantId: r.tenantId,
+    name: r.name,
+    email: r.email ?? undefined,
+    phone: r.phone ?? undefined,
+    address: r.address ?? undefined,
+    notes: r.notes ?? undefined,
+    serviceSlug: r.serviceSlug,
+    quoteLow: r.quoteLow,
+    quoteHigh: r.quoteHigh,
+    currency: r.currency,
+    minutes: r.minutes,
+    condition: r.condition ?? undefined,
+    status: r.status,
+    createdAt: r.createdAt.toISOString(),
+  }));
+}
+
+export async function countTenantLeads(tenantId: string): Promise<number> {
+  if (!isDbConfigured || !prisma) return memory.leads.filter((l) => l.tenantId === tenantId).length;
+  return prisma.tenantLead.count({ where: { tenantId } });
 }
 
 export async function listTenants(): Promise<Tenant[]> {

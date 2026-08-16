@@ -18,6 +18,7 @@ interface TenantRow {
   sampleSize: number;
   used: number;
   quotedValue: number;
+  leads: number;
   createdAt: string;
 }
 
@@ -30,6 +31,36 @@ const PLAN_STYLES: Record<string, string> = {
 
 const input =
   'w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 dark:border-white/10 dark:bg-white/[0.04]';
+
+/**
+ * The link a salesperson actually hands over. Built from the live origin
+ * rather than a configured site URL so it is correct on localhost, on a
+ * preview deploy and in production without anyone remembering to change it.
+ */
+function CopyLink({ slug }: { slug: string }) {
+  const [copied, setCopied] = useState(false);
+  const path = `/q/${slug}`;
+
+  return (
+    <div className="flex items-center gap-1.5">
+      <a href={path} target="_blank" rel="noreferrer" className="font-mono text-xs text-brand-600 underline">
+        {path}
+      </a>
+      <button
+        type="button"
+        title="Copy the full link"
+        onClick={() => {
+          navigator.clipboard?.writeText(`${window.location.origin}${path}`);
+          setCopied(true);
+          setTimeout(() => setCopied(false), 2000);
+        }}
+        className="grid h-7 w-7 place-items-center rounded-md text-slate-400 hover:text-slate-600"
+      >
+        {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+      </button>
+    </div>
+  );
+}
 
 export function TenantsManager({ tenants }: { tenants: TenantRow[] }) {
   const router = useRouter();
@@ -64,6 +95,11 @@ export function TenantsManager({ tenants }: { tenants: TenantRow[] }) {
           taxRate: taxPercent / 100,
           taxAppliesTo: String(form.get('taxAppliesTo') || 'none'),
           supplyCostMultiplier: Number(form.get('supplyCostMultiplier') || 1),
+        },
+        branding: {
+          displayName: String(form.get('displayName') || '').trim() || undefined,
+          logoUrl: String(form.get('logoUrl') || '').trim() || undefined,
+          primaryColor: String(form.get('primaryColor') || '').trim() || undefined,
         },
       }),
     });
@@ -164,6 +200,23 @@ export function TenantsManager({ tenants }: { tenants: TenantRow[] }) {
             <input name="currency" maxLength={3} className={input} defaultValue="USD" placeholder="GBP" />
           </label>
 
+          {/* Branding — this is what their customers see on /q/<slug>. */}
+          <label className="text-sm">
+            <span className="mb-1 block font-medium">Name shown to their customers</span>
+            <input name="displayName" maxLength={80} className={input} placeholder="Sparkle Cleaning" />
+            <span className="mt-1 block text-xs text-slate-500">Defaults to the company name.</span>
+          </label>
+
+          <label className="text-sm">
+            <span className="mb-1 block font-medium">Brand colour</span>
+            <input name="primaryColor" className={input} placeholder="#0F766E" />
+          </label>
+
+          <label className="text-sm sm:col-span-2">
+            <span className="mb-1 block font-medium">Logo URL (https)</span>
+            <input name="logoUrl" type="url" className={input} placeholder="https://sparkle.co.uk/logo.png" />
+          </label>
+
           <label className="text-sm">
             <span className="mb-1 block font-medium">Charged per labor hour</span>
             <input name="hourlyRate" type="number" step="0.01" min="1" className={input} defaultValue={55} />
@@ -239,7 +292,8 @@ export function TenantsManager({ tenants }: { tenants: TenantRow[] }) {
                 <th className="px-4 py-3 font-medium">Key</th>
                 <th className="px-4 py-3 font-medium">Rate</th>
                 <th className="px-4 py-3 font-medium">This month</th>
-                <th className="px-4 py-3 font-medium">Quoted</th>
+                <th className="px-4 py-3 font-medium">Leads</th>
+                <th className="px-4 py-3 font-medium">Quote page</th>
                 <th className="px-4 py-3 font-medium">Calibration</th>
               </tr>
             </thead>
@@ -269,7 +323,13 @@ export function TenantsManager({ tenants }: { tenants: TenantRow[] }) {
                     {t.used.toLocaleString()} / {t.monthlyQuota.toLocaleString()}
                   </td>
                   <td className="px-4 py-3 tabular-nums">
-                    {t.quotedValue.toLocaleString(undefined, { maximumFractionDigits: 0 })} {t.currency}
+                    {t.leads.toLocaleString()}
+                    <div className="text-xs text-slate-400">
+                      {t.quotedValue.toLocaleString(undefined, { maximumFractionDigits: 0 })} {t.currency} quoted
+                    </div>
+                  </td>
+                  <td className="px-4 py-3">
+                    <CopyLink slug={t.slug} />
                   </td>
                   <td className="px-4 py-3 text-xs text-slate-500">
                     {t.sampleSize > 0 ? `${t.sampleSize} jobs` : 'defaults'}

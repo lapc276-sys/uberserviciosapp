@@ -23,6 +23,16 @@ const schema = z.object({
     })
     .partial()
     .optional(),
+  branding: z
+    .object({
+      displayName: z.string().trim().max(80),
+      // Rendered into an <img src> and a style attribute on a public page, so
+      // both are constrained here rather than trusted at render time.
+      logoUrl: z.string().url().startsWith('https://').max(500),
+      primaryColor: z.string().regex(/^#[0-9a-fA-F]{3,8}$/, 'Use a hex colour like #0F766E'),
+    })
+    .partial()
+    .optional(),
 });
 
 export async function GET() {

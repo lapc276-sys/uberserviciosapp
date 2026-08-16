@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import { buildMetadata } from '@/lib/seo';
-import { listTenants, getUsage } from '@/lib/tenants/store';
+import { listTenants, getUsage, countTenantLeads } from '@/lib/tenants/store';
 import { TenantsManager } from '@/components/admin/TenantsManager';
 
 export const metadata: Metadata = buildMetadata({
@@ -12,7 +12,10 @@ export const dynamic = 'force-dynamic';
 
 export default async function TenantsPage() {
   const tenants = await listTenants();
-  const usage = await Promise.all(tenants.map((t) => getUsage(t.id)));
+  const [usage, leadCounts] = await Promise.all([
+    Promise.all(tenants.map((t) => getUsage(t.id))),
+    Promise.all(tenants.map((t) => countTenantLeads(t.id))),
+  ]);
 
   const rows = tenants.map((t, i) => ({
     id: t.id,
@@ -28,6 +31,7 @@ export default async function TenantsPage() {
     sampleSize: t.calibration.sampleSize,
     used: usage[i].quotes,
     quotedValue: usage[i].quotedValue,
+    leads: leadCounts[i],
     createdAt: t.createdAt,
   }));
 

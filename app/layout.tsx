@@ -1,9 +1,6 @@
 import type { Metadata, Viewport } from 'next';
 import './globals.css';
 import { buildMetadata } from '@/lib/seo';
-import { JsonLd } from '@/components/seo/JsonLd';
-import { organizationSchema, localBusinessSchema } from '@/lib/schema';
-import { Analytics } from '@/components/analytics/Analytics';
 
 export const metadata: Metadata = buildMetadata();
 
@@ -25,17 +22,22 @@ try {
 } catch (e) {}
 `;
 
+/**
+ * Root shell only.
+ *
+ * Our organisation schema and our analytics used to live here, which meant
+ * they were injected into every page in the app — including the quoting pages
+ * we host for other companies. Their customers were being told, in structured
+ * data, that the page belonged to us, and were being tracked by our pixel.
+ * Both now live in the marketing layout, where the claim is actually true.
+ */
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeInit }} />
       </head>
-      <body className="min-h-screen antialiased">
-        <JsonLd data={[organizationSchema(), localBusinessSchema()]} />
-        {children}
-        <Analytics />
-      </body>
+      <body className="min-h-screen antialiased">{children}</body>
     </html>
   );
 }

@@ -336,6 +336,7 @@ model TrainingSample {
    * what lets the time model explain variance that pure vision never will.
    */
   /**
+   * /**
    * /** 1 = first job of that worker's day, 2 = second, etc.
    */
   jobSequence      Int?
@@ -447,6 +448,7 @@ model Tenant {
 
   createdAt DateTime      @default(now())
   usage     TenantUsage[]
+  leads     TenantLead[]
 
   @@index([createdAt])
 }
@@ -473,4 +475,46 @@ model TenantUsage {
 
   @@unique([tenantId, period])
   @@index([period])
+}
+
+/**
+ * A quote request from a tenant's own customer, captured on their hosted page.
+ * This is the tenant's lead, not ours. We store it so their dashboard can show
+ * it and so a failed notification isn't a lost customer, but the relationship
+ * belongs to them — which is also why nothing here is ever aggregated across
+ * tenants or sold.
+ */
+model TenantLead {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  name    String
+  email   String?
+  phone   String?
+  address String?
+  notes   String?
+
+  serviceSlug String
+  /**
+   * The quote shown to the customer, in the tenant's currency.
+   */
+  quoteLow    Int
+  quoteHigh   Int
+  currency    String  @default("USD")
+  minutes     Int
+  condition   String?
+
+  /**
+   * Full analysis, so the tenant can see what the AI actually saw.
+   */
+  analysis Json?
+
+  /**
+   * new | contacted | won | lost
+   */
+  status    String   @default("new")
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, createdAt])
 }
