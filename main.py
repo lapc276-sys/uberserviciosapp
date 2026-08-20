@@ -5663,13 +5663,24 @@ def _guardar_respondidos(ids):
 
 
 async def _redactar_respuesta(client, comentario):
-    """Redacta la respuesta a un comentario. None si no procede contestar."""
+    """Redacta la respuesta a un comentario.
+
+    Devuelve (texto, descartar):
+        (texto, False) → publicar esto
+        (None,  True)  → NO contestar nunca (spam, demasiado largo, rechazo)
+        (None,  False) → no se pudo AHORA (fallo de API): reintentar luego
+
+    La distinción importa: antes, cualquier None marcaba el comentario como
+    respondido para siempre, así que un corte de un minuto en la API dejaba
+    a varios espectadores sin contestación y sin manera de recuperarlos.
+    Es el mismo fallo que ya tuvimos con la cuota de YouTube.
+    """
     texto = (comentario.get("texto") or "").strip()
     if not texto or len(texto) > 900:
-        return None
+        return None, True
     if _chat_sospechoso(texto):        # manipulación o enlaces: ni se intenta
         log.info("💬 Comentario ignorado (parece manipulación o spam)")
-        return None
+        return None, True
     try:
         r = await client.messages.create(
             model=MODELO_AHORRO, max_tokens=90, system=SYSTEM_COMENTARIO,
@@ -5677,16 +5688,17 @@ async def _redactar_respuesta(client, comentario):
                        f"VIEWER COMMENT:\n<<<{texto[:600]}>>>\n\n"
                        "Write the reply sentence."}])
         if r.stop_reason == "refusal":
-            return None
+            return None, True
         salida = next((b.text for b in r.content if b.type == "text"), "")
         salida = " ".join(salida.split()).strip().strip('"')
         # Nunca publicar algo con enlaces, aunque el modelo se despiste
         if not salida or _RE_DOMINIO.search(salida) or "http" in salida.lower():
-            return None
-        return salida[:280]
+            return None, True
+        return salida[:280], False
     except Exception as e:
-        log.info("No se pudo redactar la respuesta (%s)", e)
-        return None
+        log.info("💬 No se pudo redactar la respuesta AHORA (%s) — se "
+                 "reintenta en el próximo ciclo", e)
+        return None, False
 
 
 async def bucle_metricas():
@@ -5755,27 +5767,37 @@ async def bucle_comentarios():
                     aviso = False
                     respondidos = _cargar_respondidos()
                     client = anthropic.AsyncAnthropic()
-                    hechos = 0
+                    hechos = pendientes = 0
                     for h in hilos:
-                        if hechos >= COMENTARIOS_POR_CICLO:
-                            break
                         # Ya contestado por nosotros, o por el dueño a mano
                         if h["id"] in respondidos or h["respuestas"] > 0:
                             continue
-                        respuesta = await _redactar_respuesta(client, h)
+                        pendientes += 1
+                        if hechos >= COMENTARIOS_POR_CICLO:
+                            continue      # se cuentan, pero se dejan para
+                            #               el próximo ciclo
+                        respuesta, descartar = await _redactar_respuesta(
+                            client, h)
                         if not respuesta:
-                            respondidos.add(h["id"])   # no reintentar siempre
+                            # Solo se da por cerrado lo que NO hay que
+                            # contestar. Un fallo de API se reintenta.
+                            if descartar:
+                                respondidos.add(h["id"])
                             continue
                         if await youtube_subir.responder_comentario(
                                 h["id"], respuesta):
                             respondidos.add(h["id"])
                             hechos += 1
                             await asyncio.sleep(20)    # espaciar, no ráfaga
-                    if hechos:
-                        _guardar_respondidos(respondidos)
-                        log.info("💬 %d comentario(s) respondido(s)", hechos)
-                    else:
-                        _guardar_respondidos(respondidos)
+                    _guardar_respondidos(respondidos)
+                    # Se informa SIEMPRE, aunque no haya nada que hacer: sin
+                    # esta línea no había forma de distinguir "todo al día"
+                    # de "el respondedor está roto".
+                    quedan = max(0, pendientes - hechos)
+                    log.info("💬 Comentarios: %d hilo(s) mirados, %d "
+                             "respondido(s), %d sin contestar, %d ya "
+                             "cerrados", len(hilos), hechos, quedan,
+                             len(hilos) - pendientes)
         except Exception as e:
             log.warning("Respondedor de comentarios: %s", e)
         await asyncio.sleep(1800)     # cada 30 min
