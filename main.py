@@ -3735,7 +3735,15 @@ _FOTO_MALA = ("simulator", "sim rig", "office", "computer", "keyboard",
               "mountain bike", "bicycle", "cyclist", "scooter", "quad bike",
               "atv", "snowmobile", "skateboard", "monster truck",
               "forklift", "excavator", "bulldozer", "airplane", "aircraft",
-              "boat", "yacht", "drone")
+              "boat", "yacht", "drone",
+              # COCHES DE CALLE. Buscar "hybrid power unit" o "car engine"
+              # devuelve utilitarios, concesionarios y motores de serie, y
+              # en un short de F1 un coche convencional canta igual que una
+              # moto. No se filtra "car" a secas: eso tumbaría "race car".
+              "sedan", "suv", "hatchback", "minivan", "showroom",
+              "dealership", "parking lot", "traffic jam", "city traffic",
+              "commuter", "family car", "charging station", "road trip",
+              "car wash", "taxi", "limousine", "pickup truck")
 
 
 def _normalizar_url(texto):
@@ -4199,6 +4207,14 @@ async def _filtrar_con_vision(candidatas, tema, n):
     if not candidatas:
         return []
     quien = _persona_en_consulta(tema)
+    if quien:
+        # Las que el archivo confirma como esa persona van PRIMERO. Antes
+        # iban en el orden que llegaran, así que un short sobre Verstappen
+        # se llenaba de coches genéricos mientras sus fotos reales
+        # esperaban al final de la lista y ya no quedaba hueco.
+        candidatas = sorted(
+            candidatas,
+            key=lambda c: not _foto_confirma_persona(c, quien))
     if not (VALIDAR_FOTOS and os.environ.get("ANTHROPIC_API_KEY")):
         # Sin visión no se puede saber si una foto está protagonizada por
         # alguien. Con un tema de persona, al menos se exige que el archivo

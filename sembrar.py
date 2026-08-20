@@ -40,19 +40,23 @@ ARCHIVO = "shorts_ola.json"
 # uno que explica POR QUÉ el reglamento le incomodaba sigue explicando el
 # reglamento dentro de un año. Y los hechos tienen que ser verificables:
 # nada de cifras de contrato ni de declaraciones inventadas.
+# OJO con la tercera columna: es la BÚSQUEDA DE IMÁGENES, y si el short
+# habla de una persona hay que NOMBRARLA ahí. La primera versión de estos
+# temas buscaba solo "hybrid power unit engine" para un short cuyo gancho
+# era Verstappen: salieron motores y coches de calle, y ni una foto suya.
 ACTUALIDAD = [
     ("Motor",
      "Verstappen just signed with Red Bull until 2030 after doubting the "
      "2026 cars — here is what actually changed in the power unit",
-     "formula 1 2026 hybrid power unit engine"),
+     "Max Verstappen Red Bull Formula One 2026"),
     ("Motor",
      "Why the 2026 rules split power almost evenly between engine and "
      "battery, and what that does to a driver's job",
-     "formula 1 hybrid battery energy recovery"),
+     "Max Verstappen Red Bull Racing car Formula One"),
     ("Estrategia",
      "Managing battery energy lap by lap is the new skill in 2026 — why "
      "some drivers hate it",
-     "formula 1 2026 car cockpit steering wheel"),
+     "Formula One 2026 car cockpit racing"),
     ("Aero",
      "Zandvoort's banked corners explained: why this circuit punishes a "
      "car that is not planted",
