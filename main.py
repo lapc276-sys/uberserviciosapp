@@ -2088,8 +2088,10 @@ let alertas = [], alertasSig = '', ultimoStandbyIso = null;
 let proxSesionIso = null, standingsData = null, standingsVista = 0;
 // Mapa del circuito: el trazado COMPLETO se precarga del servidor
 // (mapa_trazado) y se dibuja como una línea continua; los coches se
-// pintan encima. Si aún no llegó el trazado, se acumula de respaldo.
-let trazoMapa = [], mapaSuave = {};
+// pintan encima. NUNCA se dibuja la pista "a trocitos" según avanzan los
+// coches: hasta que no llega el trazado entero se enseña un aviso. Media
+// pista dibujada se lee como un error, no como algo cargando.
+let mapaSuave = {};
 // Curva destacada: va rotando sola para que el mapa cuente el circuito
 let curvaFoco = 0;
 setInterval(() => { curvaFoco++; }, 12000);
@@ -2130,6 +2132,67 @@ function pintarCurva(d) {
     pasesTexto(d, c) +
     '</div></div>';
 }
+// Chapa redondeada (el rectángulo con esquinas de la tele). Se define el
+// camino y quien llame decide si lo rellena, lo recorta o lo bordea.
+function _chapa(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y); ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h); ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r); ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+}
+// Casco del piloto, con el color del equipo. Se DIBUJA a mano (formas, no
+// fotos) y a propósito: un casco genérico no es de nadie, mientras que la
+// cara de un piloto —o una caricatura reconocible suya— sí tiene derechos
+// de imagen detrás, y el canal no se juega eso.
+function dibujarCasco(ctx, X, Y, r, color) {
+  ctx.save();
+  ctx.translate(X, Y);
+  // Huevo con la barbilla plana: es la silueta que hace que se lea "casco"
+  // y no "pelota". El visor ancho y oscuro remata la lectura.
+  const carcasa = () => {
+    ctx.beginPath();
+    ctx.moveTo(-r * 0.90, r * 0.22);
+    ctx.bezierCurveTo(-r * 0.92, -r * 0.52, -r * 0.56, -r, 0, -r);
+    ctx.bezierCurveTo(r * 0.56, -r, r * 0.92, -r * 0.52, r * 0.90, r * 0.22);
+    ctx.bezierCurveTo(r * 0.88, r * 0.74, r * 0.66, r * 0.92, r * 0.30,
+                      r * 0.92);
+    ctx.lineTo(-r * 0.30, r * 0.92);              // la barbilla, recta
+    ctx.bezierCurveTo(-r * 0.66, r * 0.92, -r * 0.88, r * 0.74, -r * 0.90,
+                      r * 0.22);
+    ctx.closePath();
+  };
+  ctx.shadowColor = color; ctx.shadowBlur = r * 0.9;
+  carcasa();
+  ctx.fillStyle = color; ctx.fill();
+  ctx.shadowBlur = 0;
+  // Media sombra en la mitad de abajo: le da volumen y despega el visor
+  ctx.save();
+  carcasa(); ctx.clip();
+  ctx.fillStyle = 'rgba(0,0,0,.20)';
+  ctx.fillRect(-r, r * 0.30, r * 2, r);
+  ctx.restore();
+  // Visor: una banda de grosor UNIFORME. Con forma de lente se estrecha en
+  // los bordes y de lejos parece un bigote — probado y descartado.
+  _chapa(ctx, -r * 0.80, -r * 0.16, r * 1.60, r * 0.56, r * 0.18);
+  ctx.fillStyle = 'rgba(9,11,17,.95)'; ctx.fill();
+  if (r >= 10) {                                   // brillo, solo si se ve
+    ctx.beginPath();
+    ctx.moveTo(-r * 0.62, r * 0.20);
+    ctx.lineTo(-r * 0.24, -r * 0.10);
+    ctx.lineTo(r * 0.02, -r * 0.10);
+    ctx.lineTo(-r * 0.36, r * 0.20);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(255,255,255,.20)'; ctx.fill();
+  }
+  carcasa();
+  ctx.lineWidth = Math.max(1, r * 0.09);
+  ctx.strokeStyle = 'rgba(255,255,255,.85)'; ctx.stroke();
+  ctx.restore();
+}
 function pintarMapa(d) {
   const panel = document.getElementById('panel-mapa');
   const caja = document.getElementById('mapabox');
@@ -2144,12 +2207,21 @@ function pintarMapa(d) {
   panel.style.display = grande ? 'none' : 'block';
   document.getElementById('mapa-titulo').textContent =
     ((d.circuito || 'TRACK') + ' — LIVE TRACK MAP').toUpperCase();
-  // Puntos del trazado: el precargado si existe, si no el acumulado
-  let linea = trazado.map(p => [p.x, p.y]);
+  const linea = trazado.map(p => [p.x, p.y]);
   if (!linea.length) {
-    for (const c of coches) trazoMapa.push([c.x, c.y]);
-    if (trazoMapa.length > 14000) trazoMapa = trazoMapa.slice(-11000);
-    linea = trazoMapa;
+    // Sin el trazado completo no se pinta NADA de pista: ni puntitos
+    // acumulados ni coches flotando en el vacío (sin pista no hay escala
+    // fiable y el encuadre saltaría). Un aviso limpio y ya.
+    const cvv = document.getElementById(grande ? 'mapa-grande' : 'mapa');
+    const cx = cvv.getContext('2d');
+    cx.clearRect(0, 0, cvv.width, cvv.height);
+    cx.save();
+    cx.textAlign = 'center';
+    cx.font = (grande ? '700 22px' : '700 12px') + ' Inter,sans-serif';
+    cx.fillStyle = 'rgba(190,200,220,.55)';
+    cx.fillText('LOADING TRACK MAP…', cvv.width / 2, cvv.height / 2);
+    cx.restore();
+    return;
   }
   // Interpolación suave de los coches entre lecturas
   for (const c of coches) {
@@ -2190,7 +2262,7 @@ function pintarMapa(d) {
   const offX = (w - (maxX - minX) * s) / 2, offY = (h - (maxY - minY) * s) / 2;
   const px = x => offX + (x - minX) * s, py = y => h - offY - (y - minY) * s;
   ctx.clearRect(0, 0, w, h);
-  if (trazado.length) {
+  {
     // Pista con el estilo del canal: glow + cinta oscura + línea coloreada
     // por VELOCIDAD relativa. Las muestras de posición vienen a intervalos
     // regulares, así que la separación entre puntos consecutivos es
@@ -2273,15 +2345,10 @@ function pintarMapa(d) {
     // 4) Marca de meta
     ctx.beginPath(); ctx.arc(pt[0][0], pt[0][1], grande ? 7 : 3.5, 0, 7);
     ctx.fillStyle = '#fff'; ctx.fill();
-  } else {
-    // Respaldo (aún sin trazado): puntitos acumulados
-    ctx.fillStyle = 'rgba(210,220,240,.5)';
-    const r = grande ? 2 : 1;
-    for (const [x, y] of linea) ctx.fillRect(px(x) - r, py(y) - r, r*2, r*2);
   }
   // Curva destacada: anillo pulsante sobre el vértice + su número
   const cur = (d.curvas || [])[curvaFoco % Math.max(1, (d.curvas||[]).length)];
-  if (cur && trazado.length) {
+  if (cur) {
     const X = px(cur.x), Y = py(cur.y);
     const r = (grande ? 20 : 9) + Math.sin(Date.now() / 260) * (grande ? 4 : 2);
     ctx.save();
@@ -2296,23 +2363,70 @@ function pintarMapa(d) {
     }
     ctx.restore();
   }
-  // Coches: punto con color de equipo, glow, anillo blanco y acrónimo
-  const rCoche = grande ? 9 : 4;
-  ctx.font = (grande ? '700 13px' : '600 9px') + ' Inter,sans-serif';
-  for (const c of coches) {
+  // Coches: un CASCO con el color del equipo y su chapa con dorsal y
+  // acrónimo. Antes era un puntito de color con el nombre al lado; a quien
+  // acaba de llegar a la F1 eso no le dice nada, y un casco sí se reconoce.
+  const rC = grande ? 15 : 6;
+  // El líder primero: elige antes dónde va su chapa y se dibuja encima.
+  const orden = coches.slice().sort((a, b) => (a.p || 99) - (b.p || 99));
+  const punto = c => {
     const p = mapaSuave[c.n] || c;
-    const X = px(p.x), Y = py(p.y);
-    ctx.shadowColor = c.c ? ('#' + c.c) : '#E10600';
-    ctx.shadowBlur = grande ? 14 : 5;
-    ctx.beginPath(); ctx.arc(X, Y, rCoche, 0, 7);
-    ctx.fillStyle = c.c ? ('#' + c.c) : '#E10600';
-    ctx.fill();
-    ctx.shadowBlur = 0;
-    ctx.lineWidth = grande ? 2 : 1;
-    ctx.strokeStyle = 'rgba(255,255,255,.95)'; ctx.stroke();
-    ctx.fillStyle = '#fff';
-    ctx.fillText(c.a || '', X + rCoche + 4, Y + 4);
+    return [px(p.x), py(p.y)];
+  };
+  for (const c of orden.slice().reverse()) {
+    const [X, Y] = punto(c);
+    dibujarCasco(ctx, X, Y, rC, c.c ? ('#' + c.c) : '#E10600');
   }
+  ctx.font = (grande ? '800 14px' : '700 9px') + ' Inter,sans-serif';
+  ctx.textBaseline = 'middle';
+  const alto = grande ? 24 : 13;
+  const puestas = [];
+  const libre = b => !puestas.some(o => !(b[2] <= o[0] || b[0] >= o[2] ||
+                                          b[3] <= o[1] || b[1] >= o[3]));
+  for (const c of orden) {
+    const [X, Y] = punto(c);
+    const col = c.c ? ('#' + c.c) : '#E10600';
+    const txt = (c.p ? c.p + '  ' : '') + (c.a || c.n);
+    const ancho = ctx.measureText(txt).width + (grande ? 24 : 12);
+    // La chapa se busca sitio ella sola: se prueban posiciones en anillos
+    // cada vez más lejos del casco y se coge el primer hueco libre. Sin
+    // esto, en cuanto el pelotón se junta —que es justo lo que la gente
+    // quiere mirar— las chapas se pisan y no se lee ninguna. Se dibuja
+    // además una guía del casco a la chapa cuando queda lejos.
+    let x = X + rC + 5, y = Y - alto / 2, puesto = false;
+    for (const anillo of [0, 1, 2, 3]) {
+      const dist = rC + 5 + anillo * (alto + 4);
+      for (const g of [0, -28, 28, -58, 58, 90, -90, 128, -128, 180]) {
+        const a = g * Math.PI / 180;
+        const cx0 = X + Math.cos(a) * dist - (Math.cos(a) < -0.2 ? ancho : 0)
+                    - (Math.abs(Math.cos(a)) <= 0.2 ? ancho / 2 : 0);
+        const cy0 = Y + Math.sin(a) * dist - alto / 2;
+        if (libre([cx0, cy0, cx0 + ancho, cy0 + alto])) {
+          x = cx0; y = cy0; puesto = true; break;
+        }
+      }
+      if (puesto) break;
+    }
+    puestas.push([x, y, x + ancho, y + alto]);
+    const cxm = x + ancho / 2, cym = y + alto / 2;
+    if (Math.hypot(cxm - X, cym - Y) > rC + ancho * 0.6) {
+      ctx.beginPath(); ctx.moveTo(X, Y); ctx.lineTo(cxm, cym);
+      ctx.strokeStyle = 'rgba(255,255,255,.28)';
+      ctx.lineWidth = 1; ctx.stroke();
+    }
+    _chapa(ctx, x, y, ancho, alto, Math.min(alto / 2, 8));
+    ctx.fillStyle = 'rgba(10,13,20,.90)'; ctx.fill();
+    // Franja del equipo a la izquierda, como en las chapas de la tele
+    ctx.save();
+    _chapa(ctx, x, y, ancho, alto, Math.min(alto / 2, 8));
+    ctx.clip();
+    ctx.fillStyle = col;
+    ctx.fillRect(x, y, grande ? 5 : 3, alto);
+    ctx.restore();
+    ctx.fillStyle = '#fff';
+    ctx.fillText(txt, x + (grande ? 13 : 7), y + alto / 2 + 0.5);
+  }
+  ctx.textBaseline = 'alphabetic';
 }
 function pintarNextUp(d) {
   const ps = d.proxima_sesion;
@@ -8040,6 +8154,7 @@ async def bucle_mapa():
     tele_trazada = None
     ultimo_guardado = 0.0
     prox_intento_trazado = 0.0   # no repreguntar el trazado cada 2 s
+    previo_probado = None        # circuito al que ya le buscamos trazado viejo
     pos_previas = None           # foto anterior de la clasificación
     tele_pases = None            # de qué sesión son los pases que llevamos
     while True:
@@ -8052,22 +8167,52 @@ async def bucle_mapa():
                 estado.mapa_trazado = []
                 estado.curvas = []
             tele_trazada = None
+            previo_probado = None   # la próxima sesión merece su intento
             pos_previas = None
             continue
         # Guardar cada 10 s dónde va el replay, para retomar tras reinicio
         if time.time() - ultimo_guardado >= 10:
             ultimo_guardado = time.time()
             _guardar_pos_replay(t.sesion.get("session_key"), t.fecha_actual)
-        # Precargar el trazado COMPLETO del circuito. Al principio de una
-        # sesión todavía no hay una vuelta rodada, así que se reintenta —
-        # pero cada 60 s, no cada 2 (si no, se martillea la API).
+        # El trazado del circuito, COMPLETO y desde el primer segundo. El
+        # orden importa: antes se pedía primero el GPS de la sesión EN CURSO,
+        # y al arrancar una sesión todavía nadie ha rodado, así que la pista
+        # se iba dibujando conforme avanzaban los coches. Ahora se busca
+        # primero algo ya dibujable y la sesión en vivo solo lo MEJORA.
         if t is not tele_trazada and time.time() >= prox_intento_trazado:
             prox_intento_trazado = time.time() + 60
+            circuito = t.sesion.get("circuit_short_name") or ""
+            # 1) Caché en disco: instantáneo y sin tocar la API.
+            if not estado.mapa_trazado:
+                guardado = _cargar_trazado_cache(circuito)
+                if guardado:
+                    estado.mapa_trazado = guardado
+                    estado.curvas = curvas_del_trazado(guardado)
+                    log.info("🗺️  Trazado de %s tomado del caché (%d puntos)",
+                             circuito, len(guardado))
+            # 2) Una sesión YA DISPUTADA en este mismo circuito. Tarda unos
+            #    segundos, pero solo se hace una vez por circuito: después
+            #    queda en caché y el mapa sale entero desde el minuto cero.
+            #    Se intenta UNA vez por circuito: si OpenF1 no tiene GPS de
+            #    ahí, no lo va a tener dentro de un minuto, y repetir la
+            #    búsqueda cada minuto es martillear la API para nada.
+            if not estado.mapa_trazado and previo_probado != circuito:
+                previo_probado = circuito
+                try:
+                    previo = await telemetria.trazado_de_circuito(circuito)
+                except Exception as e:
+                    log.info("Trazado previo de %s: %s", circuito, e)
+                    previo = []
+                if previo:
+                    estado.mapa_trazado = previo
+                    estado.curvas = curvas_del_trazado(previo)
+                    _guardar_trazado_cache(circuito, previo)
+            # 3) ESTA sesión, cuando ya haya vueltas rodadas: es el trazado
+            #    exacto de hoy y el que manda en cuanto exista.
             try:
                 trazado = await t.trazado_circuito()
             except Exception:
                 trazado = []
-            circuito = t.sesion.get("circuit_short_name") or ""
             if trazado:
                 estado.mapa_trazado = trazado
                 estado.curvas = curvas_del_trazado(trazado)
@@ -8077,18 +8222,6 @@ async def bucle_mapa():
                 # Guardarlo por circuito: sirve luego para dibujar el trazado
                 # REAL (a color) en las miniaturas, ya sin sesión en vivo.
                 _guardar_trazado_cache(circuito, trazado)
-            elif not estado.mapa_trazado:
-                # Todavía no hay vueltas rodadas en ESTA sesión (previa,
-                # parrilla). Si ya guardamos el trazado de este circuito en una
-                # sesión anterior (libres/clasificación), se usa ese: el mapa
-                # muestra la pista desde el primer momento en vez de una raya.
-                guardado = _cargar_trazado_cache(circuito)
-                if guardado:
-                    estado.mapa_trazado = guardado
-                    estado.curvas = curvas_del_trazado(guardado)
-                    log.info("🗺️  Trazado de %s tomado del caché (%d puntos) "
-                             "— aún sin vuelta rodada en esta sesión",
-                             circuito, len(guardado))
         try:
             pos = await t.posiciones_pista()
         except Exception:
@@ -8097,7 +8230,10 @@ async def bucle_mapa():
             estado.mapa = [
                 {"n": n, "x": p["x"], "y": p["y"],
                  "a": t.pilotos.get(n, {}).get("acronimo", str(n)),
-                 "c": t.pilotos.get(n, {}).get("color", "")}
+                 "c": t.pilotos.get(n, {}).get("color", ""),
+                 # La posición va en la chapa del casco: en el mapa, saber
+                 # quién es un coche importa menos que saber en qué puesto va.
+                 "p": t.posiciones.get(n) or 0}
                 for n, p in pos.items()]
         # ── Adelantamientos por zona (Fase B) ─────────────────────────
         # Cada pase se apunta a la curva donde ocurrió. Con eso, "aquí es

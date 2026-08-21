@@ -51,6 +51,34 @@ Variables de entorno (Secrets en Replit, todas opcionales):
 | `PLAYLIST` | `historia,interludio,tech,interludio` | Qué programas rotar |
 | `ROTACION_MINUTOS` | `8` | Cuántos minutos dura cada programa |
 
+### Mapa del circuito en vivo
+
+El mapa dibuja la pista **completa desde el primer segundo**. La forma sale
+de las coordenadas GPS de OpenF1 y se busca en este orden:
+
+1. `cache/trazados/<circuito>.json` — instantáneo, sin tocar la API.
+2. Una sesión **ya disputada** en ese mismo circuito (se baja una vez y se
+   guarda en el caché).
+3. La sesión en curso, en cuanto haya vueltas rodadas: es el trazado exacto
+   de hoy y sustituye a los anteriores.
+
+Mientras no haya un trazado entero **no se dibuja media pista**: sale un
+aviso de "LOADING TRACK MAP…". Antes se iba pintando conforme los coches
+avanzaban y se leía como un fallo.
+
+Antes de un fin de semana de carrera, para que no haya ni esa espera:
+
+```bash
+python3 precargar_circuitos.py          # los circuitos del próximo GP
+python3 precargar_circuitos.py --ver    # qué hay guardado ya
+```
+
+Cada coche se dibuja como un **casco con el color de su equipo** y una
+chapa con su posición y su acrónimo, que se coloca sola buscando hueco para
+que no se pisen cuando el pelotón va junto. El casco es genérico y dibujado
+a mano a propósito: caras de pilotos (o caricaturas reconocibles de ellos)
+tienen derechos de imagen detrás y el canal no los usa.
+
 ## 🚀 Automatización y Caché (Eficiencia de Tokens)
 
 ### Parrilla Automática (24/7)

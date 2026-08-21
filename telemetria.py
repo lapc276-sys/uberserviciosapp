@@ -20,6 +20,7 @@ import logging
 import math
 import os
 import random
+import re
 import time
 
 import httpx
@@ -238,6 +239,183 @@ async def carreras_clasicas(n=15):
     return candidatas[:n]
 
 
+# ── Trazado del circuito ─────────────────────────────────────────────────
+# El mapa en vivo se dibujaba con el GPS de la sesión EN CURSO. Eso tiene un
+# problema que se ve en pantalla: al empezar una sesión todavía nadie ha
+# dado una vuelta, así que la pista no existe y se iba dibujando conforme
+# los coches rodaban. Queda cutre y confunde a quien llega a mitad de
+# emisión. Lo de abajo trae la forma COMPLETA de antes de empezar, sacada de
+# una sesión ya disputada en el mismo circuito.
+
+
+def _limites_iqr(vals):
+    """Rango razonable de una coordenada, por cuartiles. Un solo punto
+    imposible dispara el bounding box y colapsa el circuito a una raya."""
+    v = sorted(vals)
+    n = len(v)
+    q1, q3 = v[n // 4], v[(3 * n) // 4]
+    iqr = (q3 - q1) or 1
+    return q1 - 3 * iqr, q3 + 3 * iqr
+
+
+def _es_vuelta_real(pts):
+    """Descarta trazas DEGENERADAS: coches en parrilla, en el pit lane o
+    dando una recta producen puntos casi COLINEALES, y dibujarlos deja el
+    mapa como una raya. Se mide la dispersión perpendicular a la dirección
+    dominante (ejes principales), así funciona en cualquier orientación —
+    también en diagonal."""
+    n = len(pts)
+    if n < 20:
+        return False
+    mx = sum(p[0] for p in pts) / n
+    my = sum(p[1] for p in pts) / n
+    sxx = sum((p[0] - mx) ** 2 for p in pts) / n
+    syy = sum((p[1] - my) ** 2 for p in pts) / n
+    sxy = sum((p[0] - mx) * (p[1] - my) for p in pts) / n
+    # Autovalores de la matriz de covarianza 2x2
+    tr = sxx + syy
+    det = math.sqrt(max(0.0, (sxx - syy) ** 2 + 4 * sxy * sxy))
+    lmax, lmin = (tr + det) / 2, (tr - det) / 2
+    if lmax <= 0:
+        return False
+    # Relación entre el ancho del trazo y su largo. Un circuito real (incluso
+    # uno alargado como Monza) queda muy por encima de 0.12; una parrilla o
+    # un pit lane, muy por debajo.
+    return math.sqrt(max(0.0, lmin) / lmax) >= 0.12
+
+
+def _limpiar_traza(crudos):
+    """Convierte filas de /location en un trazado dibujable, o []."""
+    puntos = [(f["x"], f["y"]) for f in crudos
+              if isinstance(f.get("x"), (int, float))
+              and isinstance(f.get("y"), (int, float))
+              and (f["x"], f["y"]) != (0, 0)]
+    if len(puntos) < 50:
+        return []
+    xlo, xhi = _limites_iqr([p[0] for p in puntos])
+    ylo, yhi = _limites_iqr([p[1] for p in puntos])
+    puntos = [(x, y) for x, y in puntos
+              if xlo <= x <= xhi and ylo <= y <= yhi]
+    if len(puntos) < 50 or not _es_vuelta_real(puntos):
+        return []
+    paso = max(1, len(puntos) // 500)
+    return [{"x": x, "y": y} for x, y in puntos[::paso]]
+
+
+def clave_circuito(nombre):
+    """'Spa-Francorchamps' y 'spa francorchamps' son el mismo circuito."""
+    return re.sub(r"[^a-z0-9]+", "", (nombre or "").lower())
+
+
+async def _trazado_de_sesion(client, cab, sesion):
+    """Una vuelta buena sacada de una sesión concreta. [] si no la hay."""
+    sk = sesion.get("session_key")
+    if not sk or not sesion.get("date_start"):
+        return []
+    try:
+        ini = _fecha(sesion["date_start"])
+    except Exception:
+        return []
+    fin = None
+    try:
+        fin = _fecha(sesion["date_end"]) if sesion.get("date_end") else None
+    except Exception:
+        fin = None
+    # Ventana a MITAD de sesión: al principio están en boxes o en la parrilla
+    # y al final puede haber bandera roja, vuelta de honor o coches parados.
+    if fin and (fin - ini) > dt.timedelta(minutes=20):
+        centro = ini + (fin - ini) / 2
+    else:
+        centro = ini + dt.timedelta(minutes=25)
+    desde = (centro - dt.timedelta(minutes=4)).isoformat()
+    hasta = (centro + dt.timedelta(minutes=4)).isoformat()
+    try:
+        r = await client.get(f"{BASE}/drivers", params={"session_key": sk},
+                             timeout=30, headers=cab)
+        r.raise_for_status()
+        numeros = [d["driver_number"] for d in r.json()
+                   if d.get("driver_number")]
+    except Exception as e:
+        log.info("Trazado: sesión %s sin pilotos (%s)", sk, e)
+        return []
+    for num in numeros[:6]:
+        await asyncio.sleep(0.6)     # la API gratuita limita el ritmo
+        try:
+            r = await client.get(
+                f"{BASE}/location?session_key={sk}&driver_number={num}"
+                f"&date>{desde}&date<{hasta}", timeout=40, headers=cab)
+            r.raise_for_status()
+            traza = _limpiar_traza(r.json())
+        except Exception:
+            continue
+        if traza:
+            return traza
+    return []
+
+
+async def trazado_de_circuito(circuito, años=3, sesiones=4):
+    """Trazado COMPLETO de un circuito, sacado de una sesión YA DISPUTADA.
+
+    Se usa para tener la pista dibujada ANTES de que empiece la sesión en
+    vivo, en vez de irla pintando conforme los coches ruedan.
+
+    Devuelve [{"x","y"}] en las mismas unidades que /location (las que el
+    mapa ya sabe encuadrar), o [] si no se pudo.
+    """
+    clave = clave_circuito(circuito)
+    if not clave:
+        return []
+    ahora = dt.datetime.now(dt.timezone.utc)
+    # Carrera antes que clasificación antes que libres: cuanto más completa
+    # la sesión, más probable que alguien haya dado una vuelta limpia.
+    orden = {"Race": 0, "Sprint": 1, "Qualifying": 2,
+             "Sprint Qualifying": 3, "Sprint Shootout": 3}
+    candidatas = []
+    async with httpx.AsyncClient() as client:
+        cab = await _auth_headers(client)
+        for año in range(ahora.year, ahora.year - max(1, años), -1):
+            try:
+                r = await client.get(f"{BASE}/sessions", params={"year": año},
+                                     timeout=30, headers=cab)
+                r.raise_for_status()
+                filas = r.json()
+            except Exception as e:
+                log.info("Trazado: no pude listar las sesiones de %d (%s)",
+                         año, e)
+                continue
+            for s in filas:
+                if clave_circuito(s.get("circuit_short_name")) != clave:
+                    continue
+                if not s.get("date_start"):
+                    continue
+                try:
+                    if _fecha(s["date_start"]) >= ahora:
+                        continue      # aún no ha ocurrido: no tiene GPS
+                except Exception:
+                    continue
+                candidatas.append(s)
+            # Con el año más reciente que tenga sesiones basta: un circuito
+            # puede haber cambiado de trazado y queremos el de ahora.
+            if candidatas:
+                break
+        if not candidatas:
+            log.info("Trazado: OpenF1 no tiene ninguna sesión pasada en %s",
+                     circuito)
+            return []
+        candidatas.sort(key=lambda s: (orden.get(s.get("session_name"), 5),
+                                       -_fecha(s["date_start"]).timestamp()))
+        for s in candidatas[:max(1, sesiones)]:
+            traza = await _trazado_de_sesion(client, cab, s)
+            if traza:
+                log.info("🗺️  Trazado de %s sacado de %s %s (%d puntos)",
+                         circuito, s.get("year") or "",
+                         s.get("session_name") or "", len(traza))
+                return traza
+    log.info("Trazado: ninguna sesión pasada de %s dio una vuelta limpia",
+             circuito)
+    return []
+
+
 class Telemetria:
     def __init__(self, session_key="latest", velocidad=1.0):
         self.session_key = session_key
@@ -403,38 +581,6 @@ class Telemetria:
             desde = (inicio + dt.timedelta(minutes=15)).isoformat()
             hasta = (inicio + dt.timedelta(minutes=23)).isoformat()
 
-        def _limites(vals):
-            v = sorted(vals)
-            n = len(v)
-            q1, q3 = v[n // 4], v[(3 * n) // 4]
-            iqr = (q3 - q1) or 1
-            return q1 - 3 * iqr, q3 + 3 * iqr
-
-        def _es_vuelta(pts):
-            """Descarta trazas DEGENERADAS: coches en parrilla, en el pit lane
-            o dando una recta producen puntos casi COLINEALES, y dibujarlos
-            deja el mapa como una raya. Se mide la dispersión perpendicular a
-            la dirección dominante (ejes principales), así funciona en
-            cualquier orientación — también en diagonal."""
-            n = len(pts)
-            if n < 20:
-                return False
-            mx = sum(p[0] for p in pts) / n
-            my = sum(p[1] for p in pts) / n
-            sxx = sum((p[0] - mx) ** 2 for p in pts) / n
-            syy = sum((p[1] - my) ** 2 for p in pts) / n
-            sxy = sum((p[0] - mx) * (p[1] - my) for p in pts) / n
-            # Autovalores de la matriz de covarianza 2x2
-            tr = sxx + syy
-            det = math.sqrt(max(0.0, (sxx - syy) ** 2 + 4 * sxy * sxy))
-            lmax, lmin = (tr + det) / 2, (tr - det) / 2
-            if lmax <= 0:
-                return False
-            # Relación entre el ancho del trazo y su largo. Un circuito real
-            # (incluso uno alargado como Monza) queda muy por encima de 0.12;
-            # una parrilla o un pit lane, muy por debajo.
-            return math.sqrt(max(0.0, lmin) / lmax) >= 0.12
-
         for num in list(self.pilotos)[:5]:
             try:
                 async with httpx.AsyncClient() as client:
@@ -447,28 +593,9 @@ class Telemetria:
             except Exception as e:
                 log.info("Trazado: piloto %s sin datos (%s)", num, e)
                 continue
-            # Puntos válidos (descartar 0,0 = fuera de pista)
-            puntos = [(f["x"], f["y"]) for f in filas
-                      if isinstance(f.get("x"), (int, float))
-                      and isinstance(f.get("y"), (int, float))
-                      and (f["x"], f["y"]) != (0, 0)]
-            if len(puntos) < 50:
-                continue
-            # Descartar GLITCHES de coordenadas: un solo punto atípico dispara
-            # el bounding box y colapsa el circuito a una RAYA. Se filtran por
-            # rango intercuartílico (conserva las esquinas, tumba lo imposible).
-            xlo, xhi = _limites([p[0] for p in puntos])
-            ylo, yhi = _limites([p[1] for p in puntos])
-            puntos = [(x, y) for x, y in puntos
-                      if xlo <= x <= xhi and ylo <= y <= yhi]
-            if len(puntos) < 50:
-                continue
-            if not _es_vuelta(puntos):
-                log.info("Trazado: piloto %s dio una traza plana (¿parrilla o "
-                         "pit lane?) — se descarta", num)
-                continue
-            paso = max(1, len(puntos) // 500)
-            return [{"x": x, "y": y} for x, y in puntos[::paso]]
+            traza = _limpiar_traza(filas)
+            if traza:
+                return traza
         return []
 
     def fin_datos(self):
