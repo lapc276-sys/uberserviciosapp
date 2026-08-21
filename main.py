@@ -7499,14 +7499,21 @@ def _shorts_sin_subir():
 # Temas para buscar fotos VARIADAS de libre uso. Nombres DESAMBIGUADOS
 # (p.ej. "Carlos Sainz Jr" para no traer al padre rallista) y con contexto
 # de F1 para evitar fotos genéricas.
+#
+# REGLA: a un PILOTO nunca se le pone el equipo, solo "Formula One". Los
+# pilotos cambian de equipo y esta lista no se entera: emparejarlos aquí es
+# fabricar una consulta caducada que trae al piloto con los colores de un
+# equipo en el que ya no está. Los EQUIPOS sí pueden llevar su nombre —
+# son ellos el sujeto de la foto— pero sin año ni modelo de coche concreto,
+# por lo mismo.
 _TEMAS_FOTOS = [
-    "Max Verstappen 2024", "Lewis Hamilton Formula One",
-    "Charles Leclerc Ferrari", "Lando Norris McLaren",
-    "Oscar Piastri McLaren", "George Russell Mercedes",
-    "Fernando Alonso Aston Martin", "Carlos Sainz Jr Formula One",
-    "Sergio Perez Red Bull", "Yuki Tsunoda Formula One",
+    "Max Verstappen Formula One", "Lewis Hamilton Formula One",
+    "Charles Leclerc Formula One", "Lando Norris Formula One",
+    "Oscar Piastri Formula One", "George Russell Formula One",
+    "Fernando Alonso Formula One", "Carlos Sainz Jr Formula One",
+    "Sergio Perez Formula One", "Yuki Tsunoda Formula One",
     "Red Bull Racing Formula One car", "Scuderia Ferrari Formula One car",
-    "McLaren Formula One car 2024", "Mercedes Formula One W15",
+    "McLaren Formula One car", "Mercedes Formula One car",
     "Aston Martin Formula One car", "Williams Formula One car",
     "Formula 1 pit stop", "Formula 1 race start", "Formula 1 podium",
     "Formula 1 starting grid", "Formula 1 wet race Spa",
