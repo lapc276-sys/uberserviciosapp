@@ -289,3 +289,95 @@ trabajos está calibrado su modelo.
 
 El **valor cotizado** es tu mejor argumento de venta en la renovación: no les
 dices "pagas 200 al mes", les dices "cotizaste 40.000 con esto".
+
+---
+
+## Bot de tiempos por voz (Telegram) — solo para ti y tu equipo
+
+Esto **no es para clientes.** Es para que tú, con guantes puestos y las manos
+ocupadas, registres cuánto tarda cada habitación de verdad.
+
+Por qué importa: hoy un trabajo te da *un* número — "tardé 3 horas". Eso
+demuestra que la estimación falló pero no dice **dónde**. Con esto, cada
+habitación es una muestra etiquetada. Un trabajo pasa de valer 1 dato a valer
+4 o 5.
+
+### Crear el bot (5 minutos)
+
+1. Abre Telegram y busca **@BotFather** (el oficial, con marca azul).
+2. Escríbele **`/newbot`**.
+3. Te pide un nombre — pon el que quieras, por ejemplo `Tiempos Homigo`.
+4. Te pide un usuario — tiene que terminar en `bot`, por ejemplo
+   `homigo_tiempos_bot`.
+5. Te devuelve un **token** con este aspecto:
+   `8123456789:AAH8x-...`
+
+⚠️ **Ese token es la llave del bot.** Cualquiera que lo tenga puede controlarlo.
+No lo pegues en un chat ni en una captura.
+
+### Conectarlo (en Vercel → Settings → Environment Variables)
+
+| Variable | Valor |
+|---|---|
+| `TELEGRAM_BOT_TOKEN` | el token de BotFather |
+| `TELEGRAM_WEBHOOK_SECRET` | invéntate una contraseña larga, la que sea |
+| `TELEGRAM_ALLOWED_CHATS` | (lo rellenas en el paso siguiente) |
+
+Vuelve a desplegar para que las variables entren.
+
+### Averiguar tu chat id
+
+Escríbele **cualquier cosa a tu bot** desde Telegram. Te va a contestar:
+
+> Este bot es privado. Chat id: `123456789`
+
+Copia ese número, ponlo en **`TELEGRAM_ALLOWED_CHATS`** y vuelve a desplegar.
+Si luego entra alguien más en tu equipo, se añade separado por comas:
+`123456789,987654321`.
+
+**Ese es el control de acceso.** El nombre de un bot lo puede encontrar
+cualquiera; sin esta lista, un desconocido podría meter datos falsos justo en
+el conjunto que estás construyendo. Si la lista está vacía, el bot no acepta a
+nadie — a propósito.
+
+### Activar el webhook
+
+Una sola vez, desde el navegador. Cambia las tres partes en mayúsculas:
+
+```
+https://api.telegram.org/botTU_TOKEN/setWebhook?url=https://TU_DOMINIO/api/telegram/webhook&secret_token=TU_SECRETO
+```
+
+Si responde `{"ok":true,...}`, ya está.
+
+### Cómo se usa en el trabajo
+
+| Dices | Pasa |
+|---|---|
+| "nuevo trabajo Roma Norte" | abre el trabajo |
+| "cocina" | empieza a contar la cocina |
+| "cocina el horno" | igual, guardando el detalle |
+| "baño" | **cierra la cocina** y empieza el baño |
+| "termino" | cierra la habitación actual |
+| "estado" | qué hay abierto ahora |
+| "fin del trabajo" | cierra todo y te manda el resumen |
+| "cancelar" | descarta lo abierto (por si te equivocaste) |
+
+**No tienes que cerrar una habitación antes de abrir otra.** Al decir el
+nombre de la siguiente, la anterior se cierra sola — porque en la vida real
+uno camina de la cocina al baño y dice "baño", no se para a cerrar nada.
+
+**Notas de voz:** funcionan si tienes `OPENAI_API_KEY` puesta. Sin ella el bot
+sigue funcionando con texto escrito.
+
+### Dónde ves el resultado
+
+En **`/admin/timings`**. Ahí sale, por tipo de habitación, los minutos reales
+medidos contra lo que el estimador está suponiendo, y la diferencia entre
+ambos.
+
+Una diferencia **positiva** significa que estás cotizando esa habitación por
+debajo — el trabajo se alarga y lo paga tu margen. Es el error caro.
+
+Debajo de 8 muestras aparece "too few": con tan pocos datos una jornada rara
+mueve la mediana entera. No cambies precios con eso.

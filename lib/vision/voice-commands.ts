@@ -155,7 +155,8 @@ function findDimension(text: string): SoilDimension | null {
   return null;
 }
 
-function findRoom(text: string): RoomType | null {
+/** Exported so the activity logger shares one room vocabulary with the app. */
+export function findRoom(text: string): RoomType | null {
   for (const type of ROOM_TYPES) {
     for (const word of ROOM_WORDS[type] ?? []) {
       if (new RegExp(`\\b${word}\\b`).test(text)) return type;

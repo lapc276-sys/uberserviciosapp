@@ -337,6 +337,7 @@ model TrainingSample {
    */
   /**
    * /**
+   * /**
    * /** 1 = first job of that worker's day, 2 = second, etc.
    */
   jobSequence      Int?
@@ -517,4 +518,55 @@ model TenantLead {
   createdAt DateTime @default(now())
 
   @@index([tenantId, createdAt])
+}
+
+/**
+ * One job, logged live from the field by chat.
+ * Separate from Booking on purpose: these are recorded on jobs the operator
+ * finds themselves, long before the platform has any bookings of its own, and
+ * the whole reason they exist is to produce labelled minutes for the time
+ * model when there is nothing else to learn from.
+ */
+model ActivitySession {
+  id          String  @id @default(cuid())
+  /**
+   * Telegram chat id or admin email — whoever logged it.
+   */
+  loggedBy    String
+  label       String?
+  serviceSlug String?
+
+  startedAt    DateTime  @default(now())
+  endedAt      DateTime?
+  /**
+   * Sum of the closed segments. Denormalised so reports don't re-add them.
+   */
+  totalMinutes Int?
+
+  notes    String?
+  segments ActivitySegment[]
+
+  @@index([loggedBy, startedAt])
+}
+
+/**
+ * One room, or one task inside a room, with a real start and end.
+ */
+model ActivitySegment {
+  id        String          @id @default(cuid())
+  sessionId String
+  session   ActivitySession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  roomType String
+  /**
+   * Free-form detail the person said, e.g. "cocina el horno".
+   */
+  task     String?
+
+  startedAt DateTime
+  endedAt   DateTime?
+  minutes   Int?
+
+  @@index([sessionId])
+  @@index([roomType])
 }
