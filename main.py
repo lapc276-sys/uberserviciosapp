@@ -41,6 +41,7 @@ from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import (HTMLResponse, JSONResponse,
                                PlainTextResponse, Response)
 
+import telegram_bot
 import telemetria
 import youtube_subir
 import redes_sociales
@@ -578,7 +579,8 @@ async def lifespan(app: FastAPI):
               asyncio.create_task(bucle_comentarios()),
               asyncio.create_task(bucle_metricas()),
               asyncio.create_task(bucle_microshorts()),
-              asyncio.create_task(bucle_chat())]
+              asyncio.create_task(bucle_chat()),
+              asyncio.create_task(bucle_telegram())]
     yield
     for t in tareas:
         t.cancel()
@@ -8149,6 +8151,299 @@ async def _vod_procesar(ruta):
     with open(meta_ruta, "w") as f:
         json.dump(meta, f)
     return False
+
+
+# ── Mando a distancia por Telegram ───────────────────────────────────────
+# El panel web exige tener Replit delante y el Repl despierto. Una noticia
+# no espera a eso. Con el bot le escribes desde el móvil y el canal se
+# entera al momento. Las órdenes llaman a las MISMAS funciones que los
+# botones del panel, para que los dos mandos no se separen con el tiempo.
+
+# Propuestas de short esperando un sí. chat_id -> (categoria, tema, fotos)
+_TG_PROPUESTAS = {}
+
+SYSTEM_TG_NOTICIA = """You turn a piece of motorsport news into ONE short \
+for a technical Formula 1 channel.
+
+HARD RULES — these matter more than style:
+- Use ONLY facts present in the user's message. Never add numbers, dates, \
+contract terms, quotes or results of your own. If the message carries no \
+numbers, yours carries none either.
+- The angle must be TECHNICAL and explain a MECHANISM. "X signed with Y" is \
+dead in 48 hours; "how the rule that made X hesitate actually works" still \
+teaches something a year from now. The news is the hook, not the content.
+- Write EVERYTHING in ENGLISH, even when the user writes in Spanish. This \
+channel publishes only in English.
+- If the news names a PERSON, that person's full name MUST appear in the \
+image query. A query without the name comes back with road cars and \
+strangers instead of the driver.
+- The image query must contain the words "Formula One"."""
+
+TG_NOTICIA_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "categoria": {"type": "string",
+                      "enum": ["Aero", "Engine", "Strategy", "Tyres",
+                               "Banned tech", "Tech history"]},
+        "tema": {"type": "string"},
+        "imagenes": {"type": "string"},
+    },
+    "required": ["categoria", "tema", "imagenes"],
+    "additionalProperties": False,
+}
+
+
+async def _tg_llamar(coro):
+    """Ejecuta un mando del panel y devuelve (ok, datos)."""
+    resp = await coro
+    datos = {}
+    with contextlib.suppress(Exception):
+        datos = json.loads(bytes(resp.body).decode("utf-8"))
+    return 200 <= getattr(resp, "status_code", 200) < 300, datos
+
+
+def _encolar_prioritario(tema):
+    """Mete un tema al PRINCIPIO de la cola prioritaria de shorts.
+
+    Al principio y no al final a propósito: lo que llega por Telegram es
+    una noticia, y una noticia pierde valor cada hora que pasa.
+    """
+    datos = {"gp": "", "temas": []}
+    with contextlib.suppress(Exception):
+        with open(_OLA_ARCHIVO) as f:
+            d = json.load(f)
+        if isinstance(d, dict):
+            datos = d
+    temas = datos.get("temas") or []
+    temas.insert(0, list(tema))
+    datos["temas"] = temas
+    with contextlib.suppress(Exception):
+        with open(_OLA_ARCHIVO, "w") as f:
+            json.dump(datos, f, ensure_ascii=False)
+    return len(temas)
+
+
+async def _tg_proponer(noticia):
+    """Convierte una noticia en (categoria, tema, fotos), o None.
+
+    Devuelve None si no hay guionista disponible: encolar el texto tal cual
+    metería un short en español en un canal que solo publica en inglés.
+    """
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        return None
+    try:
+        cliente = anthropic.AsyncAnthropic()
+        r = await cliente.messages.create(
+            model=modelo_actual(), max_tokens=400,
+            system=SYSTEM_TG_NOTICIA,
+            output_config={"format": {"type": "json_schema",
+                                      "schema": TG_NOTICIA_SCHEMA}},
+            messages=[{"role": "user", "content": noticia[:2000]}])
+        if r.stop_reason == "refusal":
+            return None
+        d = json.loads(next((b.text for b in r.content if b.type == "text"),
+                            "{}"))
+    except Exception as e:
+        log.info("Telegram: no pude redactar la propuesta (%s)", e)
+        return None
+    tema, fotos = (d.get("tema") or "").strip(), (d.get("imagenes") or "").strip()
+    if not (tema and fotos):
+        return None
+    # El ancla es la última red: si el guionista se dejó el deporte fuera de
+    # la búsqueda, la ponemos nosotros antes de que vuelvan los coches de calle.
+    return (d.get("categoria") or "Engine", tema, _anclar_consulta(fotos))
+
+
+def _tg_estado_texto():
+    """El estado del canal en un mensaje que se lee de un vistazo."""
+    prog = (estado.programa or {}).get("titulo") or "—"
+    lineas = ["📺 CANAL", f"  Al aire: {prog}"]
+    if estado.off_air_manual:
+        lineas.append("  OFF AIR (en espera, sin gasto)")
+    lineas.append(f"  Director automático: "
+                  f"{'sí' if estado.director_auto else 'no'}")
+    lineas.append(f"  Sesión en vivo: {'sí' if estado.tele is not None else 'no'}")
+    if estado.tele is not None:
+        with contextlib.suppress(Exception):
+            lineas.append(f"  {estado.tele.descripcion()}")
+        lineas.append(f"  Mapa: "
+                      f"{len(estado.mapa_trazado)} puntos de trazado")
+    prox = [s for s in (estado.horario or [])
+            if s["inicio"] > dt.datetime.now(dt.timezone.utc)]
+    if prox:
+        s = min(prox, key=lambda s: s["inicio"])
+        lineas.append(f"  Próxima: {s['sesion']} · {s['pais']} · "
+                      f"{s['inicio'].strftime('%d/%m %H:%M')} UTC")
+    cola = 0
+    with contextlib.suppress(Exception):
+        with open(_OLA_ARCHIVO) as f:
+            cola = len(json.load(f).get("temas") or [])
+    lineas += ["", "🎬 SHORTS", f"  En cola prioritaria: {cola}"]
+    lineas += ["", "🔌 SERVICIOS",
+               f"  Guionista: {'ok' if os.environ.get('ANTHROPIC_API_KEY') else 'falta clave'}"
+               + ("  ⚠️ sin créditos" if estado.api_sin_creditos else ""),
+               f"  Voz: {'en pausa' if _voz_en_pausa() else 'ok'}",
+               f"  Chat de YouTube: {estado.chat_estado or 'off'}"]
+    return "\n".join(lineas)
+
+
+_TG_AYUDA = """🏁 Mando del canal
+
+/estado — qué está al aire ahora mismo
+/informe — métricas: qué funciona y qué no
+
+NOTICIAS
+/noticia <lo que pasó> — lo convierto en un short técnico y te lo
+   enseño antes de encolarlo
+/si — confirmar la propuesta   ·   /no — tirarla
+
+AL AIRE
+/programa historia|tech|interludio — poner uno ahora
+/carrera — volver al modo carrera
+/auto on|off — director automático
+/offair — canal en espera (deja de gastar)
+
+DIRECTO
+/chat <link de YouTube> — conectar el chat del directo
+/ola <circuito> — sembrar shorts técnicos de ese circuito"""
+
+
+async def _telegram_orden(m):
+    """Atiende un mensaje del bot."""
+    chat, texto = m["chat_id"], (m["texto"] or "").strip()
+    # Sin dueño configurado el bot NO obedece a nadie: solo dice qué chat id
+    # eres. Un token de bot se filtra con facilidad, y quien lo tenga podría
+    # publicar en el canal de YouTube.
+    if not telegram_bot.dueno():
+        await telegram_bot.enviar(
+            chat, "Todavía no me han dicho de quién soy.\n\n"
+            f"Tu chat id es:  {chat}\n\n"
+            "Ponlo en Replit como Secret TELEGRAM_CHAT_ID y reinicia el "
+            "canal. A partir de ahí solo te haré caso a ti.")
+        return
+    if not telegram_bot.es_dueno(chat):
+        log.warning("🤖 Telegram: orden rechazada de un chat ajeno (%s, %s)",
+                    chat, m.get("de"))
+        await telegram_bot.enviar(chat, "Este bot es privado.")
+        return
+
+    partes = texto.split(maxsplit=1)
+    # "/estado@mi_bot" es lo que manda Telegram en los grupos
+    cmd = partes[0].lower().lstrip("/").split("@")[0]
+    arg = partes[1].strip() if len(partes) > 1 else ""
+    log.info("🤖 Telegram: /%s %s", cmd, arg[:60])
+    responder = lambda t: telegram_bot.enviar(chat, t)   # noqa: E731
+
+    if cmd in ("start", "ayuda", "help", "comandos"):
+        return await responder(_TG_AYUDA)
+
+    if cmd == "estado":
+        return await responder(_tg_estado_texto())
+
+    if cmd == "informe":
+        try:
+            return await responder(informe_texto())
+        except Exception as e:
+            return await responder(f"No pude sacar el informe: {e}")
+
+    if cmd == "noticia":
+        if not arg:
+            return await responder("Cuéntame qué pasó:\n"
+                                   "/noticia Verstappen renovó hasta 2030")
+        await responder("Dame un segundo, le busco el ángulo técnico…")
+        prop = await _tg_proponer(arg)
+        if not prop:
+            return await responder(
+                "No pude redactarlo (¿el guionista sin clave o sin "
+                "créditos?). No lo encolo: metería un short en español en "
+                "un canal que publica en inglés.")
+        _TG_PROPUESTAS[chat] = prop
+        return await responder(
+            f"Propuesta:\n\n[{prop[0]}]\n{prop[1]}\n\n"
+            f"📷 Fotos: {prop[2]}\n\n"
+            f"/si lo pongo el primero de la cola · /no lo tiro")
+
+    if cmd in ("si", "sí", "ok", "dale", "vale"):
+        prop = _TG_PROPUESTAS.pop(chat, None)
+        if not prop:
+            return await responder("No tengo ninguna propuesta pendiente.")
+        n = _encolar_prioritario(prop)
+        log.info("🌊 Telegram: tema encolado — %s", prop[1][:70])
+        return await responder(f"Encolado el primero. Hay {n} en cola.\n"
+                               f"Sale en el próximo turno de shorts.")
+
+    if cmd in ("no", "nel", "cancelar"):
+        return await responder("Tirada." if _TG_PROPUESTAS.pop(chat, None)
+                               else "No había nada pendiente.")
+
+    if cmd == "programa":
+        if not arg:
+            opciones = ", ".join(list(PROGRAMAS) + ["interludio"])
+            return await responder(f"¿Cuál? {opciones}")
+        ok, d = await _tg_llamar(control_show(arg.lower()))
+        return await responder("Al aire." if ok else
+                               f"No lo conozco. Hay: "
+                               f"{', '.join(list(PROGRAMAS) + ['interludio'])}")
+
+    if cmd == "carrera":
+        await _tg_llamar(control_carrera())
+        return await responder("Modo carrera.")
+
+    if cmd == "auto":
+        valor = arg.lower()
+        if valor not in ("on", "off"):
+            return await responder("/auto on   o   /auto off")
+        _, d = await _tg_llamar(control_auto(valor))
+        return await responder(f"Director automático "
+                               f"{'ON' if d.get('director_auto') else 'OFF'}.")
+
+    if cmd == "offair":
+        await _tg_llamar(control_offair())
+        return await responder("OFF AIR. El canal deja de gastar.")
+
+    if cmd == "chat":
+        if not arg:
+            return await responder("Pásame el link del directo:\n"
+                                   "/chat https://youtube.com/watch?v=…")
+        ok, d = await _tg_llamar(control_chat_conectar(video=arg))
+        return await responder(f"Conectando al chat de {d.get('video')}."
+                               if ok else f"⚠️ {d.get('error')}")
+
+    if cmd == "ola":
+        if not arg:
+            return await responder("¿De qué circuito? /ola Zandvoort")
+        ok, d = await _tg_llamar(control_ola(arg))
+        if not ok:
+            return await responder(
+                f"No reconozco '{arg}'.\nHay: "
+                + ", ".join((d.get("opciones") or [])[:20]))
+        return await responder(f"Ola de {d.get('gp')} sembrada: "
+                               f"{d.get('shorts_en_cola')} shorts en cola.")
+
+    return await responder(f"No conozco /{cmd}.\n\n{_TG_AYUDA}")
+
+
+async def bucle_telegram():
+    """Escucha las órdenes del bot de Telegram (si está configurado)."""
+    if not telegram_bot.configurado():
+        log.info("Telegram inactivo — falta el Secret TELEGRAM_TOKEN")
+        return
+    if not telegram_bot.dueno():
+        log.warning("⚠️  Telegram: falta el Secret TELEGRAM_CHAT_ID — el bot "
+                    "te dirá tu chat id pero NO aceptará órdenes hasta que "
+                    "lo pongas")
+    log.info("🤖 Bot de Telegram escuchando")
+    offset = 0
+    while True:
+        offset, mensajes = await telegram_bot.recibir(offset)
+        for m in mensajes:
+            try:
+                await _telegram_orden(m)
+            except Exception as e:
+                log.info("Telegram: la orden falló (%s)", e)
+                with contextlib.suppress(Exception):
+                    await telegram_bot.enviar(m["chat_id"],
+                                              f"Se me atragantó: {e}")
 
 
 async def bucle_mapa():

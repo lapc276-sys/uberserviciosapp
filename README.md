@@ -79,6 +79,38 @@ que no se pisen cuando el pelotón va junto. El casco es genérico y dibujado
 a mano a propósito: caras de pilotos (o caricaturas reconocibles de ellos)
 tienen derechos de imagen detrás y el canal no los usa.
 
+### Mando por Telegram
+
+El panel web solo sirve con Replit delante y el Repl despierto. Para lo que
+no espera —una noticia, conectar el directo desde el móvil— hay un bot.
+
+Se monta una vez:
+
+1. En Telegram, habla con **@BotFather** → `/newbot` → te da un token.
+2. Secret en Replit: `TELEGRAM_TOKEN` = ese token. Reinicia.
+3. Escríbele `/start` al bot: te contesta con tu **chat id**.
+4. Secret `TELEGRAM_CHAT_ID` = ese número. Reinicia otra vez.
+
+**El paso 4 no es opcional.** Sin él el bot no obedece a nadie, solo dice
+tu chat id. Un token de bot se filtra con facilidad y quien lo tenga podría
+publicar en el canal.
+
+| Orden | Qué hace |
+|---|---|
+| `/estado` | Qué hay al aire, sesión en vivo, cola, salud de los servicios |
+| `/informe` | Las métricas del canal |
+| `/noticia <texto>` | Convierte una noticia en un short **técnico** y te lo enseña |
+| `/si` · `/no` | Confirmar o descartar la propuesta |
+| `/programa historia\|tech\|…` | Poner un programa ahora |
+| `/carrera` · `/auto on\|off` · `/offair` | Los mismos mandos del panel |
+| `/chat <link>` | Conectar el chat del directo de YouTube |
+| `/ola <circuito>` | Sembrar shorts técnicos de un circuito |
+
+`/noticia` pasa por el guionista, que le busca el ángulo técnico y lo
+escribe en inglés **usando solo los hechos de tu mensaje** — no añade
+cifras ni declaraciones por su cuenta. Si el guionista no está disponible,
+no encola nada antes que meter un short en español.
+
 ## 🚀 Automatización y Caché (Eficiencia de Tokens)
 
 ### Parrilla Automática (24/7)
