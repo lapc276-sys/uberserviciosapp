@@ -649,6 +649,7 @@ class Estado:
         self.sesion_meta: dict = {}      # sesión al aire (nombre/país) aunque
                                          # la telemetría no esté disponible
         self.mapa: list = []             # coches en pista (x, y) para el mapa
+        self.mapa_ts: float = 0.0        # cuándo llegó la última posición
         self.mapa_trazado: list = []     # trazado completo del circuito (fijo)
         self.curvas: list = []           # curvas detectadas del trazado
         # Adelantamientos MEDIDOS en esta sesión, repartidos por zona:
@@ -1638,7 +1639,10 @@ async def apex():
         "total_vueltas": t.total_vueltas if t else 0,
         "clima": t.clima if t else {},
         "foco": foco_director(t),
-        "duelos": t.battle_scores()[:4] if t else [],
+        # Los duelos caducan: sin posiciones nuevas en 30 s la sesión ya no
+        # está rodando y lo que queda son huecos de clasificación final.
+        "duelos": (t.battle_scores()[:3]
+                   if t and time.time() - estado.mapa_ts < 30 else []),
         "pit": t.perdida_pit() if t else None,
         "alertas": t.alertas() if t else [],
         "calendario": estado.calendario,
@@ -2134,7 +2138,9 @@ async def visor():
   #incidentes .inc:last-child { border-bottom: none; }
   .inc .lapn { color: var(--amber); white-space: nowrap; }
   #right-col { display: flex; flex-direction: column; gap: 14px; }
-  #intel .duelo { padding: 7px 0; border-bottom: 1px solid var(--line); }
+  /* Duelo cara a cara. El primero va grande (es el que se está contando);
+     los demás quedan compactos debajo para dar contexto sin robar sitio. */
+  #intel .duelo { padding: 10px 0 11px; border-bottom: 1px solid var(--line); }
   #intel .duelo:last-child { border-bottom: none; }
   #intel .top { display: flex; justify-content: space-between;
                font-size: .82rem; font-weight: 700; }
@@ -2143,6 +2149,76 @@ async def visor():
   #intel .score.low { color: var(--dim); }
   .razon { color: var(--dim); font-size: .68rem; margin-top: 2px; }
   .estr { color: var(--amber); font-size: .68rem; margin-top: 3px; }
+
+  /* Rótulo del duelo: ancho, sobre el ticker, como en una retransmisión.
+     Va fijo para que no lo mueva el scroll de las columnas. */
+  #battlebar { position: fixed; left: 50%; bottom: 74px; z-index: 45;
+               width: min(760px, calc(100vw - 44px));
+               transform: translate(-50%, 14px);
+               opacity: 0; pointer-events: none;
+               transition: opacity .35s ease, transform .35s ease;
+               padding: 15px 22px 17px;
+               background: rgba(11,13,18,.93);
+               border: 1px solid var(--line);
+               border-left: 3px solid var(--accent); border-radius: 12px;
+               box-shadow: 0 10px 34px rgba(0,0,0,.6);
+               backdrop-filter: blur(7px); }
+  #battlebar.on { opacity: 1; transform: translate(-50%, 0); }
+  body.programa #battlebar, body.interludio #battlebar,
+  body.standby #battlebar { display: none; }
+
+  .duelo.hero { padding: 0; }
+  .duelo.hero .cab { display: flex; align-items: center; gap: 8px;
+                     margin-bottom: 9px; }
+  .duelo.hero .cab .et { font-size: .74rem; font-weight: 800;
+                         letter-spacing: .2em; color: var(--accent); }
+  .duelo.hero .cab .pn { font-size: .74rem; font-weight: 700;
+                         letter-spacing: .16em; color: var(--dim); }
+  .duelo.hero .cab .sc { margin-left: auto; font-size: 1.5rem;
+                         font-weight: 800; font-variant-numeric: tabular-nums;
+                         line-height: 1; }
+  .duelo.hero .cab .sc::after { content: " PTS"; font-size: .58rem;
+                                font-weight: 700; letter-spacing: .14em;
+                                color: var(--dim); }
+  .duelo.hero .estr { font-size: .76rem; margin-top: 8px; }
+  .duelo.hero .razon { font-size: .7rem; margin-top: 4px; }
+  /* Los dos coches, con el hueco en medio */
+  .vs { display: grid; grid-template-columns: 1fr auto 1fr; gap: 8px;
+        align-items: center; }
+  .vs .lado { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+  .vs .lado.der { align-items: flex-end; text-align: right; }
+  .vs .quien { display: flex; align-items: center; gap: 7px; }
+  .vs .lado.der .quien { flex-direction: row-reverse; }
+  .vs canvas.casco { width: 52px; height: 52px; flex: none; }
+  .vs .acr { font-size: 1.85rem; font-weight: 800; letter-spacing: .01em;
+             line-height: 1; }
+  .vs .nom { font-size: .76rem; font-weight: 500; color: var(--dim);
+             letter-spacing: .02em; }
+  .vs .pos { font-size: .68rem; font-weight: 700; letter-spacing: .14em;
+             color: var(--dim); }
+  .vs .dato { display: flex; align-items: center; gap: 7px;
+              font-size: .78rem; color: var(--dim);
+              font-variant-numeric: tabular-nums; }
+  .vs .lado.der .dato { flex-direction: row-reverse; }
+  .vs .neu { display: inline-flex; align-items: center; justify-content: center;
+             width: 17px; height: 17px; border-radius: 50%; flex: none;
+             font-size: .56rem; font-weight: 800; color: #08090C; }
+  /* El hueco, en grande: es el dato que la gente mira */
+  .vs .medio { display: flex; flex-direction: column; align-items: center;
+               gap: 2px; padding: 0 4px; }
+  .vs .medio .g { font-size: 2.9rem; font-weight: 800; line-height: 1;
+                  font-variant-numeric: tabular-nums; letter-spacing: -.03em; }
+  .vs .medio .t { display: flex; align-items: center; gap: 5px;
+                  font-size: .68rem; font-weight: 700; letter-spacing: .1em;
+                  white-space: nowrap; }
+  .vs .medio .t.closing { color: var(--up); }
+  .vs .medio .t.opening { color: var(--accent); }
+  .vs .medio .t.steady  { color: var(--dim); }
+  /* Barra de cercanía: llena = pegado, vacía = a 3 s */
+  .barra { height: 4px; margin-top: 9px; border-radius: 2px;
+           background: rgba(255,255,255,.07); overflow: hidden; }
+  .barra i { display: block; height: 100%; border-radius: 2px;
+             transition: width .5s ease; }
   #pitloss { margin-top: 8px; padding-top: 7px;
              border-top: 1px solid var(--line); font-size: .7rem;
              color: var(--txt); letter-spacing: .04em; display: none; }
@@ -2175,6 +2251,7 @@ async def visor():
   <span id="clima"></span>
   <span id="lap"></span>
 </header>
+<div id="battlebar"></div>
 <div id="ticker">
   <span class="badge">● LIVE NEWS</span>
   <div class="track"><div class="run" id="ticker-run"></div></div>
@@ -2293,6 +2370,111 @@ function _chapa(ctx, x, y, w, h, r) {
 // fotos) y a propósito: un casco genérico no es de nadie, mientras que la
 // cara de un piloto —o una caricatura reconocible suya— sí tiene derechos
 // de imagen detrás, y el canal no se juega eso.
+// ── Duelo cara a cara ──────────────────────────────────────────────────
+// Colores de los compuestos, como los pinta la propia F1 en pantalla.
+const NEU_COLOR = { SOFT: '#EF3B2D', MEDIUM: '#F2C94C', HARD: '#EDEDED',
+                    INTERMEDIATE: '#43B02A', WET: '#0067AD' };
+function neuChip(n) {
+  const c = (n || '').toUpperCase();
+  if (!c) return '';
+  return '<span class="neu" style="background:' +
+    (NEU_COLOR[c] || '#8992A3') + '">' + c[0] + '</span>';
+}
+// Un casco pequeño en su color de equipo, con el mismo dibujo del mapa.
+function cascoMini(color) {
+  const cv = document.createElement('canvas');
+  cv.className = 'casco';
+  const dpr = Math.min(window.devicePixelRatio || 1, 3);
+  cv.width = 34 * dpr; cv.height = 34 * dpr;
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  dibujarCasco(ctx, 17, 17, 13, '#' + (color || '8992A3'));
+  return cv;
+}
+function ladoHTML(p, der) {
+  const vu = p.vueltas_neumatico;
+  return '<div class="lado' + (der ? ' der' : '') + '">'
+    + '<div class="quien"><span class="hueco"></span><div>'
+    + '<div class="acr">' + (p.acr || '') + '</div>'
+    + '<div class="nom">' + (p.nombre || '') + '</div>'
+    + '<div class="pos">P' + (p.pos || '') + '</div></div></div>'
+    + (p.neumatico ? '<div class="dato">' + neuChip(p.neumatico)
+        + '<span>' + (vu ? vu + ' laps' : 'new') + '</span></div>' : '')
+    + (p.mejor ? '<div class="dato"><span>BEST ' + p.mejor + '</span></div>' : '')
+    + '</div>';
+}
+// El rótulo grande. Solo aparece cuando hay pelea de verdad: si saliera
+// siempre, dejaría de significar nada y taparía el mapa sin motivo.
+let rotuloClave = '';
+function pintarRotulo(dl) {
+  const caja = document.getElementById('battlebar');
+  if (!caja) return;
+  if (!dl || dl.score < 55) { caja.classList.remove('on'); rotuloClave = ''; return; }
+  const clave = dl.entre;
+  if (clave !== rotuloClave) {      // pareja nueva: se redibuja entera
+    rotuloClave = clave;
+    caja.innerHTML = '';
+    caja.appendChild(dueloGrande(dl));
+  } else {                          // misma pareja: solo el hueco cambia
+    const g = caja.querySelector('.medio .g');
+    const t = caja.querySelector('.medio .t');
+    const barra = caja.querySelector('.barra i');
+    if (g) g.textContent = (dl.gap || 0).toFixed(2) + 's';
+    if (t) {
+      const fl = { closing: '▲', opening: '▼', steady: '■' }[dl.sentido] || '■';
+      const et = { closing: 'CLOSING', opening: 'OPENING', steady: 'STEADY' };
+      t.className = 't ' + dl.sentido;
+      t.textContent = fl + ' ' + (et[dl.sentido] || '')
+        + (dl.delta ? ' ' + Math.abs(dl.delta).toFixed(2) + 's' : '');
+    }
+    if (barra) barra.style.width =
+      Math.round(Math.max(0, 1 - (dl.gap || 0) / 3) * 100) + '%';
+  }
+  caja.classList.add('on');
+}
+
+function dueloGrande(dl) {
+  const row = document.createElement('div');
+  row.className = 'duelo hero';
+  const a = dl.delante || {}, b = dl.detras || {};
+  const cls = dl.score >= 70 ? 'high' : dl.score >= 40 ? 'mid' : 'low';
+  const flecha = { closing: '▲', opening: '▼', steady: '■' }[dl.sentido] || '■';
+  const etq = { closing: 'CLOSING', opening: 'OPENING', steady: 'STEADY' };
+  const delta = dl.delta ? ' ' + Math.abs(dl.delta).toFixed(2) + 's' : '';
+  row.innerHTML =
+      '<div class="cab"><span class="et">BATTLE</span>'
+    + '<span class="pn">FOR P' + (a.pos || '') + '</span>'
+    + '<span class="sc ' + cls + '">' + dl.score + '</span></div>'
+    + '<div class="vs">' + ladoHTML(a, false)
+    + '<div class="medio"><span class="g">' + (dl.gap || 0).toFixed(2) + 's</span>'
+    + '<span class="t ' + dl.sentido + '">' + flecha + ' '
+    + (etq[dl.sentido] || '') + delta + '</span></div>'
+    + ladoHTML(b, true) + '</div>'
+    // La barra traduce el hueco a algo que se lee de un vistazo: llena es
+    // pegado, vacía es a los 3 s en que deja de contar como duelo.
+    + '<div class="barra"><i style="width:'
+    + Math.round(Math.max(0, 1 - (dl.gap || 0) / 3) * 100) + '%;background:'
+    + (dl.score >= 70 ? 'var(--accent)'
+       : dl.score >= 40 ? 'var(--amber)' : '#55607A') + '"></i></div>'
+    + (dl.estrategia ? '<div class="estr">' + dl.estrategia + '</div>' : '')
+    + '<div class="razon">' + dl.razon + '</div>';
+  // Los cascos son canvas, así que van después de escribir el HTML.
+  const huecos = row.querySelectorAll('.hueco');
+  if (huecos[0]) huecos[0].replaceWith(cascoMini(a.color));
+  if (huecos[1]) huecos[1].replaceWith(cascoMini(b.color));
+  return row;
+}
+function dueloCompacto(dl) {
+  const row = document.createElement('div'); row.className = 'duelo';
+  const cls = dl.score >= 70 ? 'high' : dl.score >= 40 ? 'mid' : 'low';
+  const flecha = { closing: '▲', opening: '▼', steady: '■' }[dl.sentido] || '■';
+  row.innerHTML = '<div class="top"><span>' + dl.entre
+    + '</span><span class="score ' + cls + '">' + dl.score + '</span></div>'
+    + '<div class="razon">P' + (dl.pos_delante || '') + ' · '
+    + (dl.gap || 0).toFixed(2) + 's ' + flecha + '</div>';
+  return row;
+}
+
 function dibujarCasco(ctx, X, Y, r, color) {
   ctx.save();
   ctx.translate(X, Y);
@@ -3005,22 +3187,11 @@ async function tick() {
   if (!duelos.length) {
     intel.innerHTML = '<div class="vacio">No close battles right now</div>';
   }
-  for (const dl of duelos) {
-    const row = document.createElement('div'); row.className = 'duelo';
-    const cls = dl.score >= 70 ? 'high' : dl.score >= 40 ? 'mid' : 'low';
-    const top = document.createElement('div'); top.className = 'top';
-    top.innerHTML = '<span>' + dl.entre + '</span><span class="score ' +
-      cls + '">' + dl.score + '</span>';
-    const razon = document.createElement('div'); razon.className = 'razon';
-    razon.textContent = dl.razon;
-    row.appendChild(top); row.appendChild(razon);
-    if (dl.estrategia) {
-      const estr = document.createElement('div'); estr.className = 'estr';
-      estr.textContent = dl.estrategia;
-      row.appendChild(estr);
-    }
-    intel.appendChild(row);
-  }
+  duelos.forEach(dl => intel.appendChild(dueloCompacto(dl)));
+  // El duelo más caliente sale además en grande sobre el ticker, como el
+  // rótulo de una retransmisión. En la columna lateral no cabía: 256 px
+  // recortaban los nombres y los tiempos.
+  pintarRotulo(duelos[0]);
   // Coste de parada medido de las paradas reales de ESTA carrera
   const pitloss = document.getElementById('pitloss');
   if (d.pit) {
@@ -8885,6 +9056,12 @@ async def bucle_mapa():
         except Exception:
             continue
         if pos:
+            # Cuándo llegó la última posición. Un duelo solo existe si hay
+            # coches rodando: al acabar la sesión los huecos que quedan son
+            # la clasificación final, no una pelea, y sin esta marca el
+            # panel se quedaba enseñando "BATTLE FOR P16" con el sprint ya
+            # terminado.
+            estado.mapa_ts = time.time()
             estado.mapa = [
                 {"n": n, "x": p["x"], "y": p["y"],
                  "a": t.pilotos.get(n, {}).get("acronimo", str(n)),

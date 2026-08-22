@@ -825,11 +825,30 @@ class Telemetria:
                 else:
                     razon_tendencia = f"gap steady at {gap:.2f}s"
             score = round(max(0.0, min(100.0, cercania + tendencia)))
+            # La tendencia en un campo aparte del texto: el gráfico de
+            # pantalla necesita saber si el hueco se cierra para pintar la
+            # flecha, y sacarlo de la frase a base de buscar palabras sería
+            # frágil.
+            if tendencia > 2:
+                sentido, delta = "closing", (anterior - gap) if anterior else 0.0
+            elif tendencia < -2:
+                sentido, delta = "opening", (anterior - gap) if anterior else 0.0
+            else:
+                sentido, delta = "steady", 0.0
             resultados.append({
                 "entre": f"{delante['acr']} vs {detras['acr']}",
                 "score": score,
                 "pos_delante": delante["pos"],
                 "pos_detras": detras["pos"],
+                "gap": round(gap, 3),
+                "sentido": sentido,
+                "delta": round(delta, 3),
+                # Las dos filas enteras: acrónimo, nombre, color de equipo,
+                # neumático con su edad y mejor vuelta. Ya estaban
+                # calculadas aquí; mandarlas evita que la pantalla tenga
+                # que volver a cruzar la tabla por posición.
+                "delante": delante,
+                "detras": detras,
                 "razon": f"{gap:.2f}s gap ({round(cercania)} pts for "
                         f"closeness) — {razon_tendencia} "
                         f"({round(tendencia):+d} pts trend)",
