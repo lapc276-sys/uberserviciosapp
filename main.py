@@ -2338,6 +2338,24 @@ function dibujarCasco(ctx, X, Y, r, color) {
   ctx.strokeStyle = 'rgba(255,255,255,.85)'; ctx.stroke();
   ctx.restore();
 }
+// El lienzo trae un tamaño fijo en el HTML (980x600) pero el CSS lo estira
+// al ancho que haya. En una emisión de 1920 eso es ampliar 980 píxeles a
+// casi el doble, y se ve pixelado. Aquí se le da al lienzo la resolución
+// que de verdad ocupa en pantalla, conservando su proporción, y se escala
+// el contexto para poder seguir dibujando en las mismas coordenadas.
+const _proporcion = new WeakMap();
+function lienzo(cv) {
+  if (!_proporcion.has(cv)) _proporcion.set(cv, cv.width / cv.height);
+  const ar = _proporcion.get(cv);
+  const dpr = Math.min(window.devicePixelRatio || 1, 3);
+  const w = cv.clientWidth || cv.width, h = w / ar;
+  const bw = Math.max(1, Math.round(w * dpr)), bh = Math.max(1, Math.round(h * dpr));
+  if (cv.width !== bw || cv.height !== bh) { cv.width = bw; cv.height = bh; }
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { ctx, w, h };
+}
+
 function pintarMapa(d) {
   const panel = document.getElementById('panel-mapa');
   const caja = document.getElementById('mapabox');
@@ -2358,13 +2376,13 @@ function pintarMapa(d) {
     // acumulados ni coches flotando en el vacío (sin pista no hay escala
     // fiable y el encuadre saltaría). Un aviso limpio y ya.
     const cvv = document.getElementById(grande ? 'mapa-grande' : 'mapa');
-    const cx = cvv.getContext('2d');
-    cx.clearRect(0, 0, cvv.width, cvv.height);
+    const { ctx: cx, w: cw, h: ch } = lienzo(cvv);
+    cx.clearRect(0, 0, cw, ch);
     cx.save();
     cx.textAlign = 'center';
     cx.font = (grande ? '700 22px' : '700 12px') + ' Inter,sans-serif';
     cx.fillStyle = 'rgba(190,200,220,.55)';
-    cx.fillText('LOADING TRACK MAP…', cvv.width / 2, cvv.height / 2);
+    cx.fillText('LOADING TRACK MAP…', cw / 2, ch / 2);
     cx.restore();
     return;
   }
@@ -2375,7 +2393,7 @@ function pintarMapa(d) {
     else { p.x += (c.x - p.x) * 0.45; p.y += (c.y - p.y) * 0.45; }
   }
   const cv = document.getElementById(grande ? 'mapa-grande' : 'mapa');
-  const ctx = cv.getContext('2d');
+  const { ctx, w, h } = lienzo(cv);
   // Encuadre ROBUSTO: un glitch de coordenadas (un coche o punto que salta a
   // un valor imposible) dispara la escala y colapsa el mapa a una raya. Se
   // descartan atípicos por rango intercuartílico en cada eje, sobre trazado
@@ -2400,7 +2418,7 @@ function pintarMapa(d) {
       if (y < minY) minY = y; if (y > maxY) maxY = y;
     }
   }
-  const pad = grande ? 60 : 20, w = cv.width, h = cv.height;
+  const pad = grande ? 60 : 20;
   const s = Math.min((w - 2 * pad) / Math.max(1, maxX - minX),
                      (h - 2 * pad) / Math.max(1, maxY - minY));
   // Centrar el trazado en el lienzo
@@ -2408,11 +2426,19 @@ function pintarMapa(d) {
   const px = x => offX + (x - minX) * s, py = y => h - offY - (y - minY) * s;
   ctx.clearRect(0, 0, w, h);
   {
-    // Pista con el estilo del canal: glow + cinta oscura + línea coloreada
-    // por VELOCIDAD relativa. Las muestras de posición vienen a intervalos
-    // regulares, así que la separación entre puntos consecutivos es
-    // proporcional a la velocidad (azul = lento, rojo = rápido).
+    // Pista: glow suave, cinta de asfalto y una línea de acento encima.
+    //
+    // Antes la línea se coloreaba por "velocidad", deducida de lo separados
+    // que estaban los puntos entre sí. Eso valía cuando el trazado salía de
+    // la sesión en curso, muestreada a intervalos fijos. Ya no: viene del
+    // caché de una sesión pasada, filtrado por atípicos y submuestreado, así
+    // que la separación mide lo que dejó el filtro, no la velocidad — y
+    // aunque la midiera, sería la de otra sesión, no la de hoy. Se veía como
+    // un arcoíris porque eso es lo que era: ruido pintado de colores.
     ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    // Grosores relativos al lienzo, para que se vean igual a cualquier
+    // resolución en vez de engordar cuando el mapa es pequeño.
+    const gr = w / 980;
     const pt = linea.map(([x, y]) => [px(x), py(y)]);
     // Separación entre muestras consecutivas
     const sep = [];
@@ -2443,52 +2469,25 @@ function pintarMapa(d) {
         tr.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y));
       }
     };
-    // 1) Glow rojo suave por debajo
+    // 1) Halo tenue por debajo, para despegar la pista del fondo
     ctx.save();
-    ctx.shadowColor = 'rgba(255,60,20,.85)';
-    ctx.shadowBlur = grande ? 26 : 10;
+    ctx.shadowColor = 'rgba(255,60,20,.5)';
+    ctx.shadowBlur = Math.max(4, 14 * gr);
     trazar();
-    ctx.strokeStyle = 'rgba(120,20,10,.55)';
-    ctx.lineWidth = grande ? 26 : 11; ctx.stroke();
+    ctx.strokeStyle = 'rgba(120,20,10,.4)';
+    ctx.lineWidth = Math.max(3, 13 * gr); ctx.stroke();
     ctx.restore();
-    // 2) Cinta oscura (el asfalto)
+    // 2) Cinta de asfalto
     trazar();
-    ctx.strokeStyle = 'rgba(18,21,29,.98)';
-    ctx.lineWidth = grande ? 22 : 9; ctx.stroke();
-    // 3) Línea de color por velocidad (suavizada por ventana). Los SALTOS se
-    // excluyen del cálculo: si no, falsearían la escala hacia arriba.
-    const sepOk = sep.map(v => v > LIM ? med : v);
-    const suave = sepOk.map((_, i) => {
-      const v = sepOk.slice(Math.max(0, i-2), i+3);
-      return v.reduce((a,b) => a+b, 0) / v.length;
-    });
-    const ord = suave.slice().sort((a,b) => a-b);
-    const lo = ord[Math.floor(ord.length*0.08)] || 0;
-    const hi = ord[Math.floor(ord.length*0.92)] || 1;
-    const rg = (hi - lo) || 1;
-    const colVel = t => {
-      t = Math.max(0, Math.min(1, t));
-      const ps = [[0,[40,90,220]],[0.4,[0,200,210]],[0.72,[250,205,0]],
-                  [1,[235,30,15]]];
-      for (let i = 0; i < ps.length-1; i++) {
-        if (t <= ps[i+1][0]) {
-          const k = (t - ps[i][0]) / ((ps[i+1][0] - ps[i][0]) || 1);
-          const a = ps[i][1], b = ps[i+1][1];
-          return 'rgb(' + a.map((v,j) => Math.round(v + (b[j]-v)*k)).join(',') + ')';
-        }
-      }
-      return 'rgb(235,30,15)';
-    };
-    ctx.lineWidth = grande ? 9 : 4;
-    for (let i = 0; i < pt.length - 1; i++) {
-      if (sep[i] > LIM) continue;          // salto de datos: no se pinta
-      ctx.beginPath();
-      ctx.moveTo(pt[i][0], pt[i][1]); ctx.lineTo(pt[i+1][0], pt[i+1][1]);
-      ctx.strokeStyle = colVel((suave[i] - lo) / rg);
-      ctx.stroke();
-    }
+    ctx.strokeStyle = 'rgba(20,24,32,.98)';
+    ctx.lineWidth = Math.max(2.5, 11 * gr); ctx.stroke();
+    // 3) Línea de acento encima, de un solo color
+    trazar();
+    ctx.strokeStyle = 'rgba(236,238,243,.92)';
+    ctx.lineWidth = Math.max(1, 3.4 * gr); ctx.stroke();
     // 4) Marca de meta
-    ctx.beginPath(); ctx.arc(pt[0][0], pt[0][1], grande ? 7 : 3.5, 0, 7);
+    ctx.beginPath();
+    ctx.arc(pt[0][0], pt[0][1], Math.max(2.5, 6 * gr), 0, 7);
     ctx.fillStyle = '#fff'; ctx.fill();
   }
   // Curva destacada: anillo pulsante sobre el vértice + su número
