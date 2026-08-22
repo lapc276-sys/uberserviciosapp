@@ -6,7 +6,16 @@ entrypoint = "main.py"
 run = ["python3", "main.py"]
 deploymentTarget = "vm"
 
-# La app escucha en 8080; Replit lo expone como HTTPS público (443)
+# La app escucha en 8080; Replit lo expone como HTTPS público (443).
+# externalPort NO es opcional: sin esa línea Replit no publica el puerto,
+# y entonces no aparece ni el botón Preview ni el enlace .dev — que es
+# exactamente lo que pasó cuando Replit reescribió este archivo solo.
 [[ports]]
 localPort = 8080
 externalPort = 80
+
+# Librerías del sistema (las puso Replit al detectar qué importa el
+# proyecto). ffmpeg-full arma los videos verticales de los shorts; el
+# resto son las que Pillow necesita para leer y escribir imágenes.
+[nix]
+packages = ["cairo", "ffmpeg-full", "freetype", "ghostscript", "gobject-introspection", "gtk3", "lcms2", "libimagequant", "libjpeg", "libtiff", "libwebp", "libxcrypt", "openjpeg", "pkg-config", "qhull", "tcl", "tk", "zlib"]
