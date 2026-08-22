@@ -41,6 +41,7 @@ from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import (HTMLResponse, JSONResponse,
                                PlainTextResponse, Response)
 
+import portada
 import telegram_bot
 import telemetria
 import youtube_subir
@@ -1608,6 +1609,9 @@ async def noticias():
         "noticias": crawl,
         "total": len(estado.noticias_crawl),
         "idx": estado.noticias_idx,
+        # La portada las quiere todas y con foto: las diez del ticker son
+        # las últimas del lote, no las mejores para maquetar tarjetas.
+        "portada": estado.noticias_crawl,
     })
 
 
@@ -1693,6 +1697,17 @@ async def narracion():
         "hace_segundos": round(time.time() - estado.narracion_ts)
         if estado.narracion_ts else None,
     })
+
+
+@app.get("/inicio", response_class=HTMLResponse)
+async def inicio():
+    """La página pública del canal.
+
+    Va aparte de `/` a propósito: `/` es la pantalla que OBS captura para
+    el directo, y cambiarla tumbaría la transmisión. Cuando esta esté
+    aprobada se intercambian las rutas.
+    """
+    return portada.HTML
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -9841,11 +9856,26 @@ NOTICIAS_TEMAS = [t.strip() for t in os.environ.get(
     "IndyCar racing;WEC Le Mans").split(";") if t.strip()]
 _GNEWS = ("https://news.google.com/rss/search?q={q}+when:3d"
           "&hl=en-US&gl=US&ceid=US:en")
-# Feeds directos de respaldo (por si Google News no está disponible)
-NOTICIAS_FEEDS_BACKUP = [
-    ("AUTOSPORT", "https://www.autosport.com/rss/feed/f1"),
-    ("MOTORSPORT", "https://www.motorsport.com/rss/f1/news/"),
+# Feeds directos por serie. Google News da titulares de todas partes pero
+# nunca trae foto y no dice de qué campeonato habla; estos sí: el feed ya
+# ES de una serie, y los medios adjuntan su imagen en <media:content> o
+# <enclosure>. De aquí salen las tarjetas con miniatura de la portada.
+NOTICIAS_FEEDS_SERIE = [
+    ("F1",      "AUTOSPORT",  "https://www.autosport.com/rss/feed/f1"),
+    ("F1",      "MOTORSPORT", "https://www.motorsport.com/rss/f1/news/"),
+    ("MOTOGP",  "AUTOSPORT",  "https://www.autosport.com/rss/feed/motogp"),
+    ("MOTOGP",  "MOTORSPORT", "https://www.motorsport.com/rss/motogp/news/"),
+    ("NASCAR",  "MOTORSPORT", "https://www.motorsport.com/rss/nascar-cup/news/"),
+    ("INDYCAR", "MOTORSPORT", "https://www.motorsport.com/rss/indycar/news/"),
+    ("WEC",     "MOTORSPORT", "https://www.motorsport.com/rss/wec/news/"),
 ]
+# Se mantiene el nombre viejo: hay código que lo importa.
+NOTICIAS_FEEDS_BACKUP = [(m, u) for _, m, u in NOTICIAS_FEEDS_SERIE[:2]]
+# Color de cada serie en la portada (el mismo del diseño)
+SERIE_COLOR = {
+    "F1": "#FF2D16", "MOTOGP": "#FFB020", "NASCAR": "#2FC4E0",
+    "INDYCAR": "#31D97A", "WEC": "#A78BFA", "": "#8992A3",
+}
 # Cada cuántos segundos se refrescan las noticias (gratis, solo RSS)
 NOTICIAS_INTERVALO = float(os.environ.get("NOTICIAS_INTERVALO", "900"))
 
@@ -9860,9 +9890,48 @@ def _limpiar_titulo(t):
     return re.sub(r"\s+", " ", t).strip()
 
 
+def _url_imagen_item(item):
+    """Saca la foto que el medio adjunta a su noticia, si adjunta alguna.
+
+    No hay una sola forma de hacerlo en RSS: cada medio usa la suya, así
+    que se prueban las tres habituales por orden. La foto es del medio y
+    se muestra como preview del enlace — miniatura, su nombre al lado y
+    clic al artículo original, como hacen Google News o Flipboard. No se
+    copia el texto: se manda el tráfico a quien lo escribió.
+    """
+    for patron in (r"<media:content[^>]+url=[\"']([^\"']+)[\"']",
+                   r"<media:thumbnail[^>]+url=[\"']([^\"']+)[\"']",
+                   r"<enclosure[^>]+url=[\"']([^\"']+)[\"']"):
+        m = re.search(patron, item, flags=re.IGNORECASE)
+        if not m:
+            continue
+        url = _limpiar_titulo(m.group(1))
+        # <enclosure> también lleva audio y video de podcasts: solo fotos
+        if re.search(r"\.(jpe?g|png|webp|avif)(\?|$)", url, re.IGNORECASE):
+            return url
+        if patron.startswith(r"<media:content") and "image" in item[
+                m.start():m.start() + 400].lower():
+            return url
+    return ""
+
+
+def _url_link_item(item):
+    """El enlace al artículo original. Sin esto la miniatura sería una
+    foto ajena sin crédito ni destino, que es justo lo que no queremos."""
+    m = re.search(r"<link[^>]*>(.*?)</link>", item,
+                  flags=re.DOTALL | re.IGNORECASE)
+    if m and m.group(1).strip():
+        return _limpiar_titulo(m.group(1))
+    # Atom: <link href="..."/>
+    m = re.search(r"<link[^>]+href=[\"']([^\"']+)[\"']", item,
+                  flags=re.IGNORECASE)
+    return _limpiar_titulo(m.group(1)) if m else ""
+
+
 def _parsear_items(xml, fuente_default):
-    """Extrae [{texto, fuente}] de un XML RSS. En Google News el título
-    viene como 'Titular - Medio' y hay una etiqueta <source> con el medio."""
+    """Extrae [{texto, fuente, link, imagen}] de un XML RSS. En Google News
+    el título viene como 'Titular - Medio' y hay una etiqueta <source> con
+    el medio."""
     out = []
     items = re.findall(r"<(?:item|entry)\b.*?</(?:item|entry)>",
                        xml, flags=re.DOTALL | re.IGNORECASE)
@@ -9888,31 +9957,41 @@ def _parsear_items(xml, fuente_default):
         titulo = titulo.strip()
         if titulo and len(titulo) > 8:
             out.append({"texto": titulo[:120],
-                        "fuente": (fuente or fuente_default)[:22].upper()})
+                        "fuente": (fuente or fuente_default)[:22].upper(),
+                        "link": _url_link_item(item),
+                        "imagen": _url_imagen_item(item)})
     return out
 
 
 async def obtener_noticias_rss():
     """Titulares de automovilismo desde RSS (los títulos ya son titulares
-    listos — no se llama a ninguna IA, es gratis). Prueba Google News por
-    cada tema y, si falla, feeds directos de respaldo."""
+    listos — no se llama a ninguna IA, es gratis).
+
+    Primero los feeds por serie: ya vienen etiquetados con su campeonato y
+    suelen traer foto, así que son los que alimentan las tarjetas de la
+    portada. Después Google News, que cubre lo que los otros no publicaron
+    pero llega sin foto ni serie — sirve para el ticker.
+    """
     noticias, vistos = [], set()
     async with httpx.AsyncClient(follow_redirects=True,
                                  headers={"User-Agent": "Mozilla/5.0 "
                                           "(F1FanChannel news ticker)"}) as c:
-        fuentes = ([("GOOGLE NEWS",
-                     _GNEWS.format(q=t.replace(" ", "+")))
-                    for t in NOTICIAS_TEMAS] + NOTICIAS_FEEDS_BACKUP)
-        for fuente_default, url in fuentes:
+        fuentes = ([(s, m, u) for s, m, u in NOTICIAS_FEEDS_SERIE]
+                   + [("", "GOOGLE NEWS", _GNEWS.format(q=t.replace(" ", "+")))
+                      for t in NOTICIAS_TEMAS])
+        for serie, fuente_default, url in fuentes:
             try:
                 r = await c.get(url, timeout=12)
                 if r.status_code != 200:
                     continue
                 for n in _parsear_items(r.text, fuente_default)[:8]:
                     clave = n["texto"].lower()
-                    if clave not in vistos:
-                        vistos.add(clave)
-                        noticias.append(n)
+                    if clave in vistos:
+                        continue
+                    vistos.add(clave)
+                    n["serie"] = serie
+                    n["color"] = SERIE_COLOR.get(serie, SERIE_COLOR[""])
+                    noticias.append(n)
             except Exception:
                 continue
     return noticias
@@ -9932,8 +10011,11 @@ async def bucle_noticias_crawl():
                 hora = ahora.strftime("%H:%M")
                 estado.noticias_crawl = [
                     {"texto": n["texto"], "fuente": n["fuente"], "hora": hora,
-                     "timestamp": ahora.isoformat()}
-                    for n in noticias[:15]]
+                     "timestamp": ahora.isoformat(),
+                     "link": n.get("link", ""), "imagen": n.get("imagen", ""),
+                     "serie": n.get("serie", ""),
+                     "color": n.get("color", SERIE_COLOR[""])}
+                    for n in noticias[:30]]
                 log.info("📰 %d titulares cargados en el ticker",
                          len(estado.noticias_crawl))
             else:
@@ -9947,6 +10029,28 @@ async def bucle_noticias_crawl():
 # sin clave para F1. Se refresca cada STANDINGS_INTERVALO segundos.
 STANDINGS_INTERVALO = float(os.environ.get("STANDINGS_INTERVALO", "21600"))
 _JOLPICA = "https://api.jolpi.ca/ergast/f1/current"
+
+
+# Color con el que se identifica cada equipo, para la barrita de la tabla.
+# Jolpica devuelve el nombre del constructor, no su color, y sin esto todas
+# las filas saldrían iguales. Se busca por trozo del nombre porque Jolpica
+# escribe "RB F1 Team" o "Alpine F1 Team" según el año.
+_COLOR_EQUIPOS = [
+    ("mclaren", "#FF8000"), ("ferrari", "#E8002D"), ("red bull", "#3671C6"),
+    ("mercedes", "#27F4D2"), ("aston", "#229971"), ("alpine", "#FF87BC"),
+    ("williams", "#64C4FF"), ("haas", "#B6BABD"), ("sauber", "#52E252"),
+    ("audi", "#52E252"), ("racing bulls", "#6692FF"), ("rb", "#6692FF"),
+    ("cadillac", "#C9B037"), ("alphatauri", "#6692FF"),
+]
+
+
+def color_equipo(nombre):
+    """Color del equipo, o gris si es uno que no conocemos todavía."""
+    n = (nombre or "").lower()
+    for clave, color in _COLOR_EQUIPOS:
+        if clave in n:
+            return color
+    return "#8992A3"
 
 
 async def _f1_standings():
@@ -9963,12 +10067,15 @@ async def _f1_standings():
                     for d in lst[0].get("DriverStandings", []):
                         drv = d.get("Driver", {})
                         cons = d.get("Constructors", [{}])
+                        equipo = cons[-1].get("name", "") if cons else ""
                         pilotos.append({
                             "pos": int(d.get("position", 0)),
                             "nombre": (drv.get("familyName", "")).upper(),
                             "cod": drv.get("code", ""),
-                            "equipo": cons[-1].get("name", "") if cons else "",
+                            "equipo": equipo,
                             "puntos": float(d.get("points", 0)),
+                            "wins": int(d.get("wins", 0) or 0),
+                            "color": color_equipo(equipo),
                         })
         except Exception as e:
             log.info("Standings pilotos no disponibles (%s)", e)
@@ -9979,10 +10086,13 @@ async def _f1_standings():
                        ["StandingsLists"])
                 if lst:
                     for d in lst[0].get("ConstructorStandings", []):
+                        nom = d.get("Constructor", {}).get("name", "")
                         equipos.append({
                             "pos": int(d.get("position", 0)),
-                            "nombre": d.get("Constructor", {}).get("name", ""),
+                            "nombre": nom,
                             "puntos": float(d.get("points", 0)),
+                            "wins": int(d.get("wins", 0) or 0),
+                            "color": color_equipo(nom),
                         })
         except Exception as e:
             log.info("Standings equipos no disponibles (%s)", e)

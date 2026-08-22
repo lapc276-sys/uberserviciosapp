@@ -51,6 +51,44 @@ Variables de entorno (Secrets en Replit, todas opcionales):
 | `PLAYLIST` | `historia,interludio,tech,interludio` | Qué programas rotar |
 | `ROTACION_MINUTOS` | `8` | Cuántos minutos dura cada programa |
 
+### La página pública (`/inicio`)
+
+`/` es la pantalla que **OBS captura** para el directo: gráficos a pantalla
+completa pensados para verse dentro de un video. `/inicio` es otra cosa —
+la web del canal, para que la gente entre, vea cuándo es la próxima
+sesión, lea las noticias y encuentre el directo.
+
+Van en rutas distintas a propósito: si `/` cambia, se cae la transmisión.
+Cuando la página esté aprobada se intercambian las dos rutas.
+
+**Publicar la página no quita OBS.** OBS *fabrica* el directo; la página
+solo lo enseña. Soltar OBS exigiría que el servidor codificara video con
+`ffmpeg` y lo empujara por RTMP, y eso Replit no lo aguanta 24/7.
+
+No hay nada que configurar: se pinta sola con lo que el canal ya tiene.
+
+| En la página | De dónde sale |
+|---|---|
+| Cuenta atrás, sesiones, calendario | `/apex` (OpenF1) |
+| Titulares con foto y enlace | `/noticias` (RSS gratis) |
+| Clasificaciones de pilotos y equipos | `/apex` (Jolpica, datos reales) |
+| ON AIR / qué se está emitiendo | `/apex` |
+| Videos | `/shorts` (los que ya se subieron a YouTube) |
+
+Sobre las imágenes, que es donde es fácil meterse en un lío:
+
+- **Miniaturas de noticias**: la que el propio medio publica en su RSS, con
+  su nombre al lado y clic a su artículo. Es el patrón de *preview de
+  enlace* (Google News, Flipboard): no se copia el texto de nadie, se
+  manda el tráfico a quien lo escribió. Si un medio no da foto, queda el
+  marco y la tarjeta no se rompe.
+- **Fotos de archivo**: Wikimedia Commons, Openverse y Flickr CC.
+- **Video**: embed oficial de YouTube y contenido propio. Nada bajado de
+  F1TV.
+
+El pie de página lleva el descargo (canal independiente, sin relación con
+la F1 ni la FIA) y el crédito de las imágenes.
+
 ### Mapa del circuito en vivo
 
 El mapa dibuja la pista **completa desde el primer segundo**. La forma sale
