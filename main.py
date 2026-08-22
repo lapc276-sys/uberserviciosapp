@@ -1642,6 +1642,7 @@ async def apex():
         "ambiente": estado.ambiente_activo,
         "proxima_sesion": _proxima_sesion_info(),
         "proximo_programa": estado.proximo_programa,
+        "canal": _canal_youtube(),
         "standings": {"pilotos": estado.standings_pilotos[:10],
                       "equipos": estado.standings_equipos[:10],
                       "otros": estado.standings_otros},
@@ -1652,6 +1653,24 @@ async def apex():
         "pases": {str(k): v for k, v in estado.pases.items()},
         "pases_total": estado.pases_total,
     })
+
+
+def _canal_youtube():
+    """A dónde manda el botón de "ver" de la portada.
+
+    Si el chat ya está enganchado a un directo tenemos su ID, que es lo
+    mejor: se puede incrustar el reproductor en la propia página. Si no,
+    queda el canal (`/live` lleva al directo si lo hay, y si no al canal).
+    Sin `YOUTUBE_CHANNEL_ID` no hay a dónde mandar a nadie y la portada
+    esconde el botón en vez de dejar uno que no hace nada.
+    """
+    canal = (f"https://www.youtube.com/channel/{YOUTUBE_CHANNEL_ID}"
+             if YOUTUBE_CHANNEL_ID else "")
+    return {
+        "video": estado.chat_video or "",
+        "canal": canal,
+        "directo": (f"{canal}/live" if canal else ""),
+    }
 
 
 def _proxima_sesion_info():

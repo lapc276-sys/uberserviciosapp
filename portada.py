@@ -125,6 +125,8 @@ series and championship standings.">
           display: flex; align-items: center; justify-content: center; }
   .shot img { position: absolute; inset: 0; width: 100%; height: 100%;
               object-fit: cover; }
+  .shot iframe { position: absolute; inset: 0; width: 100%; height: 100%;
+                 border: 0; }
   .shot .lines { position: absolute; inset: 0; width: 100%; height: 100%;
                  opacity: .3; }
   .play { position: relative; display: flex; align-items: center;
@@ -385,6 +387,7 @@ series and championship standings.">
         <span class="now" id="ahora">—</span>
       </div>
       <div class="next"><span class="lbl">Up next</span><span id="siguiente">—</span></div>
+      <span class="src2" id="msgDirecto"></span>
       <a class="btn" id="watchBtn" href="#watch">
         <svg width="12" height="14" viewBox="0 0 12 14" aria-hidden="true"><path d="M0 0 L12 7 L0 14 Z" fill="currentColor"/></svg>
         Watch on YouTube
@@ -608,6 +611,44 @@ function pintarRondas(cal) {
   ).join("");
 }
 
+// ── el directo ────────────────────────────────────────────────────────
+// Con el ID del video se incrusta el reproductor de YouTube en la propia
+// tarjeta (es el embed oficial, para eso está). Sin ID pero con canal, el
+// botón lleva a /live. Sin ninguna de las dos no hay a dónde ir, así que
+// el botón se esconde en vez de quedarse ahí sin hacer nada.
+let videoPuesto = "";
+function pintarDirecto(canal) {
+  const destino = canal.video
+    ? "https://www.youtube.com/watch?v=" + encodeURIComponent(canal.video)
+    : (canal.directo || canal.canal || "");
+
+  [$("#watchBtn"), $("#watchTop"), $("#liveShot")].forEach((a) => {
+    if (destino) {
+      a.href = destino;
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      a.style.display = "";
+    } else if (a !== $("#liveShot")) {
+      a.style.display = "none";
+    }
+  });
+
+  if (canal.video && canal.video !== videoPuesto) {
+    videoPuesto = canal.video;
+    $("#liveShot").innerHTML = '<iframe src="https://www.youtube.com/embed/'
+      + encodeURIComponent(canal.video)
+      + '?rel=0" title="Live stream" allow="accelerometer; autoplay; '
+      + 'clipboard-write; encrypted-media; picture-in-picture" '
+      + 'allowfullscreen></iframe>';
+    // Ya no es un enlace: el reproductor se maneja solo dentro del marco.
+    $("#liveShot").removeAttribute("href");
+  }
+  if (!destino) {
+    $("#msgDirecto").textContent = "Set YOUTUBE_CHANNEL_ID to link the "
+      + "channel here.";
+  }
+}
+
 // ── carga ─────────────────────────────────────────────────────────────
 async function cargar() {
   let d = {};
@@ -640,6 +681,7 @@ async function cargar() {
   const prog = d.programa || {};
   $("#ahora").textContent = prog.titulo || (enVivo ? "Live session" : "Off air");
   $("#siguiente").textContent = d.proximo_programa || "—";
+  pintarDirecto(d.canal || {});
 
   const st = d.standings || {};
   $("#tabs").innerHTML =
