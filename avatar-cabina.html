@@ -1,0 +1,615 @@
+<title>Cabina APEX</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800;900&family=Barlow:wght@400;500;600;700&family=Barlow+Condensed:wght@600;700&display=swap" rel="stylesheet">
+
+<style>
+  :root {
+    --void:   #07080B;   /* el vacío que OBS hace transparente */
+    --booth:  #141A25;   /* pared de la cabina */
+    --lit:    #1E2736;   /* donde le pega la luz de los monitores */
+    --desk:   #0E131C;
+    --ink:    #F2F4F8;
+    --mute:   #7C8699;
+    --faint:  #4A5568;
+    --line:   #232C3B;
+    --live:   #FF2D16;
+    --on:     #31D97A;
+    --skin:   #C98D6B;
+    --skin-d: #A9714F;
+    --shirt:  #2A3446;
+    --shirt-d:#212A39;
+    --hair:   #2B2118;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--void); color: var(--ink);
+    font-family: Barlow, "Segoe UI", system-ui, sans-serif;
+    line-height: 1.6; -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 44px 24px 72px; }
+
+  h1 {
+    font-family: Archivo, "Helvetica Neue", Arial, sans-serif;
+    font-weight: 900; font-size: clamp(30px, 5vw, 50px); line-height: .98;
+    letter-spacing: -.03em; text-transform: uppercase; text-wrap: balance;
+  }
+  .kick {
+    display: flex; align-items: center; gap: 11px; margin-bottom: 14px;
+    font-size: 12px; font-weight: 700; letter-spacing: .2em;
+    text-transform: uppercase; color: var(--live);
+  }
+  .kick::before { content: ""; width: 30px; height: 3px; background: var(--live); }
+  .lede { margin-top: 16px; max-width: 62ch; font-size: 17px; color: var(--mute);
+          text-wrap: pretty; }
+
+  /* ── el escenario ───────────────────────────────────────────── */
+  .escena { display: grid; grid-template-columns: minmax(0,1fr) 300px;
+            gap: 28px; margin-top: 40px; align-items: start; }
+  @media (max-width: 900px) { .escena { grid-template-columns: 1fr; } }
+
+  .marco {
+    position: relative; border: 1px solid var(--line); border-radius: 4px;
+    overflow: hidden; background:
+      repeating-conic-gradient(#0C1016 0 25%, #0A0D12 0 50%) 0 0 / 22px 22px;
+  }
+  .marco svg { display: block; width: 100%; height: auto; }
+  .marco .etiq {
+    position: absolute; left: 12px; top: 12px; z-index: 3;
+    font-family: "Barlow Condensed", Barlow, sans-serif;
+    font-size: 12px; font-weight: 700; letter-spacing: .16em;
+    text-transform: uppercase; color: var(--faint);
+    background: rgba(7,8,11,.8); padding: 4px 9px; border-radius: 2px;
+  }
+
+  /* ── mandos ─────────────────────────────────────────────────── */
+  .mandos { display: flex; flex-direction: column; gap: 22px; }
+  .grupo { display: flex; flex-direction: column; gap: 9px; }
+  .grupo > span {
+    font-size: 11px; font-weight: 700; letter-spacing: .18em;
+    text-transform: uppercase; color: var(--faint);
+  }
+  .ops { display: flex; flex-direction: column; gap: 6px; }
+  .op {
+    display: flex; flex-direction: column; gap: 2px; align-items: flex-start;
+    padding: 11px 14px; background: transparent; color: var(--mute);
+    border: 1px solid var(--line); border-left: 3px solid var(--line);
+    border-radius: 2px; cursor: pointer; font-family: inherit;
+    text-align: left; transition: border-color .15s, color .15s, background .15s;
+  }
+  .op:hover { color: var(--ink); border-color: var(--faint); }
+  .op[aria-pressed="true"] {
+    color: var(--ink); background: var(--lit);
+    border-color: var(--line); border-left-color: var(--live);
+  }
+  .op b { font-size: 14px; font-weight: 700; letter-spacing: -.005em; }
+  .op i { font-style: normal; font-size: 12px; color: var(--faint); }
+  .op:focus-visible { outline: 2px solid var(--live); outline-offset: 2px; }
+
+  .fila { display: flex; gap: 6px; }
+  .fila .op { flex: 1; align-items: center; border-left-width: 1px; }
+  .fila .op[aria-pressed="true"] { border-color: var(--live); }
+
+  .nota { padding: 13px 15px; background: var(--lit); border-radius: 2px;
+          font-size: 12.5px; color: var(--mute); line-height: 1.55; }
+  .nota b { color: var(--ink); font-weight: 600; }
+
+  /* ── veredicto ──────────────────────────────────────────────── */
+  .veredicto { margin-top: 56px; display: grid;
+               grid-template-columns: repeat(3, minmax(0,1fr)); gap: 20px; }
+  @media (max-width: 860px) { .veredicto { grid-template-columns: 1fr; } }
+  .tarjeta { padding: 22px; border: 1px solid var(--line); border-radius: 3px;
+             background: #0B0F16; }
+  .tarjeta h3 { font-family: Archivo, sans-serif; font-weight: 800;
+                font-size: 17px; letter-spacing: -.01em; margin-bottom: 4px; }
+  .tarjeta .dictamen { font-size: 11px; font-weight: 700; letter-spacing: .14em;
+                       text-transform: uppercase; margin-bottom: 13px; }
+  .si  { color: var(--on); }
+  .no  { color: var(--live); }
+  .quiza { color: #FFB020; }
+  .tarjeta p { font-size: 14px; color: var(--mute); text-wrap: pretty; }
+  .tarjeta p + p { margin-top: 10px; }
+
+  .cierre { margin-top: 52px; padding-top: 30px; border-top: 1px solid var(--line); }
+  .cierre h2 { font-family: Archivo, sans-serif; font-weight: 800;
+               font-size: 25px; letter-spacing: -.02em; margin-bottom: 12px; }
+  .cierre p { max-width: 66ch; font-size: 15.5px; color: var(--mute);
+              text-wrap: pretty; }
+  .cierre p + p { margin-top: 12px; }
+  .cierre strong { color: var(--ink); font-weight: 600; }
+
+  /* ── el rig ─────────────────────────────────────────────────── */
+  /* Cada parte gira desde su propia articulación. Sin fill-box el origen
+     sería la esquina del lienzo entero y todo orbitaría en vez de girar. */
+  #cuerpo, #hombros, #cabeza, #brazoIzq, #brazoDer,
+  #antebrazoIzq, #antebrazoDer, #parpados, #boca {
+    transform-box: fill-box;
+  }
+  #cuerpo   { transform-origin: 50% 100%; }
+  #cabeza   { transform-origin: 50% 96%; }
+  #brazoIzq { transform-origin: 78% 12%; }
+  #brazoDer { transform-origin: 22% 12%; }
+  #antebrazoIzq { transform-origin: 62% 8%; }
+  #antebrazoDer { transform-origin: 38% 8%; }
+  #boca     { transform-origin: 50% 50%; }
+
+  /* Respiración: el pecho sube y baja. Es lo que separa "avatar vivo" de
+     "imagen pegada", y cuesta cuatro líneas. */
+  @keyframes respirar {
+    0%, 100% { transform: scaleY(1) translateY(0); }
+    50%      { transform: scaleY(1.014) translateY(-2px); }
+  }
+  #cuerpo { animation: respirar 4.2s ease-in-out infinite; }
+
+  @keyframes parpadear {
+    0%, 96%, 100% { transform: scaleY(0); }
+    97.5%         { transform: scaleY(1); }
+  }
+  #parpados { transform-origin: 50% 0%; animation: parpadear 5.6s infinite; }
+
+  .glow { filter: drop-shadow(0 0 14px rgba(255,45,22,.5)); }
+
+  @media (prefers-reduced-motion: reduce) {
+    #cuerpo, #parpados, .vivo * { animation: none !important; }
+    * { transition: none !important; }
+  }
+</style>
+
+<div class="wrap">
+
+  <p class="kick">Prototipo</p>
+  <h1>La cabina</h1>
+  <p class="lede">Tres formas de poner un comentarista en pantalla, moviéndose
+    de verdad. Cámbialas y ponlo a hablar: lo que hay que juzgar es el
+    movimiento, y eso una imagen fija no lo enseña.</p>
+
+  <div class="escena">
+    <div class="marco">
+      <span class="etiq" id="etiq">Cabeza fotográfica · cuerpo ilustrado</span>
+
+      <svg viewBox="0 0 520 470" role="img" aria-labelledby="tit">
+        <title id="tit">Comentarista en una cabina de televisión</title>
+
+        <defs>
+          <linearGradient id="pared" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0"   stop-color="#1E2736"/>
+            <stop offset="1"   stop-color="#0E131C"/>
+          </linearGradient>
+          <radialGradient id="luz" cx="50%" cy="26%" r="62%">
+            <stop offset="0" stop-color="#38506F" stop-opacity=".55"/>
+            <stop offset="1" stop-color="#38506F" stop-opacity="0"/>
+          </radialGradient>
+          <linearGradient id="mesa" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#1A2231"/>
+            <stop offset="1" stop-color="#0A0E15"/>
+          </linearGradient>
+          <linearGradient id="tela" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#33405A"/>
+            <stop offset="1" stop-color="#212A39"/>
+          </linearGradient>
+          <clipPath id="recorteCara">
+            <circle cx="260" cy="150" r="58"/>
+          </clipPath>
+        </defs>
+
+        <!-- ═══ LA CABINA ═══ -->
+        <g id="set">
+          <rect width="520" height="470" fill="url(#pared)"/>
+          <rect width="520" height="470" fill="url(#luz)"/>
+
+          <!-- Monitores de tiempos al fondo, desenfocados a base de opacidad
+               baja: dan profundidad sin robar la atención. -->
+          <g opacity=".5">
+            <rect x="24"  y="52" width="120" height="76" rx="3" fill="#0B121C"/>
+            <rect x="376" y="52" width="120" height="76" rx="3" fill="#0B121C"/>
+          </g>
+          <g opacity=".62" fill="#31465F">
+            <rect x="32" y="60" width="60" height="4" rx="2"/>
+            <rect x="32" y="70" width="88" height="4" rx="2"/>
+            <rect x="32" y="80" width="46" height="4" rx="2"/>
+            <rect x="32" y="90" width="76" height="4" rx="2"/>
+            <rect x="32" y="100" width="54" height="4" rx="2"/>
+            <rect x="32" y="110" width="82" height="4" rx="2"/>
+            <rect x="384" y="60" width="72" height="4" rx="2"/>
+            <rect x="384" y="70" width="50" height="4" rx="2"/>
+            <rect x="384" y="80" width="86" height="4" rx="2"/>
+            <rect x="384" y="90" width="62" height="4" rx="2"/>
+            <rect x="384" y="100" width="78" height="4" rx="2"/>
+            <rect x="384" y="110" width="44" height="4" rx="2"/>
+          </g>
+          <rect x="32" y="60" width="6" height="54" fill="#FF2D16" opacity=".7"/>
+          <rect x="384" y="60" width="6" height="54" fill="#FF2D16" opacity=".45"/>
+
+          <!-- Franja de acento de la pared -->
+          <rect x="0" y="300" width="520" height="2" fill="#FF2D16" opacity=".16"/>
+          <rect x="0" y="302" width="520" height="94" fill="#0B1119" opacity=".55"/>
+        </g>
+
+        <!-- ═══ EL COMENTARISTA ═══ -->
+        <g id="figura">
+
+          <!-- Cuerpo: hombros y torso. Todo cuelga de aquí, así que la
+               respiración de este grupo mueve la figura entera. -->
+          <g id="cuerpo">
+
+            <!-- Brazos. Un comentarista está SENTADO con los antebrazos
+                 en la mesa: es la pose real, y además resuelve que las manos
+                 no queden cortadas por el canto. El gesto es levantar una. -->
+            <g id="brazoIzq">
+              <!-- Brazo: hombro → codo -->
+              <path d="M196 262 q-22 6 -26 34 l-6 54 l34 4 l4 -52 q2 -26 16 -34 z"
+                    fill="#242E3E"/>
+              <g id="antebrazoIzq">
+                <!-- Antebrazo: codo → mesa -->
+                <path d="M164 348 l34 4 q4 24 24 32 l-8 22 q-40 -10 -50 -58 z"
+                      fill="#2A3446"/>
+                <ellipse cx="230" cy="386" rx="20" ry="13" fill="var(--skin)"
+                         transform="rotate(-12 230 386)"/>
+              </g>
+            </g>
+            <g id="brazoDer">
+              <path d="M324 262 q22 6 26 34 l6 54 l-34 4 l-4 -52 q-2 -26 -16 -34 z"
+                    fill="#242E3E"/>
+              <g id="antebrazoDer">
+                <path d="M356 348 l-34 4 q-4 24 -24 32 l8 22 q40 -10 50 -58 z"
+                      fill="#2A3446"/>
+                <ellipse cx="290" cy="386" rx="20" ry="13" fill="var(--skin)"
+                         transform="rotate(12 290 386)"/>
+              </g>
+            </g>
+
+            <!-- Torso. Hombros marcados con una línea real en vez de una
+                 curva de campana: sin ese quiebro se lee como un poncho. -->
+            <path d="M260 236
+                     q-34 2 -50 14 q-18 14 -22 40 l-8 106 l160 0 l-8 -106
+                     q-4 -26 -22 -40 q-16 -12 -50 -14 z" fill="url(#tela)"/>
+            <!-- Sombra bajo el brazo: es lo que separa brazo de torso.
+                 Sin ella, misma tela y mismo tono se funden en un bulto. -->
+            <path d="M204 282 q-6 22 -8 114 l14 0 q2 -92 10 -110 z"
+                  fill="#171E2A" opacity=".85"/>
+            <path d="M316 282 q6 22 8 114 l-14 0 q-2 -92 -10 -110 z"
+                  fill="#171E2A" opacity=".85"/>
+            <!-- Cuello de la camisa -->
+            <path d="M238 240 l22 30 l22 -30 q-22 -8 -44 0 z" fill="#161D28"/>
+            <!-- Acreditación colgando del cordón -->
+            <path d="M244 244 q16 44 22 58" fill="none" stroke="#FF2D16"
+                  stroke-width="2" opacity=".55"/>
+            <rect x="258" y="300" width="28" height="38" rx="3" fill="#0F1720"/>
+            <rect x="262" y="307" width="20" height="3" rx="1.5" fill="#FF2D16"/>
+            <rect x="262" y="315" width="14" height="2.4" rx="1.2" fill="#4A5568"/>
+            <rect x="262" y="321" width="18" height="2.4" rx="1.2" fill="#4A5568"/>
+
+            <!-- Cuello -->
+            <path d="M242 190 l36 0 l0 46 q-18 8 -36 0 z" fill="var(--skin-d)"/>
+
+            <!-- Cabeza -->
+            <g id="cabeza">
+
+              <!-- ── Variante ilustrada ── -->
+              <g id="caraDibujo">
+                <ellipse cx="260" cy="150" rx="52" ry="60" fill="var(--skin)"/>
+                <!-- Pelo -->
+                <path d="M208 142 q0 -60 52 -60 q52 0 52 60 q-8 -30 -52 -30
+                         q-44 0 -52 30 z" fill="var(--hair)"/>
+                <!-- Cejas -->
+                <rect x="226" y="124" width="24" height="5" rx="2.5" fill="var(--hair)"/>
+                <rect x="270" y="124" width="24" height="5" rx="2.5" fill="var(--hair)"/>
+                <!-- Ojos -->
+                <ellipse cx="238" cy="149" rx="9" ry="10" fill="#F7F9FC"/>
+                <ellipse cx="282" cy="149" rx="9" ry="10" fill="#F7F9FC"/>
+                <circle cx="239" cy="150" r="5" fill="#1F2A38"/>
+                <circle cx="283" cy="150" r="5" fill="#1F2A38"/>
+                <circle cx="241" cy="147" r="1.6" fill="#fff" opacity=".9"/>
+                <circle cx="285" cy="147" r="1.6" fill="#fff" opacity=".9"/>
+                <!-- Párpados: bajan al parpadear -->
+                <g id="parpados" fill="var(--skin)">
+                  <rect x="228" y="138" width="20" height="22"/>
+                  <rect x="272" y="138" width="20" height="22"/>
+                </g>
+                <!-- Nariz -->
+                <path d="M260 152 l-5 18 q5 4 10 0 z" fill="var(--skin-d)"
+                      opacity=".75"/>
+              </g>
+
+              <!-- ── Variante con foto ── -->
+              <g id="caraFoto" style="display:none">
+                <circle cx="260" cy="150" r="60" fill="#0E131C"/>
+                <g clip-path="url(#recorteCara)">
+                  <rect x="200" y="90" width="120" height="120" fill="#20293A"/>
+                  <!-- Silueta de marcador de posición -->
+                  <circle cx="260" cy="138" r="21" fill="#38455C"/>
+                  <path d="M218 208 q0 -38 42 -38 q42 0 42 38 z" fill="#38455C"/>
+                  <text x="260" y="186" text-anchor="middle" fill="#61738F"
+                        font-family="Barlow, sans-serif" font-size="10"
+                        font-weight="700" letter-spacing="1.2">TU FOTO</text>
+                </g>
+                <circle cx="260" cy="150" r="60" fill="none" stroke="#FF2D16"
+                        stroke-width="2.5" id="aroFoto"/>
+              </g>
+
+              <!-- La boca va fuera de las dos variantes: se dibuja encima
+                   de la foto igual que sobre el dibujo, así la sincronía
+                   labial funciona en ambas. -->
+              <g id="boca">
+                <path id="labios" d="M242 178 q18 6 36 0 q-18 4 -36 0 z"
+                      fill="#7A3A34"/>
+              </g>
+
+              <!-- Auriculares: van sobre la cabeza en las dos variantes y
+                   son lo que dice "comentarista" de un vistazo. -->
+              <g id="cascos">
+                <path id="diadema" d="M202 152 q0 -66 58 -66 q58 0 58 66" fill="none"
+                      stroke="#161C27" stroke-width="11" stroke-linecap="round"/>
+                <rect x="192" y="140" width="24" height="42" rx="11" fill="#1E2735"/>
+                <rect x="304" y="140" width="24" height="42" rx="11" fill="#1E2735"/>
+                <rect x="197" y="147" width="14" height="28" rx="7" fill="#2C3849"/>
+                <!-- Micrófono de varilla -->
+                <path d="M212 178 q0 22 20 30" fill="none" stroke="#161C27"
+                      stroke-width="4" stroke-linecap="round"/>
+                <ellipse cx="236" cy="210" rx="8" ry="6" fill="#2A3446"
+                         transform="rotate(-18 236 210)"/>
+              </g>
+            </g>
+          </g>
+
+          <!-- Mesa por delante: recorta la figura por la cintura, que es lo
+               que la mete DENTRO de la cabina en vez de dejarla flotando. -->
+          <rect x="0" y="396" width="520" height="74" fill="url(#mesa)"/>
+          <rect x="0" y="396" width="520" height="2" fill="#3A4A63" opacity=".8"/>
+          <rect x="0" y="398" width="520" height="1.5" fill="#FF2D16" opacity=".3"/>
+        </g>
+
+        <!-- ═══ RÓTULO EN PANTALLA ═══ -->
+        <g id="rotulo">
+          <rect x="24" y="414" width="248" height="38" rx="2" fill="#0A0D13"
+                opacity=".93"/>
+          <rect x="24" y="414" width="3" height="38" fill="#FF2D16"/>
+          <text x="38" y="431" fill="#F2F4F8" font-family="Archivo, sans-serif"
+                font-size="15" font-weight="800" letter-spacing="-.2">EDMUND</text>
+          <text x="38" y="445" fill="#7C8699" font-family="Barlow, sans-serif"
+                font-size="10.5" font-weight="600" letter-spacing="1.5">
+            COMENTARISTA · APEX</text>
+          <g id="live">
+            <rect x="440" y="414" width="56" height="20" rx="2" fill="#FF2D16"/>
+            <circle cx="452" cy="424" r="3.4" fill="#fff" id="puntoLive"/>
+            <text x="461" y="428" fill="#fff" font-family="Barlow, sans-serif"
+                  font-size="10" font-weight="800" letter-spacing="1.4">LIVE</text>
+          </g>
+        </g>
+      </svg>
+    </div>
+
+    <div class="mandos">
+      <div class="grupo">
+        <span>Tratamiento</span>
+        <div class="ops" id="variantes">
+          <button class="op" data-v="mixto" aria-pressed="true">
+            <b>Cabeza tuya, cuerpo dibujado</b>
+            <i>Tu cara real sobre un cuerpo que sí se puede mover</i>
+          </button>
+          <button class="op" data-v="dibujo" aria-pressed="false">
+            <b>Comentarista ilustrado</b>
+            <i>Todo dibujado. Libertad total de movimiento</i>
+          </button>
+          <button class="op" data-v="busto" aria-pressed="false">
+            <b>Solo cabeza y hombros</b>
+            <i>Plano corto, movimiento mínimo. Lo más seguro</i>
+          </button>
+        </div>
+      </div>
+
+      <div class="grupo">
+        <span>Estado</span>
+        <div class="fila" id="estados">
+          <button class="op" data-e="idle" aria-pressed="true"><b>En silencio</b></button>
+          <button class="op" data-e="habla" aria-pressed="false"><b>Hablando</b></button>
+        </div>
+      </div>
+
+      <div class="grupo">
+        <span>Gestos</span>
+        <div class="fila" id="gestos">
+          <button class="op" data-g="normal" aria-pressed="true"><b>Escasos</b></button>
+          <button class="op" data-g="mucho" aria-pressed="false"><b>Constantes</b></button>
+        </div>
+      </div>
+
+      <p class="nota" id="notaGesto"><b>Escasos</b> es el ritmo que aguanta seis
+        horas seguidas: un gesto cada 15-25 segundos. Prueba «constantes» y
+        déjalo un minuto — así es como cansa.</p>
+    </div>
+  </div>
+
+  <div class="veredicto">
+    <div class="tarjeta">
+      <h3>Cabeza tuya, cuerpo dibujado</h3>
+      <p class="dictamen si">Lo que yo haría</p>
+      <p>Tu cara está ahí, que es lo que querías, pero los brazos y el torso
+        son dibujo — o sea que se mueven sin deformar a nadie. Es un recurso
+        viejo de los gráficos de televisión, precisamente porque funciona.</p>
+      <p>Necesita una foto tuya de frente, con luz plana y fondo que se pueda
+        recortar. Nada más.</p>
+    </div>
+    <div class="tarjeta">
+      <h3>Comentarista ilustrado</h3>
+      <p class="dictamen quiza">Depende de si te importa salir tú</p>
+      <p>Libertad total: gira, gesticula, se inclina sobre la mesa. Nunca cae
+        en el valle inquietante porque nunca finge ser una foto.</p>
+      <p>El coste es que el canal deja de tener tu cara. Si la idea era que se
+        te reconozca a ti, este no es.</p>
+    </div>
+    <div class="tarjeta">
+      <h3>Medio cuerpo desde una foto</h3>
+      <p class="dictamen no">No lo haría</p>
+      <p>Recortar brazos y hombros de una foto y animarlos da un muñeco
+        articulado de cartón. Con la cabeza casi cuela; en cuanto se mueve un
+        hombro, se rompe.</p>
+      <p>Es el que pediste, y es el único de los tres que te va a decepcionar
+        al verlo en pantalla.</p>
+    </div>
+  </div>
+
+  <div class="cierre">
+    <h2>Dos cosas que no se ven en una imagen fija</h2>
+    <p><strong>El canal es 24/7.</strong> Un avatar repitiendo gestos durante
+      seis horas pasa de simpático a irritante muy rápido. Por eso el ritmo por
+      defecto es un gesto cada 15-25 segundos y la respiración es casi
+      imperceptible: tiene que leerse como que hay alguien ahí, no como que
+      algo se está moviendo.</p>
+    <p><strong>La sincronía labial hay que sacarla de la voz, no de las
+      letras.</strong> Adivinar la boca contando vocales en el texto va a
+      desincronizarse siempre, porque el texto no sabe cuánto dura cada
+      sílaba. El canal ya genera el MP3 con ElevenLabs — de ahí sale la
+      amplitud real, y ahí la boca cuadra sola.</p>
+  </div>
+</div>
+
+<script>
+(() => {
+  const $ = (s) => document.querySelector(s);
+  const reducido = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  const cabeza = $("#cabeza"), cuerpo = $("#cuerpo");
+  const bIzq = $("#brazoIzq"), bDer = $("#brazoDer");
+  const aIzq = $("#antebrazoIzq"), aDer = $("#antebrazoDer");
+  const labios = $("#labios"), aro = $("#aroFoto"), punto = $("#puntoLive");
+
+  // Los seis visemas, como formas de labio. Cada uno es un path: interpolar
+  // entre formas da una boca de goma, cambiar de forma da una boca que
+  // articula — que es lo que hace el original.
+  const BOCAS = {
+    0: "M242 178 q18 5 36 0 q-18 3 -36 0 z",              // cerrada
+    1: "M244 177 q16 9 32 0 q-16 7 -32 0 z",              // semi
+    2: "M242 174 q18 20 36 0 q-18 24 -36 0 z",            // abierta
+    3: "M238 175 q22 16 44 0 q-22 12 -44 0 z",            // sonrisa
+    4: "M250 176 q10 16 20 0 q-10 14 -20 0 z",            // redondeada
+    5: "M240 171 q20 30 40 0 q-20 36 -40 0 z",            // gritando
+  };
+  const SECUENCIA = [2, 1, 3, 0, 2, 4, 1, 5, 2, 1, 3, 1, 0, 2, 4, 1];
+
+  let variante = "mixto", estado = "idle", ritmo = "normal";
+  let paso = 0, tHabla = 0, tGesto = 0, gesto = null;
+
+  function ponVariante(v) {
+    variante = v;
+    $("#caraFoto").style.display = v === "dibujo" ? "none" : "";
+    // Con foto, la diadema por encima del círculo se lee como casco.
+    // Los gráficos de televisión dejan solo las almohadillas.
+    $("#diadema").style.display = v === "dibujo" ? "" : "none";
+    $("#caraDibujo").style.display = v === "dibujo" ? "" : "none";
+    // El plano corto no es otro personaje: es el mismo, acercado. Se sube
+    // la figura y se amplía, y la mesa recorta por donde toca.
+    const f = $("#figura");
+    f.style.transition = reducido ? "none" : "transform .6s cubic-bezier(.4,0,.2,1)";
+    f.style.transformOrigin = "260px 150px";
+    f.style.transform = v === "busto" ? "scale(1.55) translateY(14px)" : "scale(1)";
+    $("#etiq").textContent = {
+      mixto:  "Cabeza fotográfica · cuerpo ilustrado",
+      dibujo: "Comentarista ilustrado",
+      busto:  "Plano corto · solo cabeza y hombros",
+    }[v];
+  }
+
+  function grupo(sel, attr, fn) {
+    const caja = $(sel);
+    caja.addEventListener("click", (e) => {
+      const b = e.target.closest("button");
+      if (!b) return;
+      caja.querySelectorAll("button").forEach(
+        (x) => x.setAttribute("aria-pressed", String(x === b)));
+      fn(b.dataset[attr]);
+    });
+  }
+  grupo("#variantes", "v", ponVariante);
+  grupo("#estados", "e", (v) => {
+    estado = v;
+    if (v === "idle") labios.setAttribute("d", BOCAS[0]);
+  });
+  grupo("#gestos", "g", (v) => {
+    ritmo = v;
+    $("#notaGesto").innerHTML = v === "normal"
+      ? "<b>Escasos</b> es el ritmo que aguanta seis horas seguidas: un gesto "
+        + "cada 15-25 segundos. Prueba «constantes» y déjalo un minuto — así "
+        + "es como cansa."
+      : "<b>Constantes</b> es un gesto cada 2-4 segundos. Al principio parece "
+        + "más vivo; al minuto ya molesta, y esto va a estar en pantalla seis "
+        + "horas seguidas.";
+  });
+
+  // Un gesto es un brazo que sube, se sostiene y baja. Con dos segmentos
+  // (brazo y antebrazo) girando distinto ya se lee como un movimiento
+  // humano y no como una pieza rígida pivotando.
+  function lanzarGesto() {
+    const der = Math.random() > .5;
+    gesto = { t: 0, dur: 1.5 + Math.random() * .9, der,
+              alto: 16 + Math.random() * 16 };
+  }
+
+  function pintarGesto(dt) {
+    if (!gesto) return;
+    gesto.t += dt;
+    const p = gesto.t / gesto.dur;
+    if (p >= 1) {
+      gesto = null;
+      [bIzq, bDer, aIzq, aDer].forEach((g) => g.style.transform = "");
+      return;
+    }
+    // Sube rápido, se sostiene, baja despacio
+    const curva = p < .3 ? p / .3 : p < .65 ? 1 : 1 - (p - .65) / .35;
+    const s = Math.sin(curva * Math.PI / 2) * gesto.alto;
+    const brazo = gesto.der ? bDer : bIzq;
+    const ante = gesto.der ? aDer : aIzq;
+    const signo = gesto.der ? -1 : 1;
+    brazo.style.transform = `rotate(${signo * s}deg)`;
+    ante.style.transform = `rotate(${signo * s * 1.5}deg)`;
+  }
+
+  let ultimo = performance.now();
+  function bucle(ahora) {
+    const dt = Math.min(.05, (ahora - ultimo) / 1000);
+    ultimo = ahora;
+    const t = ahora / 1000;
+
+    if (!reducido) {
+      // Cabeza: dos senos de periodo distinto. Un solo seno se lee como
+      // metrónomo; dos desfasados parecen movimiento involuntario.
+      const activo = estado === "habla" ? 1.9 : 1;
+      const giro = Math.sin(t * .55) * 1.5 * activo
+                 + Math.sin(t * .23 + 1.7) * 1.1 * activo;
+      const alto = Math.sin(t * .41 + .8) * 1.6 * activo;
+      cabeza.style.transform = `rotate(${giro}deg) translateY(${alto}px)`;
+      cuerpo.style.setProperty("--x", "0");
+
+      // Boca
+      if (estado === "habla") {
+        tHabla += dt;
+        if (tHabla > .11) {
+          tHabla = 0;
+          paso = (paso + 1) % SECUENCIA.length;
+          labios.setAttribute("d", BOCAS[SECUENCIA[paso]]);
+        }
+      }
+
+      // Gestos
+      tGesto += dt;
+      const espera = ritmo === "normal"
+        ? (estado === "habla" ? 9 : 15) + Math.random() * 10
+        : 2 + Math.random() * 2;
+      if (!gesto && tGesto > espera) { tGesto = 0; lanzarGesto(); }
+      pintarGesto(dt);
+
+      // El punto del LIVE y el aro de la foto laten al hablar
+      punto.setAttribute("opacity", .45 + .55 * Math.abs(Math.sin(t * 2.6)));
+      if (aro) {
+        const hablando = estado === "habla";
+        aro.setAttribute("stroke", hablando ? "#31D97A" : "#FF2D16");
+        aro.setAttribute("stroke-width",
+          hablando ? 2.5 + Math.abs(Math.sin(t * 7)) * 1.8 : 2.5);
+      }
+    }
+    requestAnimationFrame(bucle);
+  }
+
+  ponVariante("mixto");
+  requestAnimationFrame(bucle);
+})();
+</script>
