@@ -3454,9 +3454,14 @@ async function tick() {
   } else { fb.style.display = 'none'; }
   // subtítulo: llega un segmento nuevo → arranca por su primera línea
   if (d.lineas.length && d.segmento !== ultimoSegmento) {
-    const esPrimeraCarga = ultimoSegmento === -1;
     ultimoSegmento = d.segmento;
-    if (vozActiva && !esPrimeraCarga) {
+    // Se reproduce TAMBIÉN el segmento que ya estaba sonando al cargar.
+    // Antes la primera carga se saltaba a propósito: con la voz apagada
+    // hasta que alguien pulsara el botón, reproducir al abrir no venía a
+    // cuento. Ahora el sonido va encendido desde el arranque, así que esa
+    // excepción era justo lo que dejaba la emisión muda hasta el siguiente
+    // segmento — y cada vez que OBS recarga la fuente, otra vez.
+    if (vozActiva) {
       // con voz: el subtítulo lo maneja el reproductor, línea a línea
       reproducirSegmento(d.segmento, d.lineas, d.idioma);
     } else {
