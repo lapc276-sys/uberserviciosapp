@@ -17,6 +17,9 @@
     a:hover { color: #FF2D16; }
     .num { font-family: "Barlow Condensed", Barlow, sans-serif;
            font-variant-numeric: tabular-nums; }
+    .foto { position: relative; overflow: hidden; background: #12161D; }
+    .foto svg { position: absolute; inset: 0; width: 100%; height: 100%;
+                opacity: .3; }
     @keyframes bl { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
   </style>
 </helmet>
@@ -88,27 +91,75 @@
       </sc-for>
     </div>
 
-    <a href="#" style="display: flex; flex-direction: column; gap: 13px; padding: 18px; background: #0F1218; border: 1px solid #232B37; border-top: 3px solid {{ lead.color }}; border-radius: 2px;">
-      <div style="display: flex; align-items: center; gap: 9px;">
-        <span style="font-size: 10px; font-weight: 800; letter-spacing: .14em; color: {{ lead.color }};">{{ lead.serie }}</span>
-        <span style="width: 3px; height: 3px; border-radius: 50%; background: #3A4454;"></span>
-        <span class="num" style="font-size: 12px; font-weight: 500; color: #5C6474;">{{ lead.hora }}</span>
+    <a href="#" style="display: flex; flex-direction: column; background: #0F1218; border: 1px solid #232B37; border-radius: 2px; overflow: hidden;">
+      <div class="foto" style="height: 196px;">
+        <svg viewBox="0 0 354 196" preserveAspectRatio="none" fill="none" aria-hidden="true">
+          <path d="M0 164 L354 74" stroke="#232B37" stroke-width="1"></path>
+          <path d="M0 196 L354 106" stroke="#232B37" stroke-width="1"></path>
+        </svg>
+        <span style="position: absolute; top: 12px; left: 12px; padding: 5px 10px; background: {{ lead.color }}; border-radius: 2px; font-size: 10px; font-weight: 800; letter-spacing: .14em; color: #08090C;">{{ lead.serie }}</span>
       </div>
-      <h3 style="margin: 0; font-family: Archivo, Helvetica, Arial, sans-serif; font-weight: 700; font-size: 22px; line-height: 1.14; letter-spacing: -.018em; text-wrap: pretty;">{{ lead.titulo }}</h3>
-      <span style="font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: {{accent}};">{{ lead.fuente }}</span>
+      <div style="display: flex; flex-direction: column; gap: 11px; padding: 16px 17px 18px;">
+        <h3 style="margin: 0; font-family: Archivo, Helvetica, Arial, sans-serif; font-weight: 700; font-size: 21px; line-height: 1.14; letter-spacing: -.018em; text-wrap: pretty;">{{ lead.titulo }}</h3>
+        <div style="display: flex; align-items: center; gap: 9px;">
+          <span style="font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: {{accent}};">{{ lead.fuente }}</span>
+          <span class="num" style="margin-left: auto; font-size: 12px; font-weight: 500; color: #5C6474;">{{ lead.hora }}</span>
+        </div>
+      </div>
     </a>
 
     <div style="display: flex; flex-direction: column;">
-      <sc-for list="{{ items }}" as="n" hint-placeholder-count="5">
-        <a href="#" style="display: flex; flex-direction: column; gap: 8px; padding: 16px 0 17px; border-bottom: 1px solid #1A2029;">
-          <div style="display: flex; align-items: center; gap: 9px;">
-            <span style="width: 3px; height: 11px; background: {{ n.color }};"></span>
-            <span style="font-size: 10px; font-weight: 800; letter-spacing: .14em; color: {{ n.color }};">{{ n.serie }}</span>
-            <span class="num" style="margin-left: auto; font-size: 12px; font-weight: 500; color: #5C6474;">{{ n.hora }}</span>
+      <sc-for list="{{ items }}" as="n" hint-placeholder-count="4">
+        <a href="#" style="display: flex; gap: 13px; padding: 15px 0 16px; border-bottom: 1px solid #1A2029;">
+          <div class="foto" style="flex: none; width: 96px; height: 72px; border-radius: 2px; border-left: 3px solid {{ n.color }};">
+            <svg viewBox="0 0 96 72" preserveAspectRatio="none" fill="none" aria-hidden="true">
+              <path d="M0 60 L96 26" stroke="#232B37" stroke-width="1"></path>
+              <path d="M0 72 L96 38" stroke="#232B37" stroke-width="1"></path>
+            </svg>
           </div>
-          <h4 style="margin: 0; font-size: 16px; font-weight: 600; line-height: 1.3; letter-spacing: -.008em; text-wrap: pretty;">{{ n.titulo }}</h4>
-          <span style="font-size: 10px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: #5C6474;">{{ n.fuente }}</span>
+          <div style="display: flex; flex-direction: column; gap: 6px;">
+            <div style="display: flex; align-items: center; gap: 9px;">
+              <span style="font-size: 10px; font-weight: 800; letter-spacing: .14em; color: {{ n.color }};">{{ n.serie }}</span>
+              <span class="num" style="font-size: 12px; font-weight: 500; color: #5C6474;">{{ n.hora }}</span>
+            </div>
+            <h4 style="margin: 0; font-size: 15px; font-weight: 600; line-height: 1.28; letter-spacing: -.008em; text-wrap: pretty;">{{ n.titulo }}</h4>
+            <span style="font-size: 10px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: #5C6474;">{{ n.fuente }}</span>
+          </div>
         </a>
+      </sc-for>
+    </div>
+  </section>
+
+  <!-- standings -->
+  <section style="display: flex; flex-direction: column; gap: 16px; padding: 26px 18px 34px; background: #0A0C11; border-top: 1px solid #232B37;">
+    <div style="display: flex; flex-direction: column; gap: 6px;">
+      <span style="font-size: 10px; font-weight: 700; letter-spacing: .2em; text-transform: uppercase; color: {{accent}};">Formula 1 · 2026 season</span>
+      <h2 style="margin: 0; font-family: Archivo, Helvetica, Arial, sans-serif; font-weight: 800; font-size: 26px; line-height: 1; letter-spacing: -.022em; text-transform: uppercase;">Standings</h2>
+    </div>
+
+    <div style="display: flex; gap: 7px;">
+      <sc-for list="{{ tabsTabla }}" as="t" hint-placeholder-count="2">
+        <span style="flex: 1; text-align: center; font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: {{ t.txt }}; background: {{ t.fondo }}; border: 1px solid {{ t.borde }}; border-radius: 2px; padding: 9px 12px;">{{ t.nombre }}</span>
+      </sc-for>
+    </div>
+
+    <div style="display: flex; flex-direction: column;">
+      <div style="display: flex; align-items: center; gap: 12px; padding-bottom: 9px; border-bottom: 2px solid #232B37;">
+        <span style="font-size: 9px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: #5C6474;">Pos</span>
+        <span style="margin-left: auto; width: 44px; text-align: right; font-size: 9px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: #5C6474;">Wins</span>
+        <span style="width: 46px; text-align: right; font-size: 9px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: #5C6474;">Pts</span>
+      </div>
+      <sc-for list="{{ filas }}" as="f" hint-placeholder-count="6">
+        <div style="display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid #14181F;">
+          <span class="num" style="width: 20px; font-size: 18px; font-weight: 700; color: {{ f.posColor }};">{{ f.pos }}</span>
+          <span style="width: 3px; height: 26px; background: {{ f.color }}; border-radius: 1px;"></span>
+          <div style="display: flex; flex-direction: column; gap: 1px;">
+            <span style="font-size: 14px; font-weight: 600; letter-spacing: -.005em;">{{ f.nombre }}</span>
+            <span style="font-size: 10px; font-weight: 500; letter-spacing: .08em; text-transform: uppercase; color: #5C6474;">{{ f.sub }}</span>
+          </div>
+          <span class="num" style="margin-left: auto; width: 44px; text-align: right; font-size: 15px; font-weight: 600; color: #8992A3;">{{ f.wins }}</span>
+          <span class="num" style="width: 46px; text-align: right; font-size: 19px; font-weight: 700;">{{ f.pts }}</span>
+        </div>
       </sc-for>
     </div>
   </section>
@@ -116,7 +167,7 @@
 </div>
 </x-dc>
 
-<script data-dc-script data-props='{"accent":{"editor":"color","default":"#FF2D16","options":["#FF2D16","#FFB020","#2FC4E0","#31D97A"]},"$preview":{"width":390,"height":1180}}'>
+<script data-dc-script data-props='{"accent":{"editor":"color","default":"#FF2D16","options":["#FF2D16","#FFB020","#2FC4E0","#31D97A"]},"$preview":{"width":390,"height":2080}}'>
 class Component extends DCLogic {
   renderVals() {
     const F1 = '#FF2D16', MGP = '#FFB020', NAS = '#2FC4E0',
@@ -147,8 +198,19 @@ class Component extends DCLogic {
           titulo: 'Upgraded floor brings a tenth in the high-speed corners' },
         { serie: 'INDYCAR', color: IND, hora: '13:20', fuente: 'Autosport',
           titulo: 'Rookie converts a maiden pole into a first oval podium' },
-        { serie: 'WEC', color: WEC, hora: '14:38', fuente: 'Autosport',
-          titulo: 'Hypercar entry list grows again for the endurance finale' },
+      ],
+
+      tabsTabla: [
+        { nombre: 'Drivers', txt: '#F5F7FA', borde: '#3A4454', fondo: '#171B22' },
+        { nombre: 'Constructors', txt: '#8992A3', borde: '#232B37', fondo: 'transparent' },
+      ],
+      filas: [
+        { pos: '1', nombre: 'Driver name', sub: 'Team', wins: '6', pts: '284', color: '#2FC4E0', posColor: this.props.accent ?? '#FF2D16' },
+        { pos: '2', nombre: 'Driver name', sub: 'Team', wins: '5', pts: '271', color: '#FF8000', posColor: '#8992A3' },
+        { pos: '3', nombre: 'Driver name', sub: 'Team', wins: '3', pts: '246', color: '#FF2D16', posColor: '#8992A3' },
+        { pos: '4', nombre: 'Driver name', sub: 'Team', wins: '1', pts: '198', color: '#00D7B6', posColor: '#5C6474' },
+        { pos: '5', nombre: 'Driver name', sub: 'Team', wins: '0', pts: '175', color: '#FF8000', posColor: '#5C6474' },
+        { pos: '6', nombre: 'Driver name', sub: 'Team', wins: '0', pts: '142', color: '#2FC4E0', posColor: '#5C6474' },
       ],
     };
   }

@@ -1,15 +1,22 @@
 {
   "artboards": [
-    { "file": "Main.dc.html", "title": "Home — desktop", "x": 0, "y": 0, "w": 1440, "h": 2060, "print": "flow" },
-    { "file": "Mobile.dc.html", "title": "Home — phone", "x": 1600, "y": 0, "w": 390, "h": 1180, "print": "flow" }
+    { "file": "Main.dc.html", "title": "Home — desktop", "x": 0, "y": 0, "w": 1440, "h": 2960, "print": "flow" },
+    { "file": "Mobile.dc.html", "title": "Home — phone", "x": 1600, "y": 0, "w": 390, "h": 2080, "print": "flow" }
   ],
   "annotations": [
     {
       "id": "datos-vivos",
       "x": 1600,
-      "y": 1260,
+      "y": 2160,
       "w": 390,
-      "text": "Todo lo que se ve aqui son huecos que rellena el canal solo:\n\n· Cuenta atras y sesiones -> /apex (calendario OpenF1)\n· Titulares -> /noticias (RSS gratis, ya funciona)\n· Clasificaciones -> /apex (standings)\n· ON AIR / Now playing -> /control/estado\n\nLos titulares y los puntos de este boceto son de relleno para\nver la maqueta: no son datos reales."
+      "text": "Todo lo que se ve son huecos que rellena el canal solo:\n\n· Cuenta atras y sesiones -> /apex\n· Titulares y miniaturas -> /noticias\n· Clasificaciones -> /apex (standings)\n· ON AIR / Now playing -> /control/estado\n· Videos -> el canal de YouTube\n\nLos titulares, puntos y duraciones son de relleno\npara ver la maqueta: no son datos reales."
+    },
+    {
+      "id": "fotos-derechos",
+      "x": 2080,
+      "y": 0,
+      "w": 340,
+      "text": "DE DONDE SALE CADA IMAGEN\n\nMiniaturas de noticias: la og:image del propio\nmedio, con su nombre y enlace a su articulo.\nEs el patron de preview de enlace (Google News,\nFlipboard). No copiamos el texto: mandamos\ntrafico. Si un medio no la da, queda el marco\ngris de la maqueta.\n\nFotos de archivo grandes: Wikimedia Commons,\nOpenverse y Flickr CC. El canal ya tiene ese\ncodigo (imagenes_wikimedia / _openverse /\n_flickr).\n\nVideo: embed oficial de YouTube y contenido\npropio del canal. Nada bajado de F1TV.\n\nEl pie de pagina lleva el descargo y el credito."
     }
   ],
   "launch": { "view": "canvas" }
