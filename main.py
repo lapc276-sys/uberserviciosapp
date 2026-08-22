@@ -2148,11 +2148,16 @@ async def visor():
              color: var(--txt); letter-spacing: .04em; display: none; }
   #pitloss b { color: var(--amber); }
   .vacio { color: var(--dim); font-size: .78rem; }
-  /* Voz */
-  #voz { margin: 0 22px 20px; padding: 9px 16px; font-size: .85rem;
-         border: 1px solid var(--line); border-radius: 8px;
-         cursor: pointer; background: var(--panel); color: var(--dim); }
-  #voz.on { border-color: var(--up); color: var(--up); }
+  /* Voz. Arranca ESCONDIDO: el sonido va encendido desde el principio y
+     el botón solo aparece si el navegador llega a bloquear la
+     reproducción, que es algo que solo hacen los navegadores normales.
+     El de OBS permite el autoplay, así que ahí no sale nunca — antes se
+     quedaba en pantalla pidiendo un clic que en OBS no se puede dar. */
+  #voz { display: none; margin: 0 22px 20px; padding: 9px 16px;
+         font-size: .85rem; border: 1px solid var(--accent);
+         border-radius: 8px; cursor: pointer; background: var(--panel);
+         color: var(--txt); }
+  #voz.pedir { display: block; }
   /* El ticker fijo abajo (58px) no debe tapar el contenido ni el botón */
   body { padding-bottom: 66px; }
   /* El subtítulo de TV sube para no chocar con el ticker */
@@ -2217,9 +2222,9 @@ async def visor():
   <div class="quien" id="cap-quien"></div>
   <div class="texto" id="cap-texto"></div>
 </div></div>
-<button id="voz">VOICE OFF — click to enable browser voice</button>
+<button id="voz">CLICK TO ENABLE SOUND</button>
 <script>
-let vozActiva = false, ultimoSegmento = -1, posPrevias = {};
+let vozActiva = true, ultimoSegmento = -1, posPrevias = {};
 let reproduciendo = false, pendiente = null, amb = null;
 // Ticker de noticias: crawl continuo estilo Bloomberg. Construye una
 // tira con todas las noticias/eventos, duplicada para bucle sin costura.
@@ -2692,18 +2697,26 @@ setInterval(() => {
       cuentaRegresiva(ultimoStandbyIso);
 }, 1000);
 const btn = document.getElementById('voz');
+// Un navegador normal no deja sonar nada hasta que alguien hace clic, y
+// avisa de ello rechazando play() con NotAllowedError. OBS no lo hace:
+// su navegador arranca con el autoplay permitido. Asi que en vez de
+// pedir el clic siempre, se intenta sonar y el boton solo aparece si el
+// navegador ha dicho que no.
+function bloqueado(e) {
+  if (e && e.name === 'NotAllowedError') btn.classList.add('pedir');
+}
 btn.onclick = () => {
-  vozActiva = !vozActiva;
-  btn.classList.toggle('on', vozActiva);
-  btn.textContent = vozActiva ? 'VOICE ON — click to mute'
-                              : 'VOICE OFF — click to enable voice';
+  btn.classList.remove('pedir');
+  vozActiva = true;
+  // El gesto ya esta hecho: el ambiente vuelve a intentarlo solo en el
+  // siguiente tick, y las lineas de voz al llegar el proximo segmento.
 };
 function reproducirLinea(seg, i) {
   return new Promise(res => {
     const a = new Audio('/audio/' + seg + '/' + i);
     a.onended = () => res(true);
     a.onerror = () => res(false);
-    a.play().catch(() => res(false));
+    a.play().catch(e => { bloqueado(e); res(false); });
   });
 }
 function fallbackTTS(l, idioma) {
@@ -2746,7 +2759,14 @@ async function reproducirSegmento(seg, lineas, idioma) {
     for (let i = 0; i < t.lineas.length; i++) {
       mostrarLinea(t.lineas, i);  // el subtítulo sigue a la voz
       const ok = await reproducirLinea(t.seg, i);
-      if (!ok) fallbackTTS(t.lineas[i], t.idioma);
+      if (!ok) {
+        fallbackTTS(t.lineas[i], t.idioma);
+        // Si no sonó, nada marca cuándo termina la línea y el bucle se
+        // comería el segmento entero en un parpadeo. Se le da el tiempo
+        // que cuesta leerla para que el subtítulo siga siendo legible.
+        const seg = Math.min(9000, 1800 + (t.lineas[i].texto || '').length * 55);
+        await new Promise(r => setTimeout(r, seg));
+      }
     }
   }
   reproduciendo = false;
@@ -2778,7 +2798,7 @@ function aplicarPrograma(p) {
   if (inter && p.musica && vozActiva) {
     if (musica.getAttribute('src') !== p.musica) musica.src = p.musica;
     if (musica.paused) { musica.volume = 0.35;
-                         musica.play().catch(() => {}); }
+                         musica.play().catch(bloqueado); }
   } else if (!musica.paused) {
     musica.pause();
   }
@@ -3016,7 +3036,7 @@ async function tick() {
   if (vozActiva && d.ambiente && !amb) {
     amb = new Audio('/ambiente.mp3');
     amb.loop = true; amb.volume = 0.15;
-    amb.play().catch(() => { amb = null; });
+    amb.play().catch(e => { bloqueado(e); amb = null; });
   } else if (amb && (!d.ambiente || !vozActiva)) {
     amb.pause(); amb = null;
   }
