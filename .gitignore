@@ -27,3 +27,6 @@ shorts_ola.json
 
 # Lienzo de diseño: se regenera con seed-canvas.mjs desde los .dc.html
 apex-motorsport-home.html
+
+# Artículos generados (contenido, no código)
+articulos/

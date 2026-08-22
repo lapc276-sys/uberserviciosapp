@@ -28,6 +28,13 @@ HTML = """<!doctype html>
 <title>APEX — Motorsport, all of it</title>
 <meta name="description" content="Live motorsport coverage, news from every
 series and championship standings.">
+<meta property="og:type" content="website">
+<meta property="og:title" content="APEX — Motorsport, all of it">
+<meta property="og:description" content="Live coverage, news from every series
+and championship standings.">
+<meta property="og:site_name" content="APEX">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="sitemap" type="application/xml" href="/sitemap.xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800;900&family=Barlow:wght@400;500;600;700&family=Barlow+Condensed:wght@500;600;700&display=swap" rel="stylesheet">
@@ -339,6 +346,7 @@ series and championship standings.">
   <nav id="nav">
     <a href="#live" class="on">Live</a>
     <a href="#news">News</a>
+    <a href="/noticias-propias">Analysis</a>
     <a href="#watch">Watch</a>
     <a href="#standings">Standings</a>
     <a href="#schedule">Schedule</a>
@@ -409,6 +417,18 @@ series and championship standings.">
     <div class="chips" id="chips"></div>
   </div>
   <div class="news" id="newsGrid"></div>
+ </div>
+</section>
+
+<section id="analysis" style="display:none">
+ <div class="wrap sec">
+  <div class="shead">
+    <div class="t"><span class="kick">Written here</span><h2>Analysis</h2></div>
+    <a class="more" href="/noticias-propias">All analysis
+      <svg width="13" height="9" viewBox="0 0 13 9" fill="none" aria-hidden="true"><path d="M0 4.5 H11 M7.5 1 L11 4.5 L7.5 8" stroke="currentColor" stroke-width="1.5"/></svg>
+    </a>
+  </div>
+  <div class="vids" id="propias"></div>
  </div>
 </section>
 
@@ -611,6 +631,22 @@ function pintarRondas(cal) {
   ).join("");
 }
 
+// ── piezas propias ────────────────────────────────────────────────────
+// Van en su propia seccion, separadas de los titulares de agencia: estas
+// llevan a NUESTRA pagina y son las que Google indexa. Si todavia no hay
+// ninguna la seccion no se enseña, en vez de dejar un hueco vacio.
+function pintarPropias(lista) {
+  if (!lista.length) return;
+  $("#analysis").style.display = "";
+  $("#propias").innerHTML = lista.slice(0, 4).map((a) =>
+    '<a class="vid" href="/noticias/' + encodeURIComponent(a.slug) + '">'
+    + '<div class="shot" style="height:174px">' + foto(a.imagen)
+    + '</div><div class="body"><span class="src2" style="color:#FF2D16">'
+    + esc(a.tema) + "</span><h4>" + esc(a.titulo) + "</h4>"
+    + '<span class="src2">' + esc(a.entradilla).slice(0, 90)
+    + "…</span></div></a>").join("");
+}
+
 // ── el directo ────────────────────────────────────────────────────────
 // Con el ID del video se incrusta el reproductor de YouTube en la propia
 // tarjeta (es el embed oficial, para eso está). Sin ID pero con canal, el
@@ -695,6 +731,7 @@ async function cargar() {
     const n = await (await fetch("/noticias")).json();
     NOTICIAS = n.portada || n.noticias || [];
     pintarChips(); pintarNoticias(); pintarTicker();
+    pintarPropias(n.propias || []);
   } catch (e) { /* la portada se ve igual sin noticias */ }
 
   try {

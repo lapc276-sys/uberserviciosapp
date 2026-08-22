@@ -41,6 +41,7 @@ from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import (HTMLResponse, JSONResponse,
                                PlainTextResponse, Response)
 
+import articulos
 import portada
 import telegram_bot
 import telemetria
@@ -569,6 +570,7 @@ async def lifespan(app: FastAPI):
               asyncio.create_task(bucle_programacion()),
               asyncio.create_task(bucle_pregen_carreras()),
               asyncio.create_task(bucle_noticias_crawl()),
+              asyncio.create_task(bucle_articulos()),
               asyncio.create_task(bucle_standings()),
               asyncio.create_task(bucle_shorts()),
               asyncio.create_task(bucle_youtube()),
@@ -1612,6 +1614,15 @@ async def noticias():
         # La portada las quiere todas y con foto: las diez del ticker son
         # las últimas del lote, no las mejores para maquetar tarjetas.
         "portada": estado.noticias_crawl,
+        # Las piezas propias van aparte de los titulares de agencia: unas
+        # son nuestras y llevan a nuestra página, los otros son preview
+        # de enlace y llevan al medio que los escribió.
+        "propias": [{"titulo": a["titulo"], "slug": a["slug"],
+                     "tema": a.get("tema", ""),
+                     "entradilla": a.get("entradilla", ""),
+                     "imagen": (a.get("foto") or {}).get("url", ""),
+                     "fecha": a.get("fecha", "")}
+                    for a in articulos.listar(6)],
     })
 
 
@@ -1716,6 +1727,99 @@ async def narracion():
         "hace_segundos": round(time.time() - estado.narracion_ts)
         if estado.narracion_ts else None,
     })
+
+
+def _base_url(request):
+    """La dirección pública del sitio.
+
+    Se prefiere el Secret SITIO_URL: cuando compres el .com, la URL
+    canónica tiene que ser la del dominio y no la de Replit, o Google
+    indexará las dos y se repartirán la fuerza entre ellas.
+    """
+    if articulos.SITIO:
+        return articulos.SITIO
+    return str(request.base_url).rstrip("/")
+
+
+@app.get("/noticias/{slug}", response_class=HTMLResponse)
+async def articulo(slug: str, request: Request):
+    """Un artículo propio, servido ya escrito.
+
+    Sin JavaScript a propósito: Google lo indexa tal cual llega y carga
+    al instante en un móvil con mala cobertura.
+    """
+    art = articulos.cargar(slug)
+    if not art:
+        return HTMLResponse("<h1>Not found</h1>", status_code=404)
+    otros = [a for a in articulos.listar(6) if a["slug"] != slug][:4]
+    return HTMLResponse(articulos.pagina(art, _base_url(request), otros))
+
+
+@app.get("/noticias-propias", response_class=HTMLResponse)
+async def indice_articulos(request: Request):
+    """El índice de las piezas propias.
+
+    Google necesita una página que enlace a todas: sin ella, un artículo
+    al que nadie apunta es casi invisible por muy bueno que sea.
+    """
+    arts = articulos.listar(60)
+    if not arts:
+        filas = ('<p style="color:#5C6474">Nothing published yet.</p>')
+    else:
+        filas = "".join(
+            f'<li><a href="/noticias/{articulos._e(a["slug"])}">'
+            f'<b>{articulos._e(a["titulo"])}</b>'
+            f'<span>{articulos._e(a.get("tema", ""))} · '
+            f'{articulos._e(articulos._fecha_legible(a.get("fecha", "")))}'
+            f"</span></a></li>" for a in arts)
+        filas = f"<ul>{filas}</ul>"
+    return HTMLResponse(f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Analysis | {articulos._e(articulos.NOMBRE)}</title>
+<meta name="description" content="Technical analysis, race weekend previews
+and session reports from {articulos._e(articulos.NOMBRE)}.">
+<link rel="canonical" href="{articulos._e(_base_url(request))}/noticias-propias">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800;900&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+ *{{box-sizing:border-box;margin:0;padding:0}}
+ body{{background:#08090C;color:#F5F7FA;font-family:Barlow,system-ui,sans-serif;
+       line-height:1.6;-webkit-font-smoothing:antialiased}}
+ main{{max-width:760px;margin:0 auto;padding:52px 24px 60px}}
+ h1{{font-family:Archivo,sans-serif;font-weight:900;font-size:clamp(30px,5vw,46px);
+     letter-spacing:-.028em;text-transform:uppercase;margin-bottom:8px}}
+ .sub{{color:#8992A3;margin-bottom:34px}}
+ ul{{list-style:none}}
+ li{{border-bottom:1px solid #14181F}}
+ li a{{display:flex;flex-direction:column;gap:5px;padding:17px 0;
+       text-decoration:none;color:inherit}}
+ li a:hover b{{color:#FF2D16}}
+ li b{{font-size:19px;font-weight:600;letter-spacing:-.01em;transition:color .15s}}
+ li span{{font-size:12px;font-weight:600;letter-spacing:.1em;
+          text-transform:uppercase;color:#5C6474}}
+ .back{{display:inline-block;margin-bottom:22px;font-size:12px;font-weight:700;
+        letter-spacing:.12em;text-transform:uppercase;color:#FF2D16;
+        text-decoration:none}}
+</style></head><body><main>
+<a class="back" href="/inicio">← Home</a>
+<h1>Analysis</h1>
+<p class="sub">Written here, from data we hold — not aggregated headlines.</p>
+{filas}
+</main></body></html>""")
+
+
+@app.get("/sitemap.xml")
+async def sitemap_xml(request: Request):
+    return Response(content=articulos.sitemap(_base_url(request),
+                                              articulos.listar(500)),
+                    media_type="application/xml")
+
+
+@app.get("/robots.txt")
+async def robots_txt(request: Request):
+    return Response(content=articulos.robots(_base_url(request)),
+                    media_type="text/plain")
 
 
 @app.get("/inicio", response_class=HTMLResponse)
@@ -8241,6 +8345,189 @@ TG_NOTICIA_SCHEMA = {
     "required": ["categoria", "tema", "imagenes"],
     "additionalProperties": False,
 }
+
+
+SYSTEM_ARTICULO = """You write one article for an independent motorsport \
+site. It is published on its own page and read by people who came from a \
+search engine, so it has to answer the question they typed.
+
+HARD RULES — these matter more than style:
+- Use ONLY the facts in the user's message. Invent NOTHING: no lap times, \
+no points totals, no dates, no quotes, no results, no contract terms. If a \
+number is not in the message, it does not appear in your article.
+- When the brief is a MECHANISM (how something works), explain the physics \
+or the engineering. That needs no facts to verify and is the kind of piece \
+that is still true and still read in a year.
+- Never claim something happened. You are explaining, previewing or \
+reporting supplied data — not breaking news.
+- Write in ENGLISH. Plain, concrete, specific. No hype, no "in the \
+high-octane world of", no rhetorical questions as filler.
+- The opening paragraph must deliver the answer, not tease it. A reader \
+who leaves after one paragraph should still have learned the main thing.
+- 4 to 7 paragraphs. Each one makes a point the one before it did not.
+
+The image query goes to Wikimedia Commons and must contain the words \
+"Formula One" (or the correct series name). If a person is named in the \
+brief, their full name must be in the query."""
+
+ARTICULO_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "titulo": {"type": "string"},
+        "entradilla": {"type": "string"},
+        "cuerpo": {"type": "array", "items": {"type": "string"},
+                   "minItems": 4, "maxItems": 7},
+        "tema": {"type": "string",
+                 "enum": ["Aero", "Engine", "Strategy", "Tyres", "Chassis",
+                          "Rules", "Race weekend", "Session report",
+                          "Tech history"]},
+        "imagen": {"type": "string"},
+    },
+    "required": ["titulo", "entradilla", "cuerpo", "tema", "imagen"],
+    "additionalProperties": False,
+}
+
+# Explicadores técnicos: temas que se sostienen solos, sin depender de lo
+# que pasó este fin de semana. Son los que traen visitas todo el año — la
+# gente busca "por qué X" mucho después de que la carrera se olvide.
+TEMAS_BASE = [
+    "How the floor edge and the diffuser generate most of a modern "
+    "Formula One car's downforce, and why the wings get the credit",
+    "What tyre degradation actually is: graining, blistering and thermal "
+    "wear, and how each one feels different to a Formula One driver",
+    "Why a Formula One undercut works, when it stops working, and what "
+    "the pit lane delta has to do with it",
+    "How Formula One's energy recovery system harvests and deploys power, "
+    "and why deployment is a strategy decision and not a button",
+    "What dirty air is, why it hurts a following Formula One car, and "
+    "what ground effect was meant to fix",
+    "How a Formula One brake-by-wire system blends friction braking with "
+    "energy recovery on the rear axle",
+    "Why Formula One teams run different rear wing levels at Monza and "
+    "Monaco, and what drag actually costs in lap time",
+    "How a Formula One car's suspension controls platform height, and "
+    "why ride height matters so much to an underfloor",
+    "What a Formula One power unit's turbocharger and MGU-H did, and why "
+    "the MGU-H was dropped from the rules",
+    "How Formula One qualifying tyre preparation works: the out lap, "
+    "tyre temperature windows, and why a lap can be lost before it starts",
+]
+ARTICULOS_INTERVALO = float(os.environ.get("ARTICULOS_INTERVALO", "21600"))
+
+
+async def escribir_articulo(brief, foto_hint=""):
+    """Escribe UN artículo desde un brief de hechos. None si no puede.
+
+    El brief es la única fuente: lo que no esté ahí, no se publica. Por
+    eso los tipos de artículo que existen son los tres de los que tenemos
+    hechos de verdad — explicador, previa y crónica.
+    """
+    if not os.environ.get("ANTHROPIC_API_KEY") or estado.api_sin_creditos:
+        return None
+    try:
+        cliente = anthropic.AsyncAnthropic()
+        r = await cliente.messages.create(
+            model=MODELO_AHORRO, max_tokens=1800,
+            system=SYSTEM_ARTICULO,
+            output_config={"format": {"type": "json_schema",
+                                      "schema": ARTICULO_SCHEMA}},
+            messages=[{"role": "user", "content": brief[:4000]}])
+        if r.stop_reason == "refusal":
+            return None
+        d = json.loads(next((b.text for b in r.content if b.type == "text"),
+                            "{}"))
+    except Exception as e:
+        log.info("Artículo no escrito (%s)", e)
+        return None
+
+    titulo = (d.get("titulo") or "").strip()
+    cuerpo = [p.strip() for p in (d.get("cuerpo") or []) if p.strip()]
+    if not (titulo and len(cuerpo) >= 4):
+        return None
+
+    s = articulos.slug(titulo)
+    if articulos.existe(s):
+        return None            # ya escrito: no duplicar la misma URL
+
+    foto = await articulos.foto_commons(foto_hint or d.get("imagen", ""))
+    art = {
+        "slug": s,
+        "titulo": titulo[:120],
+        "entradilla": (d.get("entradilla") or "").strip()[:260],
+        "cuerpo": cuerpo,
+        "tema": d.get("tema", "Analysis"),
+        "fecha": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "foto": foto or {},
+    }
+    articulos.guardar(art)
+    log.info("📝 Artículo publicado: /noticias/%s", s)
+    return art
+
+
+def _brief_previa():
+    """Previa del próximo fin de semana, con los datos REALES del
+    calendario. Si no hay calendario no se inventa uno: se devuelve None."""
+    cal = estado.calendario or []
+    if not cal:
+        return None
+    circuito = cal[0].get("circuito", "")
+    pais = cal[0].get("pais", "")
+    if not circuito:
+        return None
+    ses = []
+    for s in cal[:6]:
+        if s.get("circuito") == circuito:
+            ses.append(f"{s.get('sesion', '')} — {s.get('inicia', '')}")
+    return (
+        "Write a race weekend preview. These are the only facts you have:\n"
+        f"- Circuit: {circuito}\n- Country: {pais}\n"
+        "- Sessions and start times (UTC):\n  " + "\n  ".join(ses)
+        + "\n\nDo not state who is competing, what the standings are, or "
+        "what happened at this circuit before — you do not have that. "
+        "Write about what this circuit demands of a car and a driver: its "
+        "layout characteristics, the setup compromise it forces, what "
+        "makes it hard to overtake or easy, and what to watch in each "
+        "session. That is analysis you can do from the circuit alone.")
+
+
+async def bucle_articulos():
+    """Publica piezas propias cada pocas horas.
+
+    Van al mismo sitio que todo lo demás — su URL — y son lo que hace que
+    el sitio tenga contenido original: los titulares de agencia de la
+    portada son de otros, y una web que solo agrega ajeno no la posiciona
+    Google ni la aprueba AdSense.
+    """
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        log.info("📝 Artículos propios en pausa (falta ANTHROPIC_API_KEY)")
+        return
+    log.info("📝 Artículos propios activados (cada %gs)", ARTICULOS_INTERVALO)
+    await asyncio.sleep(40)     # dejar que cargue el calendario primero
+    while True:
+        try:
+            hechos = articulos.listar(500)
+            # Una previa por fin de semana, y el resto explicadores. La
+            # previa caduca; los explicadores siguen trayendo visitas.
+            brief = None
+            if len(hechos) % 4 == 3:
+                brief = _brief_previa()
+            if not brief:
+                titulos = {a["titulo"].lower() for a in hechos}
+                libres = [t for t in TEMAS_BASE
+                          if articulos.slug(t[:70]) not in
+                          {a["slug"] for a in hechos}
+                          and t.lower()[:40] not in
+                          " ".join(titulos)]
+                if libres:
+                    brief = ("Write a technical explainer on this: "
+                             + random.choice(libres))
+            if brief:
+                await escribir_articulo(brief)
+            else:
+                log.info("📝 Sin temas nuevos que escribir por ahora")
+        except Exception as e:
+            log.warning("Artículos: %s", e)
+        await asyncio.sleep(ARTICULOS_INTERVALO)
 
 
 async def _tg_llamar(coro):
