@@ -764,6 +764,13 @@ class Telemetria:
                           "nombre": self._nombre(n),
                           "color": p.get("color", ""),
                           "gap": gap_txt,
+                          # El gap en segundos, aparte del texto que se
+                          # enseña. OpenF1 manda "+1 LAP" cuando a un coche
+                          # le han sacado una vuelta, así que volver a leer
+                          # `gap` como número no funciona: aquí va None
+                          # cuando no hay una cifra que valga.
+                          "gap_seg": (gap if isinstance(gap, (int, float))
+                                      else None),
                           "mejor": mejor,
                           "pelea": pelea,
                           "neumatico": neu.get("compuesto", ""),
@@ -795,11 +802,10 @@ class Telemetria:
         resultados = []
         for i in range(1, len(tabla)):
             delante, detras = tabla[i - 1], tabla[i]
-            gap_txt = detras["gap"]
-            if not gap_txt:
-                continue
-            gap = float(gap_txt.lstrip("+"))
-            if gap > 3.0:
+            gap = detras.get("gap_seg")
+            # Sin cifra no hay duelo que puntuar: o es el líder, o le han
+            # sacado una vuelta, o todavía no ha llegado el dato.
+            if gap is None or gap > 3.0:
                 continue
             cercania = max(0.0, 70.0 * (1 - gap / 3.0))
             numero = next((n for n, p in self.posiciones.items()

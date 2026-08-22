@@ -8996,20 +8996,18 @@ def _lectura_modelo():
         duelos = t.battle_scores()
         if duelos:
             d = duelos[0]
-            gap_txt = None
+            gap_seg = None
             for f in tabla:
                 if f["pos"] == d["pos_detras"]:
-                    gap_txt = f.get("gap")
+                    gap_seg = f.get("gap_seg")
                     break
             deg_delante = t.degradacion(nums.get(d["pos_delante"]))
-            if gap_txt and deg_delante:
-                with contextlib.suppress(ValueError):
-                    uc = estrategia.ventana_undercut(
-                        float(str(gap_txt).lstrip("+")),
-                        deg_delante["pendiente"],
-                        deg_delante.get("edad") or 0)
-                    if uc:
-                        partes.append(f"{d['entre']}: {uc['motivo']}")
+            if gap_seg is not None and deg_delante:
+                uc = estrategia.ventana_undercut(
+                    gap_seg, deg_delante["pendiente"],
+                    deg_delante.get("edad") or 0)
+                if uc:
+                    partes.append(f"{d['entre']}: {uc['motivo']}")
         return "; ".join(partes)
     except Exception as e:
         log.info("Modelo de estrategia no disponible (%s)", e)
