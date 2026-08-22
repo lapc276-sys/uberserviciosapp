@@ -1644,6 +1644,7 @@ async def apex():
         "duelos": (t.battle_scores()[:3]
                    if t and time.time() - estado.mapa_ts < 30 else []),
         "pit": t.perdida_pit() if t else None,
+        "degradacion": _degradacion_pista(t),
         "alertas": t.alertas() if t else [],
         "calendario": estado.calendario,
         "programa": estado.programa,
@@ -1668,6 +1669,38 @@ async def apex():
         "pases": {str(k): v for k, v in estado.pases.items()},
         "pases_total": estado.pases_total,
     })
+
+
+def _degradacion_pista(t):
+    """Degradación medida de cada coche que tenga vueltas suficientes.
+
+    `degradacion()` ya la calcula por piloto; hasta ahora solo se usaba
+    dentro del texto de un duelo. Aquí sale la tabla entera para poder
+    pintarla: quién está tirando el neumático y quién lo está cuidando es
+    de lo que más se habla en una carrera, y es un dato NUESTRO, medido de
+    las vueltas reales, no una estimación.
+    """
+    if not t:
+        return []
+    filas = []
+    for n, pos in t.posiciones.items():
+        d = t.degradacion(n)
+        if not d:
+            continue
+        p = t.pilotos.get(n, {})
+        filas.append({
+            "pos": pos,
+            "acr": p.get("acronimo", str(n)),
+            "color": p.get("color", ""),
+            # Segundos que pierde por vuelta. Positivo = el neumático cae.
+            "pendiente": round(d["pendiente"], 3),
+            "compuesto": d.get("compuesto", ""),
+            "edad": d.get("edad", 0),
+            "muestras": d.get("muestras", 0),
+        })
+    # Del que más cuida el neumático al que más lo tira.
+    filas.sort(key=lambda f: f["pendiente"])
+    return filas
 
 
 def _canal_youtube():
@@ -1719,6 +1752,40 @@ async def audio_linea(seg: int, idx: int):
             or idx >= len(estado.audios) or not estado.audios[idx]):
         return Response(status_code=404)
     return Response(content=estado.audios[idx], media_type="audio/mpeg")
+
+
+@app.get("/diag/audio")
+async def diag_audio():
+    """Por qué no se oye nada.
+
+    "No hay sonido" puede fallar en cinco sitios distintos: que no haya
+    clave de voz, que la voz esté en pausa por saldo, que no se haya
+    generado ninguna línea, que se generaran pero sin audio, o que suene
+    y OBS no lo capture. Adivinar cuál es a base de reiniciar cuesta más
+    que preguntárselo al canal.
+    """
+    con_audio = sum(1 for a in estado.audios if a)
+    return JSONResponse({
+        "1_clave_de_voz": ("ElevenLabs" if os.environ.get("ELEVENLABS_API_KEY")
+                           else "OpenAI" if os.environ.get("OPENAI_API_KEY")
+                           else "NINGUNA — sin esto no hay voz"),
+        "2_voz_en_pausa": _voz_en_pausa() or "no",
+        "3_lineas_del_segmento": len(estado.lineas),
+        "4_lineas_con_mp3": con_audio,
+        "5_segmento": estado.segmento_id,
+        "6_ambiente_motores": bool(estado.ambiente_b64),
+        "al_aire": (estado.programa or {}).get("titulo", "") or "nada",
+        "que_significa": (
+            "Si 1 dice NINGUNA: falta el Secret de voz. "
+            "Si 2 no dice 'no': la voz está pausada por saldo o error. "
+            "Si 3 es 0: el canal no está narrando ahora mismo. "
+            "Si 3 es >0 y 4 es 0: se escribió el guion pero no se generó "
+            "el audio. "
+            "Si 3 y 4 son >0: el canal SÍ está mandando sonido y el "
+            "problema está en OBS — activa 'Control audio via OBS' en las "
+            "propiedades de la fuente de navegador y sube esa pista en el "
+            "mezclador."),
+    })
 
 
 @app.get("/narracion")
@@ -2167,6 +2234,56 @@ async def visor():
   body.programa #battlebar, body.interludio #battlebar,
   body.standby #battlebar { display: none; }
 
+  /* Cabecera común a todas las tarjetas del rótulo */
+  .carta .cab { display: flex; align-items: center; gap: 9px;
+                margin-bottom: 11px; }
+  .carta .cab .et { font-size: .74rem; font-weight: 800; letter-spacing: .2em;
+                    color: var(--accent); }
+  .carta .cab .pn { font-size: .74rem; font-weight: 700; letter-spacing: .16em;
+                    color: var(--dim); }
+  .carta .cab .ley { margin-left: auto; font-size: .62rem; font-weight: 700;
+                     letter-spacing: .1em; color: var(--dim); }
+  .carta .razon { font-size: .68rem; margin-top: 9px; color: var(--dim);
+                  line-height: 1.45; }
+
+  /* Degradación: dos columnas de barras divergentes desde el centro.
+     La rejilla se llena por COLUMNAS: es un ranking, y llenando por filas
+     el orden iba saltando de un lado a otro (1, 6, 2, 4, 3, 5…). */
+  .deg .dgrid { display: grid; grid-template-columns: 1fr 1fr;
+                grid-template-rows: repeat(5, auto);
+                grid-auto-flow: column; gap: 2px 26px; }
+  .dfila { display: flex; align-items: center; gap: 7px; padding: 3px 0;
+           font-variant-numeric: tabular-nums; }
+  .dfila .p { width: 15px; font-size: .62rem; font-weight: 700;
+              color: var(--dim); text-align: right; }
+  .dfila .a { width: 34px; font-size: .82rem; font-weight: 800; }
+  .dfila .ed { width: 24px; font-size: .6rem; color: var(--dim); }
+  .dfila .bar { position: relative; flex: 1; height: 7px; min-width: 40px;
+                border-radius: 2px; background: rgba(255,255,255,.05); }
+  /* La raya del centro marca el cero: a un lado se gana, al otro se pierde */
+  .dfila .bar::before { content: ""; position: absolute; left: 50%; top: -2px;
+                        width: 1px; height: 11px;
+                        background: rgba(255,255,255,.22); }
+  .dfila .bar i { position: absolute; top: 0; height: 100%; border-radius: 2px; }
+  .dfila .bar i.cae { background: var(--accent); }
+  .dfila .bar i.guarda { background: var(--up); }
+  .dfila .v { width: 48px; text-align: right; font-size: .72rem;
+              font-weight: 700; }
+  .dfila .v.cae { color: var(--accent); }
+  .dfila .v.guarda { color: var(--up); }
+
+  /* Coste de parada: cifras grandes separadas por filetes */
+  .pit .pgrid { display: flex; align-items: stretch; gap: 4px; }
+  .pit .big { flex: 1; display: flex; flex-direction: column; gap: 3px;
+              align-items: center; text-align: center; }
+  .pit .big .n { font-size: 2rem; font-weight: 800; line-height: 1;
+                 letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+  .pit .big .n i { font-size: .95rem; font-weight: 700; font-style: normal;
+                   color: var(--dim); margin-left: 1px; }
+  .pit .big .l { font-size: .6rem; font-weight: 700; letter-spacing: .11em;
+                 text-transform: uppercase; color: var(--dim); }
+  .pit .sep { width: 1px; background: var(--line); }
+
   .duelo.hero { padding: 0; }
   .duelo.hero .cab { display: flex; align-items: center; gap: 8px;
                      margin-bottom: 9px; }
@@ -2403,39 +2520,129 @@ function ladoHTML(p, der) {
     + (p.mejor ? '<div class="dato"><span>BEST ' + p.mejor + '</span></div>' : '')
     + '</div>';
 }
-// El rótulo grande. Solo aparece cuando hay pelea de verdad: si saliera
-// siempre, dejaría de significar nada y taparía el mapa sin motivo.
-let rotuloClave = '';
-function pintarRotulo(dl) {
+// ── El rótulo ancho ────────────────────────────────────────────────────
+// Rota entre las tarjetas que tienen algo que contar ahora mismo, como el
+// rótulo de una retransmisión. Solo se enseña lo que hay: sin duelo
+// caliente no sale duelo, sin paradas medidas no sale el coste, y si no
+// hay nada de nada el rótulo desaparece en vez de dejar un hueco.
+const ROT_SEGUNDOS = 13000;
+let rotIdx = 0, rotTs = 0, rotClave = '';
+function pintarRotulo(d) {
   const caja = document.getElementById('battlebar');
   if (!caja) return;
-  if (!dl || dl.score < 55) { caja.classList.remove('on'); rotuloClave = ''; return; }
-  const clave = dl.entre;
-  if (clave !== rotuloClave) {      // pareja nueva: se redibuja entera
-    rotuloClave = clave;
+  const duelos = d.duelos || [], deg = d.degradacion || [];
+  const cartas = [];
+  if (duelos[0] && duelos[0].score >= 55)
+    cartas.push(['duelo', () => cartaDuelo(duelos[0])]);
+  if (deg.length >= 3) cartas.push(['deg', () => cartaDegradacion(deg)]);
+  if (d.pit) cartas.push(['pit', () => cartaPit(d.pit, deg)]);
+  if (!cartas.length) { caja.classList.remove('on'); rotClave = ''; return; }
+
+  const ahora = Date.now();
+  if (!rotTs) rotTs = ahora;
+  if (ahora - rotTs > ROT_SEGUNDOS) { rotIdx++; rotTs = ahora; }
+  const [clave, dibujar] = cartas[rotIdx % cartas.length];
+  if (clave !== rotClave) {
+    rotClave = clave;
     caja.innerHTML = '';
-    caja.appendChild(dueloGrande(dl));
-  } else {                          // misma pareja: solo el hueco cambia
-    const g = caja.querySelector('.medio .g');
-    const t = caja.querySelector('.medio .t');
-    const barra = caja.querySelector('.barra i');
-    if (g) g.textContent = (dl.gap || 0).toFixed(2) + 's';
-    if (t) {
-      const fl = { closing: '▲', opening: '▼', steady: '■' }[dl.sentido] || '■';
-      const et = { closing: 'CLOSING', opening: 'OPENING', steady: 'STEADY' };
-      t.className = 't ' + dl.sentido;
-      t.textContent = fl + ' ' + (et[dl.sentido] || '')
-        + (dl.delta ? ' ' + Math.abs(dl.delta).toFixed(2) + 's' : '');
-    }
-    if (barra) barra.style.width =
-      Math.round(Math.max(0, 1 - (dl.gap || 0) / 3) * 100) + '%';
+    caja.appendChild(dibujar());
+  } else if (caja.firstChild && caja.firstChild._actualizar) {
+    // Misma tarjeta: se refrescan los números sin volver a montarla, para
+    // que no parpadee cada dos segundos.
+    caja.firstChild._actualizar(d);
   }
   caja.classList.add('on');
 }
 
-function dueloGrande(dl) {
+// ── Tarjeta: degradación medida ────────────────────────────────────────
+// Barras divergentes desde el centro. A la izquierda quien aguanta el
+// neumático, a la derecha quien lo está tirando. La cifra es s/vuelta
+// medidos de las vueltas limpias de ESTA carrera, no una estimación.
+function cartaDegradacion(deg) {
+  const el = document.createElement('div');
+  el.className = 'carta deg';
+  const pinta = (filas) => {
+    const top = filas.slice(0, 10);
+    const max = Math.max(0.02, ...top.map(f => Math.abs(f.pendiente)));
+    const fila = f => {
+      const frac = Math.min(1, Math.abs(f.pendiente) / max) * 50;
+      const cae = f.pendiente > 0;
+      return '<div class="dfila">'
+        + '<span class="p">' + f.pos + '</span>'
+        + '<span class="a" style="color:#' + (f.color || 'F5F7FA') + '">'
+        + f.acr + '</span>'
+        + neuChip(f.compuesto)
+        + '<span class="ed">' + f.edad + 'L</span>'
+        + '<span class="bar"><i class="' + (cae ? 'cae' : 'guarda') + '" style="'
+        + (cae ? 'left:50%;' : 'right:50%;') + 'width:' + frac + '%"></i></span>'
+        + '<span class="v ' + (cae ? 'cae' : 'guarda') + '">'
+        + (f.pendiente >= 0 ? '+' : '') + f.pendiente.toFixed(3) + '</span>'
+        + '</div>';
+    };
+    el.innerHTML = '<div class="cab"><span class="et">TYRE LIFE</span>'
+      + '<span class="pn">MEASURED THIS RACE</span>'
+      + '<span class="ley">— holding · losing +</span></div>'
+      + '<div class="dgrid">' + top.map(fila).join('') + '</div>'
+      + '<div class="razon">Seconds gained or lost per lap, from a least '
+      + 'squares fit over each car&#39;s clean laps in its current stint '
+      + '(in and out laps excluded).</div>';
+  };
+  pinta(deg);
+  el._actualizar = (d) => { if ((d.degradacion || []).length >= 3) pinta(d.degradacion); };
+  return el;
+}
+
+// ── Tarjeta: cuánto cuesta parar ───────────────────────────────────────
+function cartaPit(pit, deg) {
+  const el = document.createElement('div');
+  el.className = 'carta pit';
+  const mediana = arr => arr.length
+    ? arr.slice().sort((a, b) => a - b)[Math.floor(arr.length / 2)] : 0;
+  const pinta = (p, dg) => {
+    // Cuántas vueltas cuesta recuperar una parada. Lo que un neumático
+    // nuevo gana por vuelta no es la degradación a secas: es la que el
+    // viejo lleva ACUMULADA, o sea su caída por vuelta por las vueltas que
+    // tiene encima. Con eso, vueltas = coste / ventaja. Los tres números
+    // que entran están medidos aquí; si falta alguno, la cifra no sale.
+    const caidas = (dg || []).map(f => f.pendiente).filter(v => v > 0.005);
+    const edades = (dg || []).map(f => f.edad).filter(v => v > 0);
+    const med = mediana(caidas), edad = mediana(edades);
+    const ventaja = med * edad;
+    const vueltas = ventaja > 0.01 ? Math.round(p.segundos / ventaja) : 0;
+    el.innerHTML = '<div class="cab"><span class="et">PIT LOSS</span>'
+      + '<span class="pn">MEASURED THIS RACE</span></div>'
+      + '<div class="pgrid">'
+      + '<div class="big"><span class="n">' + p.segundos.toFixed(1)
+      + '<i>s</i></span><span class="l">lost per stop</span></div>'
+      + '<div class="sep"></div>'
+      + '<div class="big"><span class="n">' + p.muestras
+      + '</span><span class="l">stop' + (p.muestras > 1 ? 's' : '')
+      + ' measured</span></div>'
+      + (med > 0 ? '<div class="sep"></div>'
+          + '<div class="big"><span class="n">' + med.toFixed(3)
+          + '<i>s</i></span><span class="l">median deg / lap</span></div>' : '')
+      + (vueltas ? '<div class="sep"></div>'
+          + '<div class="big"><span class="n">' + ventaja.toFixed(2)
+          + '<i>s</i></span><span class="l">fresh tyre gain / lap</span></div>'
+          + '<div class="sep"></div>'
+          + '<div class="big"><span class="n">~' + vueltas
+          + '</span><span class="l">laps to pay it back</span></div>' : '')
+      + '</div>'
+      + '<div class="razon">Each stop timed as its in and out laps minus two '
+      + 'laps at that driver&#39;s own previous pace.'
+      + (vueltas ? ' A fresh tyre gains what the old one has already lost — '
+          + 'its measured drop per lap times its ' + Math.round(edad)
+          + '-lap age — so the stop pays back over that many laps.' : '')
+      + '</div>';
+  };
+  pinta(pit, deg);
+  el._actualizar = (d) => { if (d.pit) pinta(d.pit, d.degradacion || []); };
+  return el;
+}
+
+function cartaDuelo(dl) {
   const row = document.createElement('div');
-  row.className = 'duelo hero';
+  row.className = 'carta duelo hero';
   const a = dl.delante || {}, b = dl.detras || {};
   const cls = dl.score >= 70 ? 'high' : dl.score >= 40 ? 'mid' : 'low';
   const flecha = { closing: '▲', opening: '▼', steady: '■' }[dl.sentido] || '■';
@@ -2462,6 +2669,26 @@ function dueloGrande(dl) {
   const huecos = row.querySelectorAll('.hueco');
   if (huecos[0]) huecos[0].replaceWith(cascoMini(a.color));
   if (huecos[1]) huecos[1].replaceWith(cascoMini(b.color));
+  // Mientras la pareja siga siendo la misma solo cambian el hueco y la
+  // barra; volver a montar la tarjeta cada dos segundos la haría parpadear
+  // y redibujaría los dos cascos para nada.
+  row._actualizar = (d) => {
+    const n = (d.duelos || [])[0];
+    if (!n || n.entre !== dl.entre) return;
+    const g = row.querySelector('.medio .g');
+    const t = row.querySelector('.medio .t');
+    const barra = row.querySelector('.barra i');
+    if (g) g.textContent = (n.gap || 0).toFixed(2) + 's';
+    if (t) {
+      const fl = { closing: '▲', opening: '▼', steady: '■' }[n.sentido] || '■';
+      const et = { closing: 'CLOSING', opening: 'OPENING', steady: 'STEADY' };
+      t.className = 't ' + n.sentido;
+      t.textContent = fl + ' ' + (et[n.sentido] || '')
+        + (n.delta ? ' ' + Math.abs(n.delta).toFixed(2) + 's' : '');
+    }
+    if (barra) barra.style.width =
+      Math.round(Math.max(0, 1 - (n.gap || 0) / 3) * 100) + '%';
+  };
   return row;
 }
 function dueloCompacto(dl) {
@@ -3191,7 +3418,7 @@ async function tick() {
   // El duelo más caliente sale además en grande sobre el ticker, como el
   // rótulo de una retransmisión. En la columna lateral no cabía: 256 px
   // recortaban los nombres y los tiempos.
-  pintarRotulo(duelos[0]);
+  pintarRotulo(d);
   // Coste de parada medido de las paradas reales de ESTA carrera
   const pitloss = document.getElementById('pitloss');
   if (d.pit) {
