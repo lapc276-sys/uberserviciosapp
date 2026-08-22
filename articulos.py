@@ -214,9 +214,28 @@ def pagina(art, base="", relacionados=()):
     """
     u = url_de(art, base)
     foto = art.get("foto") or {}
-    cuerpo = "\n".join(
-        f"<p>{_e(p)}</p>" for p in art.get("cuerpo", []) if p.strip())
     fecha = art.get("fecha", "")
+
+    # Dos formas de cuerpo. `cuerpo` es una lista de párrafos, para las
+    # piezas cortas. `secciones` viene de los episodios del canal, que ya
+    # están divididos en capítulos con su tema: cada uno se convierte en un
+    # <h2>, que además le da a Google el índice de lo que trata la página.
+    if art.get("secciones"):
+        cuerpo = "\n".join(
+            (f"<h2>{_e(s.get('titulo', ''))}</h2>" if s.get("titulo") else "")
+            + "\n".join(f"<p>{_e(p)}</p>" for p in s.get("parrafos", [])
+                        if p.strip())
+            for s in art["secciones"])
+    else:
+        cuerpo = "\n".join(
+            f"<p>{_e(p)}</p>" for p in art.get("cuerpo", []) if p.strip())
+
+    # Si la pieza salió de un video del canal, se enlaza. Es contenido
+    # propio: el texto y el video cuentan lo mismo en dos formatos.
+    if art.get("video"):
+        cuerpo += (
+            f'<p class="verlo"><a href="{_e(art["video"])}" rel="noopener" '
+            f'target="_blank">Watch this as a video on our channel →</a></p>')
 
     cred = ""
     if foto.get("url"):
@@ -288,6 +307,13 @@ def pagina(art, base="", relacionados=()):
   figcaption {{ margin-top:9px; font-size:12px; color:var(--dim2); }}
   figcaption a {{ color:var(--dim); }}
   article p {{ margin:20px 0; font-size:17px; text-wrap:pretty; }}
+  article h2 {{ margin:38px 0 -4px; font-family:Archivo,sans-serif;
+                font-weight:800; font-size:23px; letter-spacing:-.015em;
+                line-height:1.2; text-wrap:balance; }}
+  .verlo {{ margin-top:34px !important; padding-top:22px;
+            border-top:1px solid var(--line); }}
+  .verlo a {{ color:var(--acc); font-weight:600; text-decoration:none; }}
+  .verlo a:hover {{ text-decoration:underline; }}
   .rel {{ margin-top:48px; padding-top:26px; border-top:1px solid var(--line); }}
   .rel h2 {{ font-family:Archivo,sans-serif; font-weight:800; font-size:17px;
              letter-spacing:.01em; text-transform:uppercase;

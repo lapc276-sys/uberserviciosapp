@@ -23,6 +23,7 @@ import asyncio
 import base64
 import contextlib
 import datetime as dt
+import glob
 import json
 import logging
 import math
@@ -8912,6 +8913,92 @@ def _brief_previa():
         "session. That is analysis you can do from the circuit alone.")
 
 
+EPISODIOS_TEMA = {"historia": "Tech history", "tech": "Engineering",
+                  "dinero": "The business", "leyendas": "Tech history"}
+
+
+async def _articulo_de_episodio(ep, ruta):
+    """Convierte un episodio ya emitido en un artículo de la web.
+
+    El guion está escrito, revisado y es nuestro; lo único que hace falta
+    es darle forma de página. No pasa por el modelo a propósito: volver a
+    escribirlo costaría dinero y abriría la puerta a que cambie un dato
+    que en el original estaba bien.
+
+    Cada capítulo trae su `tema`, así que se convierte en un titular de
+    sección — eso le da a la página el índice de lo que trata, que es
+    justo lo que Google lee para entenderla.
+    """
+    titulo = (ep.get("titulo") or "").strip()
+    caps = ep.get("capitulos") or []
+    if not (titulo and caps):
+        return None
+    s = articulos.slug(titulo)
+    if articulos.existe(s):
+        return None
+
+    secciones, palabras = [], 0
+    for c in caps:
+        lineas = [l.strip() for l in (c.get("lineas") or []) if l.strip()]
+        if not lineas:
+            continue
+        palabras += sum(len(l.split()) for l in lineas)
+        secciones.append({"titulo": (c.get("tema") or "").strip(),
+                          "parrafos": lineas})
+    # Una página de cuatro frases no ayuda a nadie: Google la trata como
+    # contenido pobre y AdSense rechaza sitios llenos de ellas. Si el
+    # episodio se quedó corto, mejor no publicarlo.
+    if palabras < 350:
+        log.info("📝 Episodio '%s' demasiado corto para la web (%d palabras)",
+                 titulo, palabras)
+        return None
+
+    # La entradilla es la apertura del propio episodio, recortada a la
+    # primera frase entera.
+    primera = secciones[0]["parrafos"][0]
+    corte = primera.find(". ")
+    entradilla = (primera[:corte + 1] if 0 < corte < 240 else primera)[:260]
+
+    art = {
+        "slug": s,
+        "titulo": titulo[:120],
+        "entradilla": entradilla,
+        "secciones": secciones,
+        "cuerpo": [],
+        "tema": EPISODIOS_TEMA.get(ep.get("tipo", ""), "Analysis"),
+        "fecha": dt.datetime.fromtimestamp(
+            os.path.getmtime(ruta), dt.timezone.utc).isoformat(),
+        "foto": await articulos.foto_commons(
+            f"{titulo} Formula One") or {},
+        "video": ep.get("youtube_url", ""),
+    }
+    articulos.guardar(art)
+    log.info("📝 Episodio publicado en la web: /noticias/%s (%d palabras)",
+             s, palabras)
+    return art
+
+
+async def publicar_episodios_web():
+    """Pasa a la web los episodios que todavía no estén publicados."""
+    hechos = 0
+    try:
+        rutas = sorted(glob.glob("episodes/ep_*.json"))
+    except Exception:
+        return 0
+    for ruta in rutas:
+        try:
+            with open(ruta) as f:
+                ep = json.load(f)
+        except Exception:
+            continue
+        try:
+            if await _articulo_de_episodio(ep, ruta):
+                hechos += 1
+        except Exception as e:
+            log.info("Episodio %s no publicado (%s)", ruta, e)
+    return hechos
+
+
 async def bucle_articulos():
     """Publica piezas propias cada pocas horas.
 
@@ -8920,13 +9007,28 @@ async def bucle_articulos():
     portada son de otros, y una web que solo agrega ajeno no la posiciona
     Google ni la aprueba AdSense.
     """
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        log.info("📝 Artículos propios en pausa (falta ANTHROPIC_API_KEY)")
-        return
-    log.info("📝 Artículos propios activados (cada %gs)", ARTICULOS_INTERVALO)
+    # Sin clave se sigue trabajando: pasar a la web los episodios que el
+    # canal ya emitió es reordenar texto propio, no escribirlo.
+    hay_modelo = bool(os.environ.get("ANTHROPIC_API_KEY"))
+    log.info("📝 Artículos propios activados (cada %gs)%s",
+             ARTICULOS_INTERVALO,
+             "" if hay_modelo else " — solo episodios ya emitidos, "
+             "sin ANTHROPIC_API_KEY no se escriben piezas nuevas")
     await asyncio.sleep(40)     # dejar que cargue el calendario primero
     while True:
         try:
+            # Primero lo que ya está escrito. Cada episodio que el canal
+            # emite es texto propio y revisado; pasarlo a la web no cuesta
+            # una llamada al modelo, así que va antes que escribir nada
+            # nuevo.
+            if await publicar_episodios_web():
+                await asyncio.sleep(ARTICULOS_INTERVALO)
+                continue
+
+            if not hay_modelo:
+                await asyncio.sleep(ARTICULOS_INTERVALO)
+                continue
+
             hechos = articulos.listar(500)
             # Una previa por fin de semana, y el resto explicadores. La
             # previa caduca; los explicadores siguen trayendo visitas.
