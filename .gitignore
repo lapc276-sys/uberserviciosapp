@@ -24,3 +24,6 @@ temas_cola.json
 temas_video/
 microshorts_hechos.json
 shorts_ola.json
+
+# Lienzo de diseño: se regenera con seed-canvas.mjs desde los .dc.html
+apex-motorsport-home.html

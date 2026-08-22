@@ -1,0 +1,390 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800;900&family=Barlow:wght@400;500;600;700&family=Barlow+Condensed:wght@500;600;700&display=swap" rel="stylesheet">
+  <style>
+    body { margin: 0; background: #08090C; color: #F5F7FA;
+           font-family: Barlow, "Segoe UI", system-ui, sans-serif;
+           -webkit-font-smoothing: antialiased; }
+    a { color: #F5F7FA; text-decoration: none; }
+    a:hover { color: #FF2D16; }
+    .nv { position: relative; font-size: 13px; font-weight: 600;
+          letter-spacing: .1em; text-transform: uppercase; color: #8992A3;
+          padding: 4px 0; }
+    .nv:hover { color: #F5F7FA; }
+    .nv.on { color: #F5F7FA; }
+    .nv.on::after { content: ""; position: absolute; left: 0; right: 0;
+                    bottom: -22px; height: 2px; background: #FF2D16; }
+    .chp { font-family: Barlow, sans-serif; font-size: 12px; font-weight: 600;
+           letter-spacing: .1em; text-transform: uppercase; color: #8992A3;
+           padding: 7px 14px; border: 1px solid #232B37; border-radius: 2px;
+           cursor: pointer; white-space: nowrap; }
+    .chp:hover { color: #F5F7FA; border-color: #3A4454; }
+    .num { font-family: "Barlow Condensed", Barlow, sans-serif;
+           font-variant-numeric: tabular-nums; }
+    .hl { transition: color .15s; }
+    .row:hover .hl { color: #FF2D16; }
+    @keyframes bl { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
+    @keyframes crawl { from { transform: translateX(0); }
+                       to { transform: translateX(-50%); } }
+  </style>
+</helmet>
+
+<div style="width: 1440px; background: #08090C;">
+
+  <!-- ══ HEADER ══ -->
+  <header style="display: flex; align-items: center; gap: 40px; height: 68px; padding: 0 40px; border-bottom: 1px solid #232B37; background: #08090C;">
+    <div style="display: flex; align-items: center; gap: 11px;">
+      <svg width="28" height="28" viewBox="0 0 28 28" fill="none" aria-hidden="true">
+        <path d="M10 5 L24 5 L21 9.5 L7 9.5 Z" fill="{{accent}}"></path>
+        <path d="M6.5 12 L20.5 12 L17.5 16.5 L3.5 16.5 Z" fill="{{accent}}" opacity="0.62"></path>
+        <path d="M3 19 L17 19 L14 23.5 L0 23.5 Z" fill="{{accent}}" opacity="0.3"></path>
+      </svg>
+      <span style="font-family: Archivo, Helvetica, Arial, sans-serif; font-weight: 900; font-size: 23px; letter-spacing: -.015em;">APEX</span>
+    </div>
+    <nav style="display: flex; align-items: center; gap: 30px;">
+      <a href="#" class="nv on">Live</a>
+      <a href="#" class="nv">News</a>
+      <a href="#" class="nv">Standings</a>
+      <a href="#" class="nv">Schedule</a>
+      <a href="#" class="nv">Shorts</a>
+    </nav>
+    <div style="margin-left: auto; display: flex; align-items: center; gap: 16px;">
+      <sc-if value="{{enVivo}}" hint-placeholder-val="{{ true }}">
+        <div style="display: flex; align-items: center; gap: 8px; padding: 6px 12px; border: 1px solid {{accent}}; border-radius: 2px;">
+          <span style="width: 7px; height: 7px; border-radius: 50%; background: {{accent}}; animation: bl 1.5s infinite;"></span>
+          <span style="font-size: 11px; font-weight: 700; letter-spacing: .16em; color: {{accent}};">ON AIR</span>
+        </div>
+      </sc-if>
+      <a href="#" style="display: flex; align-items: center; gap: 9px; height: 38px; padding: 0 20px; background: {{accent}}; color: #FFFFFF; font-size: 12px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; border-radius: 2px;">
+        <svg width="11" height="13" viewBox="0 0 11 13" fill="none" aria-hidden="true"><path d="M0 0 L11 6.5 L0 13 Z" fill="currentColor"></path></svg>
+        Watch
+      </a>
+    </div>
+  </header>
+
+  <!-- ══ HERO ══ -->
+  <section style="position: relative; overflow: hidden; padding: 52px 40px 46px; background: #0A0C11; border-bottom: 1px solid #232B37;">
+    <svg width="620" height="400" viewBox="0 0 620 400" fill="none" style="position: absolute; right: -60px; top: -30px; opacity: .06; pointer-events: none;" aria-hidden="true">
+      <path d="M96 330 C40 300 34 224 84 190 C138 154 214 196 258 166 C312 130 286 60 342 44 C400 28 462 62 500 108 C544 162 566 236 522 288 C470 350 372 322 300 336 C226 350 152 362 96 330 Z" stroke="#F5F7FA" stroke-width="14" stroke-linejoin="round"></path>
+    </svg>
+
+    <div style="position: relative; display: grid; grid-template-columns: 1.34fr 1fr; gap: 52px; align-items: start;">
+
+      <!-- next session -->
+      <div style="display: flex; flex-direction: column; gap: 22px;">
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <span style="width: 30px; height: 3px; background: {{accent}};"></span>
+          <span style="font-size: 12px; font-weight: 700; letter-spacing: .2em; text-transform: uppercase; color: #8992A3;">Next session · {{ ronda }}</span>
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 10px;">
+          <h1 style="margin: 0; font-family: Archivo, Helvetica, Arial, sans-serif; font-weight: 900; font-size: 66px; line-height: .95; letter-spacing: -.028em; text-transform: uppercase; text-wrap: balance;">{{ gp }}</h1>
+          <p style="margin: 0; font-size: 16px; font-weight: 500; letter-spacing: .04em; color: #8992A3;">{{ circuito }}</p>
+        </div>
+
+        <div style="display: flex; align-items: flex-end; gap: 0; margin-top: 4px;">
+          <sc-for list="{{ cuenta }}" as="u" hint-placeholder-count="4">
+            <div style="display: flex; flex-direction: column; gap: 4px; padding: 0 26px 0 0; margin-right: 26px; border-right: 1px solid #232B37;">
+              <span class="num" style="font-size: 54px; font-weight: 700; line-height: .9; letter-spacing: -.01em;">{{ u.v }}</span>
+              <span style="font-size: 11px; font-weight: 600; letter-spacing: .18em; text-transform: uppercase; color: #5C6474;">{{ u.k }}</span>
+            </div>
+          </sc-for>
+        </div>
+
+        <div style="display: flex; gap: 10px; margin-top: 6px;">
+          <sc-for list="{{ sesiones }}" as="s" hint-placeholder-count="3">
+            <div style="display: flex; flex-direction: column; gap: 3px; padding: 10px 18px 11px; background: #0F1218; border: 1px solid #232B37; border-top: 2px solid {{ s.barra }}; border-radius: 2px;">
+              <span style="font-size: 11px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: #8992A3;">{{ s.nombre }}</span>
+              <span class="num" style="font-size: 19px; font-weight: 600; letter-spacing: .02em;">{{ s.hora }}</span>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+
+      <!-- live card -->
+      <div style="display: flex; flex-direction: column; background: #0F1218; border: 1px solid #232B37; border-radius: 3px; overflow: hidden;">
+        <div style="position: relative; height: 210px; background: #12161D; display: flex; align-items: center; justify-content: center;">
+          <svg width="1000" height="210" viewBox="0 0 1000 210" preserveAspectRatio="none" fill="none" style="position: absolute; inset: 0; width: 100%; height: 100%; opacity: .28;" aria-hidden="true">
+            <path d="M0 150 L1000 44" stroke="#232B37" stroke-width="1"></path>
+            <path d="M0 176 L1000 70" stroke="#232B37" stroke-width="1"></path>
+            <path d="M0 124 L1000 18" stroke="#232B37" stroke-width="1"></path>
+          </svg>
+          <div style="position: relative; display: flex; align-items: center; justify-content: center; width: 62px; height: 62px; border: 2px solid {{accent}}; border-radius: 50%;">
+            <svg width="17" height="20" viewBox="0 0 17 20" fill="none" aria-hidden="true"><path d="M1 0 L17 10 L1 20 Z" fill="{{accent}}"></path></svg>
+          </div>
+          <sc-if value="{{enVivo}}" hint-placeholder-val="{{ true }}">
+            <div style="position: absolute; top: 14px; left: 14px; display: flex; align-items: center; gap: 7px; padding: 5px 11px; background: {{accent}}; border-radius: 2px;">
+              <span style="width: 6px; height: 6px; border-radius: 50%; background: #FFFFFF; animation: bl 1.5s infinite;"></span>
+              <span style="font-size: 10px; font-weight: 800; letter-spacing: .16em; color: #FFFFFF;">LIVE</span>
+            </div>
+          </sc-if>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 14px; padding: 20px 22px 22px;">
+          <div style="display: flex; flex-direction: column; gap: 6px;">
+            <span style="font-size: 11px; font-weight: 700; letter-spacing: .18em; text-transform: uppercase; color: #5C6474;">Now playing</span>
+            <span style="font-size: 19px; font-weight: 600; line-height: 1.25; letter-spacing: -.005em;">{{ ahora }}</span>
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px; padding-top: 13px; border-top: 1px solid #1A2029;">
+            <span style="font-size: 11px; font-weight: 700; letter-spacing: .18em; text-transform: uppercase; color: #5C6474;">Up next</span>
+            <span style="font-size: 13px; font-weight: 500; color: #8992A3;">{{ siguiente }}</span>
+          </div>
+          <a href="#" style="display: flex; align-items: center; justify-content: center; gap: 9px; height: 46px; background: {{accent}}; color: #FFFFFF; font-size: 13px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; border-radius: 2px;">
+            <svg width="12" height="14" viewBox="0 0 12 14" fill="none" aria-hidden="true"><path d="M0 0 L12 7 L0 14 Z" fill="currentColor"></path></svg>
+            Watch on YouTube
+          </a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══ TICKER ══ -->
+  <div style="display: flex; align-items: center; height: 46px; background: #0F1218; border-bottom: 1px solid #232B37; overflow: hidden;">
+    <div style="flex: none; display: flex; align-items: center; gap: 8px; height: 100%; padding: 0 20px; background: {{accent}};">
+      <span style="width: 7px; height: 7px; border-radius: 50%; background: #FFFFFF; animation: bl 1.2s infinite;"></span>
+      <span style="font-size: 11px; font-weight: 800; letter-spacing: .18em; color: #FFFFFF;">LATEST</span>
+    </div>
+    <div style="flex: 1; position: relative; height: 100%; overflow: hidden;">
+      <div style="position: absolute; top: 0; left: 0; height: 100%; display: flex; align-items: center; white-space: nowrap; animation: crawl 42s linear infinite;">
+        <sc-for list="{{ ticker }}" as="t" hint-placeholder-count="8">
+          <span style="display: inline-flex; align-items: center; gap: 11px; padding: 0 26px; border-right: 1px solid #1A2029;">
+            <span style="font-size: 11px; font-weight: 800; letter-spacing: .1em; color: {{ t.color }};">{{ t.serie }}</span>
+            <span style="font-size: 14px; font-weight: 500; color: #C9D0DB;">{{ t.texto }}</span>
+          </span>
+        </sc-for>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ NEWS ══ -->
+  <section style="padding: 46px 40px 44px; border-bottom: 1px solid #232B37;">
+    <div style="display: flex; align-items: flex-end; gap: 24px; margin-bottom: 26px;">
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        <span style="font-size: 12px; font-weight: 700; letter-spacing: .2em; text-transform: uppercase; color: {{accent}};">The paddock</span>
+        <h2 style="margin: 0; font-family: Archivo, Helvetica, Arial, sans-serif; font-weight: 800; font-size: 34px; line-height: 1; letter-spacing: -.022em; text-transform: uppercase;">Motorsport news</h2>
+      </div>
+      <div style="margin-left: auto; display: flex; gap: 8px;">
+        <sc-for list="{{ series }}" as="f" hint-placeholder-count="6">
+          <span class="chp" style="color: {{ f.txt }}; border-color: {{ f.borde }}; background: {{ f.fondo }};">{{ f.nombre }}</span>
+        </sc-for>
+      </div>
+    </div>
+
+    <div style="display: grid; grid-template-columns: 1.5fr 1fr 1fr; gap: 22px;">
+
+      <!-- lead -->
+      <a href="#" class="row" style="display: flex; flex-direction: column; gap: 18px; padding: 24px; background: #0F1218; border: 1px solid #232B37; border-top: 3px solid {{ lead.color }}; border-radius: 2px;">
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <span style="font-size: 11px; font-weight: 800; letter-spacing: .14em; color: {{ lead.color }};">{{ lead.serie }}</span>
+          <span style="width: 3px; height: 3px; border-radius: 50%; background: #3A4454;"></span>
+          <span class="num" style="font-size: 13px; font-weight: 500; color: #5C6474;">{{ lead.hora }}</span>
+        </div>
+        <h3 class="hl" style="margin: 0; font-family: Archivo, Helvetica, Arial, sans-serif; font-weight: 700; font-size: 31px; line-height: 1.1; letter-spacing: -.02em; text-wrap: pretty;">{{ lead.titulo }}</h3>
+        <p style="margin: 0; font-size: 15px; line-height: 1.55; color: #8992A3; text-wrap: pretty;">{{ lead.bajada }}</p>
+        <div style="margin-top: auto; display: flex; align-items: center; gap: 8px; padding-top: 6px;">
+          <span style="font-size: 12px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: {{accent}};">{{ lead.fuente }}</span>
+          <svg width="13" height="9" viewBox="0 0 13 9" fill="none" aria-hidden="true"><path d="M0 4.5 H11 M7.5 1 L11 4.5 L7.5 8" stroke="{{accent}}" stroke-width="1.5"></path></svg>
+        </div>
+      </a>
+
+      <!-- two columns of compact stories -->
+      <sc-for list="{{ columnas }}" as="col" hint-placeholder-count="2">
+        <div style="display: flex; flex-direction: column; gap: 0;">
+          <sc-for list="{{ col.items }}" as="n" hint-placeholder-count="3">
+            <a href="#" class="row" style="display: flex; flex-direction: column; gap: 9px; padding: 17px 0 18px; border-bottom: 1px solid #1A2029;">
+              <div style="display: flex; align-items: center; gap: 9px;">
+                <span style="width: 3px; height: 12px; background: {{ n.color }};"></span>
+                <span style="font-size: 10px; font-weight: 800; letter-spacing: .14em; color: {{ n.color }};">{{ n.serie }}</span>
+                <span class="num" style="margin-left: auto; font-size: 12px; font-weight: 500; color: #5C6474;">{{ n.hora }}</span>
+              </div>
+              <h4 class="hl" style="margin: 0; font-size: 17px; font-weight: 600; line-height: 1.3; letter-spacing: -.008em; text-wrap: pretty;">{{ n.titulo }}</h4>
+              <span style="font-size: 11px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: #5C6474;">{{ n.fuente }}</span>
+            </a>
+          </sc-for>
+        </div>
+      </sc-for>
+    </div>
+  </section>
+
+  <!-- ══ STANDINGS + SCHEDULE ══ -->
+  <section style="display: grid; grid-template-columns: 1fr 1fr 1.1fr; gap: 22px; padding: 44px 40px; border-bottom: 1px solid #232B37;">
+
+    <sc-for list="{{ tablas }}" as="tb" hint-placeholder-count="2">
+      <div style="display: flex; flex-direction: column; gap: 16px;">
+        <div style="display: flex; align-items: baseline; gap: 10px; padding-bottom: 13px; border-bottom: 1px solid #232B37;">
+          <h3 style="margin: 0; font-family: Archivo, Helvetica, Arial, sans-serif; font-weight: 800; font-size: 17px; letter-spacing: .01em; text-transform: uppercase;">{{ tb.titulo }}</h3>
+          <span style="margin-left: auto; font-size: 11px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: #5C6474;">PTS</span>
+        </div>
+        <sc-for list="{{ tb.filas }}" as="f" hint-placeholder-count="5">
+          <div style="display: flex; align-items: center; gap: 14px; padding: 9px 0;">
+            <span class="num" style="width: 22px; font-size: 19px; font-weight: 700; color: #5C6474;">{{ f.pos }}</span>
+            <span style="width: 3px; height: 24px; background: {{ f.color }}; border-radius: 1px;"></span>
+            <div style="display: flex; flex-direction: column; gap: 1px;">
+              <span style="font-size: 15px; font-weight: 600; letter-spacing: -.005em;">{{ f.nombre }}</span>
+              <span style="font-size: 11px; font-weight: 500; letter-spacing: .08em; text-transform: uppercase; color: #5C6474;">{{ f.sub }}</span>
+            </div>
+            <span class="num" style="margin-left: auto; font-size: 20px; font-weight: 700; letter-spacing: .01em;">{{ f.pts }}</span>
+          </div>
+        </sc-for>
+      </div>
+    </sc-for>
+
+    <div style="display: flex; flex-direction: column; gap: 16px;">
+      <div style="display: flex; align-items: baseline; gap: 10px; padding-bottom: 13px; border-bottom: 1px solid #232B37;">
+        <h3 style="margin: 0; font-family: Archivo, Helvetica, Arial, sans-serif; font-weight: 800; font-size: 17px; letter-spacing: .01em; text-transform: uppercase;">Coming up</h3>
+      </div>
+      <sc-for list="{{ proximas }}" as="r" hint-placeholder-count="3">
+        <div style="display: flex; align-items: center; gap: 16px; padding: 13px 16px; background: #0F1218; border: 1px solid #232B37; border-left: 3px solid {{ r.borde }}; border-radius: 2px;">
+          <div style="display: flex; flex-direction: column; align-items: center; gap: 1px; min-width: 42px;">
+            <span style="font-size: 9px; font-weight: 700; letter-spacing: .14em; color: #5C6474;">RD</span>
+            <span class="num" style="font-size: 24px; font-weight: 700; line-height: 1;">{{ r.ronda }}</span>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 3px;">
+            <span style="font-size: 15px; font-weight: 600; letter-spacing: -.005em; text-transform: uppercase;">{{ r.gp }}</span>
+            <span style="font-size: 12px; font-weight: 500; color: #5C6474;">{{ r.circuito }}</span>
+          </div>
+          <span class="num" style="margin-left: auto; font-size: 14px; font-weight: 600; letter-spacing: .04em; color: #8992A3;">{{ r.fecha }}</span>
+        </div>
+      </sc-for>
+    </div>
+  </section>
+
+  <!-- ══ FOOTER ══ -->
+  <footer style="display: flex; align-items: flex-start; gap: 48px; padding: 34px 40px 38px; background: #0A0C11;">
+    <div style="display: flex; flex-direction: column; gap: 11px; max-width: 400px;">
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <svg width="22" height="22" viewBox="0 0 28 28" fill="none" aria-hidden="true">
+          <path d="M10 5 L24 5 L21 9.5 L7 9.5 Z" fill="{{accent}}"></path>
+          <path d="M6.5 12 L20.5 12 L17.5 16.5 L3.5 16.5 Z" fill="{{accent}}" opacity="0.62"></path>
+          <path d="M3 19 L17 19 L14 23.5 L0 23.5 Z" fill="{{accent}}" opacity="0.3"></path>
+        </svg>
+        <span style="font-family: Archivo, Helvetica, Arial, sans-serif; font-weight: 900; font-size: 18px; letter-spacing: -.015em;">APEX</span>
+      </div>
+      <p style="margin: 0; font-size: 12px; line-height: 1.6; color: #5C6474;">An independent motorsport channel. Not associated with, endorsed by, or affiliated with Formula 1, the FIA, or any championship or team. All trademarks belong to their owners.</p>
+    </div>
+    <div style="margin-left: auto; display: flex; gap: 56px;">
+      <sc-for list="{{ pie }}" as="g" hint-placeholder-count="2">
+        <div style="display: flex; flex-direction: column; gap: 9px;">
+          <span style="font-size: 10px; font-weight: 700; letter-spacing: .18em; text-transform: uppercase; color: #5C6474;">{{ g.titulo }}</span>
+          <sc-for list="{{ g.links }}" as="l" hint-placeholder-count="3">
+            <a href="#" style="font-size: 13px; font-weight: 500; color: #8992A3;">{{ l }}</a>
+          </sc-for>
+        </div>
+      </sc-for>
+    </div>
+  </footer>
+
+</div>
+</x-dc>
+
+<script data-dc-script data-props='{"accent":{"editor":"color","default":"#FF2D16","options":["#FF2D16","#FFB020","#2FC4E0","#31D97A"]},"enVivo":{"editor":"boolean","default":true,"section":"State"}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const F1 = '#FF2D16', MGP = '#FFB020', NAS = '#2FC4E0',
+          IND = '#31D97A', WEC = '#A78BFA';
+    return {
+      accent: this.props.accent ?? '#FF2D16',
+      enVivo: this.props.enVivo ?? true,
+
+      ronda: 'Round 15',
+      gp: 'Dutch Grand Prix',
+      circuito: 'Circuit Zandvoort · Netherlands',
+      cuenta: [
+        { v: '01', k: 'Days' }, { v: '08', k: 'Hrs' },
+        { v: '42', k: 'Min' }, { v: '19', k: 'Sec' },
+      ],
+      sesiones: [
+        { nombre: 'Sprint',    hora: '11:30', barra: this.props.accent ?? '#FF2D16' },
+        { nombre: 'Qualifying', hora: '15:00', barra: '#232B37' },
+        { nombre: 'Race',      hora: '14:00', barra: '#232B37' },
+      ],
+
+      ahora: 'Race Weekend Preview — Zandvoort',
+      siguiente: 'Tech Breakdown · in 12 min',
+
+      ticker: [
+        { serie: 'F1',      texto: 'Sprint qualifying sets the grid for Saturday', color: F1 },
+        { serie: 'MOTOGP',  texto: 'Front-row lockout after a dry final run',      color: MGP },
+        { serie: 'NASCAR',  texto: 'Late caution reshuffles the playoff picture',   color: NAS },
+        { serie: 'INDYCAR', texto: 'Rookie takes a maiden podium on the oval',      color: IND },
+        { serie: 'F1',      texto: 'Sprint qualifying sets the grid for Saturday', color: F1 },
+        { serie: 'MOTOGP',  texto: 'Front-row lockout after a dry final run',      color: MGP },
+        { serie: 'NASCAR',  texto: 'Late caution reshuffles the playoff picture',   color: NAS },
+        { serie: 'INDYCAR', texto: 'Rookie takes a maiden podium on the oval',      color: IND },
+      ],
+
+      series: [
+        { nombre: 'All',     txt: '#F5F7FA', borde: '#3A4454', fondo: '#171B22' },
+        { nombre: 'F1',      txt: '#8992A3', borde: '#232B37', fondo: 'transparent' },
+        { nombre: 'MotoGP',  txt: '#8992A3', borde: '#232B37', fondo: 'transparent' },
+        { nombre: 'NASCAR',  txt: '#8992A3', borde: '#232B37', fondo: 'transparent' },
+        { nombre: 'IndyCar', txt: '#8992A3', borde: '#232B37', fondo: 'transparent' },
+        { nombre: 'WEC',     txt: '#8992A3', borde: '#232B37', fondo: 'transparent' },
+      ],
+
+      lead: {
+        serie: 'FORMULA 1', color: F1, hora: '18:24',
+        titulo: 'Championship lead narrows after a strategy gamble pays off',
+        bajada: 'A one-stop call in the closing stint turned a midfield start into a podium, and the gap at the top of the table is down to single figures with eight rounds left.',
+        fuente: 'Read the story',
+      },
+
+      columnas: [
+        { items: [
+          { serie: 'MOTOGP', color: MGP, hora: '17:50', fuente: 'Autosport',
+            titulo: 'Front-row lockout as the factory team finds late pace' },
+          { serie: 'F1', color: F1, hora: '16:12', fuente: 'Motorsport.com',
+            titulo: 'Upgraded floor brings a tenth in the high-speed corners' },
+          { serie: 'WEC', color: WEC, hora: '14:38', fuente: 'Autosport',
+            titulo: 'Hypercar entry list grows again for the endurance finale' },
+        ] },
+        { items: [
+          { serie: 'NASCAR', color: NAS, hora: '15:55', fuente: 'Motorsport.com',
+            titulo: 'Late caution reshuffles the playoff cut line' },
+          { serie: 'INDYCAR', color: IND, hora: '13:20', fuente: 'Autosport',
+            titulo: 'Rookie converts a maiden pole into a first oval podium' },
+          { serie: 'F1', color: F1, hora: '11:47', fuente: 'Motorsport.com',
+            titulo: 'Team confirms driver line-up for the coming season' },
+        ] },
+      ],
+
+      tablas: [
+        { titulo: 'Drivers', filas: [
+          { pos: '1', nombre: 'Driver name', sub: 'Team', pts: '284', color: '#2FC4E0' },
+          { pos: '2', nombre: 'Driver name', sub: 'Team', pts: '271', color: '#FF8000' },
+          { pos: '3', nombre: 'Driver name', sub: 'Team', pts: '246', color: '#FF2D16' },
+          { pos: '4', nombre: 'Driver name', sub: 'Team', pts: '198', color: '#00D7B6' },
+          { pos: '5', nombre: 'Driver name', sub: 'Team', pts: '175', color: '#FF8000' },
+        ] },
+        { titulo: 'Constructors', filas: [
+          { pos: '1', nombre: 'Team name', sub: 'Chassis', pts: '469', color: '#FF8000' },
+          { pos: '2', nombre: 'Team name', sub: 'Chassis', pts: '412', color: '#FF2D16' },
+          { pos: '3', nombre: 'Team name', sub: 'Chassis', pts: '355', color: '#2FC4E0' },
+          { pos: '4', nombre: 'Team name', sub: 'Chassis', pts: '241', color: '#00D7B6' },
+          { pos: '5', nombre: 'Team name', sub: 'Chassis', pts: '128', color: '#A78BFA' },
+        ] },
+      ],
+
+      proximas: [
+        { ronda: '15', gp: 'Dutch Grand Prix',  circuito: 'Zandvoort', fecha: 'AUG 23–24', borde: this.props.accent ?? '#FF2D16' },
+        { ronda: '16', gp: 'Italian Grand Prix', circuito: 'Monza',     fecha: 'AUG 30–31', borde: '#232B37' },
+        { ronda: '17', gp: 'Next round',         circuito: 'Circuit',   fecha: 'SEP 06–07', borde: '#232B37' },
+      ],
+
+      pie: [
+        { titulo: 'Channel', links: ['Live stream', 'Shorts', 'Podcast'] },
+        { titulo: 'Series',  links: ['Formula 1', 'MotoGP', 'NASCAR', 'IndyCar'] },
+      ],
+    };
+  }
+}
+</script>
+</body>
+</html>

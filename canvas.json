@@ -1,0 +1,16 @@
+{
+  "artboards": [
+    { "file": "Main.dc.html", "title": "Home — desktop", "x": 0, "y": 0, "w": 1440, "h": 2060, "print": "flow" },
+    { "file": "Mobile.dc.html", "title": "Home — phone", "x": 1600, "y": 0, "w": 390, "h": 1180, "print": "flow" }
+  ],
+  "annotations": [
+    {
+      "id": "datos-vivos",
+      "x": 1600,
+      "y": 1260,
+      "w": 390,
+      "text": "Todo lo que se ve aqui son huecos que rellena el canal solo:\n\n· Cuenta atras y sesiones -> /apex (calendario OpenF1)\n· Titulares -> /noticias (RSS gratis, ya funciona)\n· Clasificaciones -> /apex (standings)\n· ON AIR / Now playing -> /control/estado\n\nLos titulares y los puntos de este boceto son de relleno para\nver la maqueta: no son datos reales."
+    }
+  ],
+  "launch": { "view": "canvas" }
+}
