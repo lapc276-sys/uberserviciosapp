@@ -50,6 +50,23 @@ DIR = "articulos"
 SITIO = os.environ.get("SITIO_URL", "").strip().rstrip("/")
 NOMBRE = os.environ.get("SITIO_NOMBRE", "APEX").strip()
 
+# ── Quién firma ───────────────────────────────────────────────────────
+# Google mira quién hay detrás de un sitio antes de darle autoridad, y una
+# persona con nombre, cara y biografía vale mucho más que un logo. Nada de
+# esto es obligatorio: sin AUTOR_NOMBRE la firma sigue siendo el canal.
+AUTOR = os.environ.get("AUTOR_NOMBRE", "").strip()
+AUTOR_ROL = os.environ.get("AUTOR_ROL", "Editor").strip()
+AUTOR_BIO = os.environ.get("AUTOR_BIO", "").strip()
+AUTOR_FOTO = os.environ.get("AUTOR_FOTO", "").strip()   # URL o /estatico/...
+# Cómo se hace el contenido, dicho en claro. Va en la caja del autor y en
+# la página "about". Se puede cambiar, pero borrarlo del todo es mala idea:
+# AdSense exige representación veraz y es de las cosas por las que cierran
+# una cuenta sin avisar.
+AUTOR_NOTA = os.environ.get(
+    "AUTOR_NOTA",
+    "Articles here are produced with automated research and published "
+    "under editorial review.").strip()
+
 _COMMONS = "https://commons.wikimedia.org/w/api.php"
 
 
@@ -167,6 +184,20 @@ def _e(s):
     return html.escape(str(s if s is not None else ""), quote=True)
 
 
+def _cara(px):
+    """La foto del autor al tamaño pedido, o sus iniciales si no hay foto.
+
+    Las iniciales evitan el hueco gris de "imagen rota" cuando alguien
+    pone su nombre pero todavía no ha subido la foto.
+    """
+    if AUTOR_FOTO:
+        return (f'<img class="cara" src="{_e(AUTOR_FOTO)}" alt="{_e(AUTOR)}" '
+                f'width="{px}" height="{px}" loading="lazy">')
+    ini = "".join(p[0] for p in AUTOR.split()[:2]).upper() or "?"
+    return (f'<span class="cara ini" style="width:{px}px;height:{px}px;'
+            f'font-size:{max(11, px // 2 - 2)}px">{_e(ini)}</span>')
+
+
 def url_de(art, base=""):
     b = (base or SITIO or "").rstrip("/")
     return f"{b}/noticias/{art['slug']}"
@@ -194,7 +225,12 @@ def _jsonld(art, base):
         "description": art.get("entradilla", ""),
         "datePublished": art.get("fecha", ""),
         "dateModified": art.get("fecha", ""),
-        "author": {"@type": "Organization", "name": NOMBRE},
+        # Una persona con nombre pesa más que una marca en los datos que
+        # Google usa para decidir de quién se fía.
+        "author": ({"@type": "Person", "name": AUTOR,
+                    "jobTitle": AUTOR_ROL,
+                    "url": f"{(base or SITIO or '').rstrip('/')}/about"}
+                   if AUTOR else {"@type": "Organization", "name": NOMBRE}),
         "publisher": {"@type": "Organization", "name": NOMBRE},
         "mainEntityOfPage": {"@type": "WebPage", "@id": url_de(art, base)},
         "articleSection": art.get("tema", "Motorsport"),
@@ -245,6 +281,22 @@ def pagina(art, base="", relacionados=()):
         cred = (f'<figcaption>Photo: {quien} · '
                 f'{_e(foto.get("licencia", ""))}, via Wikimedia Commons'
                 f'</figcaption>')
+
+    # Firma: la carita y el nombre junto a la fecha. Sin AUTOR_NOMBRE se
+    # queda el canal, como hasta ahora.
+    firma = (f'<span class="quien">{_cara(26)}<b>{_e(AUTOR)}</b>'
+             f'<i>{_e(AUTOR_ROL)}</i></span>') if AUTOR else _e(NOMBRE)
+
+    # Caja del autor al pie del artículo
+    caja = ""
+    if AUTOR:
+        caja = (
+            '<aside class="autor">' + _cara(64)
+            + f'<div><b>{_e(AUTOR)}</b>'
+            + f'<span class="rol">{_e(AUTOR_ROL)} · {_e(NOMBRE)}</span>'
+            + (f"<p>{_e(AUTOR_BIO)}</p>" if AUTOR_BIO else "")
+            + (f'<p class="nota">{_e(AUTOR_NOTA)}</p>' if AUTOR_NOTA else "")
+            + "</div></aside>")
 
     otros = "".join(
         f'<li><a href="/noticias/{_e(r["slug"])}">{_e(r["titulo"])}</a></li>'
@@ -314,6 +366,30 @@ def pagina(art, base="", relacionados=()):
             border-top:1px solid var(--line); }}
   .verlo a {{ color:var(--acc); font-weight:600; text-decoration:none; }}
   .verlo a:hover {{ text-decoration:underline; }}
+  /* Firma y caja del autor */
+  .cara {{ border-radius:50%; object-fit:cover; flex:none;
+           background:#1A2029; }}
+  .cara.ini {{ display:inline-flex; align-items:center; justify-content:center;
+               font-family:Archivo,sans-serif; font-weight:800;
+               letter-spacing:.02em; color:var(--dim); }}
+  .by .quien {{ display:inline-flex; align-items:center; gap:8px; }}
+  /* El nombre va dentro de .by, así que le caía encima el estilo de la
+     etiqueta del tema: mayúsculas y espaciado. Un nombre propio así se
+     lee como etiqueta y no como firma. */
+  .by .quien b {{ color:var(--txt); font-weight:600; font-size:14px;
+                  text-transform:none; letter-spacing:normal; }}
+  .by .quien i {{ font-style:normal; color:var(--dim2); }}
+  .autor {{ display:flex; gap:16px; margin-top:44px; padding:22px;
+            background:var(--sur); border:1px solid var(--line);
+            border-left:3px solid var(--acc); border-radius:3px; }}
+  .autor b {{ display:block; font-family:Archivo,sans-serif; font-weight:800;
+              font-size:17px; letter-spacing:-.01em; }}
+  .autor .rol {{ display:block; margin-top:2px; font-size:11px;
+                 font-weight:700; letter-spacing:.14em; text-transform:uppercase;
+                 color:var(--acc); }}
+  .autor p {{ margin-top:10px; font-size:14px; line-height:1.55;
+              color:var(--dim); }}
+  .autor p.nota {{ font-size:12px; color:var(--dim2); }}
   .rel {{ margin-top:48px; padding-top:26px; border-top:1px solid var(--line); }}
   .rel h2 {{ font-family:Archivo,sans-serif; font-weight:800; font-size:17px;
              letter-spacing:.01em; text-transform:uppercase;
@@ -337,7 +413,7 @@ def pagina(art, base="", relacionados=()):
     </svg><b>{_e(NOMBRE)}</b>
   </a>
   <nav><a href="/inicio">Home</a><a href="/noticias-propias">Analysis</a>
-       <a href="/inicio#standings">Standings</a></nav>
+       <a href="/inicio#standings">Standings</a><a href="/about">About</a></nav>
 </div></header>
 
 <main>
@@ -346,11 +422,12 @@ def pagina(art, base="", relacionados=()):
     <h1>{_e(art.get('titulo', ''))}</h1>
     <p class="lede">{_e(art.get('entradilla', ''))}</p>
     <p class="by"><b>{_e(art.get('tema', 'Analysis'))}</b>
-       <span>{_e(NOMBRE)}</span>
+       {firma}
        <time datetime="{_e(fecha)}">{_e(_fecha_legible(fecha))}</time></p>
     {f'<figure><img src="{_e(foto["url"])}" alt="{_e(art.get("titulo",""))}" width="1600" height="900" loading="lazy">{cred}</figure>' if foto.get('url') else ''}
     {cuerpo}
   </article>
+  {caja}
   {otros}
 </main>
 <footer>
@@ -372,7 +449,8 @@ def sitemap(base, arts):
     """
     b = (base or SITIO or "").rstrip("/")
     urls = [(f"{b}/inicio", "", "daily", "1.0"),
-            (f"{b}/noticias-propias", "", "daily", "0.8")]
+            (f"{b}/noticias-propias", "", "daily", "0.8"),
+            (f"{b}/about", "", "monthly", "0.5")]
     for a in arts:
         urls.append((f"{b}/noticias/{a['slug']}",
                      (a.get("fecha") or "")[:10], "monthly", "0.7"))
@@ -384,6 +462,97 @@ def sitemap(base, arts):
     return ('<?xml version="1.0" encoding="UTF-8"?>'
             '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
             + cuerpo + "</urlset>")
+
+
+def about(base=""):
+    """La página de quién está detrás.
+
+    Google la busca literalmente: un sitio sin una página que diga quién
+    lo escribe y por qué le cuesta mucho más ganarse autoridad. AdSense
+    también la pide antes de aprobar.
+    """
+    b = (base or SITIO or "").rstrip("/")
+    persona = ""
+    if AUTOR:
+        persona = (
+            '<aside class="autor">' + _cara(84)
+            + f'<div><b>{_e(AUTOR)}</b>'
+            + f'<span class="rol">{_e(AUTOR_ROL)} · {_e(NOMBRE)}</span>'
+            + (f"<p>{_e(AUTOR_BIO)}</p>" if AUTOR_BIO else "")
+            + "</div></aside>")
+    ld = json.dumps({
+        "@context": "https://schema.org", "@type": "AboutPage",
+        "mainEntity": {
+            "@type": "Organization", "name": NOMBRE,
+            "url": b or None,
+            **({"employee": {"@type": "Person", "name": AUTOR,
+                             "jobTitle": AUTOR_ROL}} if AUTOR else {}),
+        },
+    }, ensure_ascii=False).replace("<", "\\u003c")
+
+    return f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>About | {_e(NOMBRE)}</title>
+<meta name="description" content="Who runs {_e(NOMBRE)}, where its numbers
+come from, and how its articles are made.">
+{f'<link rel="canonical" href="{_e(b)}/about">' if b else ''}
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800;900&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet">
+<script type="application/ld+json">{ld}</script>
+<style>
+ :root {{ --bg:#08090C; --sur:#0F1218; --line:#232B37; --txt:#F5F7FA;
+          --dim:#8992A3; --dim2:#5C6474; --acc:#FF2D16; }}
+ *{{box-sizing:border-box;margin:0;padding:0}}
+ body{{background:var(--bg);color:var(--txt);font-family:Barlow,system-ui,sans-serif;
+       line-height:1.65;-webkit-font-smoothing:antialiased}}
+ main{{max-width:760px;margin:0 auto;padding:52px 24px 60px}}
+ h1{{font-family:Archivo,sans-serif;font-weight:900;font-size:clamp(30px,5vw,46px);
+     letter-spacing:-.028em;text-transform:uppercase;margin-bottom:18px}}
+ h2{{font-family:Archivo,sans-serif;font-weight:800;font-size:21px;
+     letter-spacing:-.012em;margin:36px 0 10px}}
+ p{{margin:14px 0;font-size:16px;color:var(--dim);text-wrap:pretty}}
+ a{{color:var(--acc);text-decoration:none}} a:hover{{text-decoration:underline}}
+ .back{{display:inline-block;margin-bottom:22px;font-size:12px;font-weight:700;
+        letter-spacing:.12em;text-transform:uppercase}}
+ .cara{{border-radius:50%;object-fit:cover;flex:none;background:#1A2029}}
+ .cara.ini{{display:inline-flex;align-items:center;justify-content:center;
+            font-family:Archivo,sans-serif;font-weight:800;color:var(--dim)}}
+ .autor{{display:flex;gap:18px;margin:26px 0;padding:22px;background:var(--sur);
+         border:1px solid var(--line);border-left:3px solid var(--acc);
+         border-radius:3px}}
+ .autor b{{display:block;font-family:Archivo,sans-serif;font-weight:800;
+           font-size:19px}}
+ .autor .rol{{display:block;margin-top:2px;font-size:11px;font-weight:700;
+              letter-spacing:.14em;text-transform:uppercase;color:var(--acc)}}
+ .autor p{{margin-top:10px;font-size:14px}}
+ @media(max-width:700px){{.autor{{flex-direction:column}}}}
+</style></head><body><main>
+<a class="back" href="/inicio">← Home</a>
+<h1>About {_e(NOMBRE)}</h1>
+<p>{_e(NOMBRE)} is an independent motorsport channel and site covering
+   Formula 1, MotoGP, NASCAR, IndyCar and endurance racing.</p>
+{persona}
+<h2>Where the numbers come from</h2>
+<p>Live timing, positions and lap data come from the OpenF1 API.
+   Championship standings come from Jolpica. Figures such as tyre
+   degradation and the cost of a pit stop are measured from those laps
+   here, not taken from anyone else, and every graphic on the broadcast
+   states how its number was worked out.</p>
+<h2>How the articles are made</h2>
+<p>{_e(AUTOR_NOTA)} Pieces are written only from material we hold: how
+   something works mechanically, a circuit's own demands, or data measured
+   during a session. Nothing is written from a headline alone.</p>
+<h2>Headlines and photographs</h2>
+<p>Headlines from other outlets appear as link previews — the publisher's
+   own thumbnail and name, linking to their article. We do not reproduce
+   their text. Archive photography comes from Wikimedia Commons and is
+   credited to the photographer with its licence.</p>
+<h2>Not affiliated</h2>
+<p>{_e(NOMBRE)} is not associated with, endorsed by, or affiliated with
+   Formula 1, the FIA, or any championship or team. All trademarks belong
+   to their owners.</p>
+</main></body></html>"""
 
 
 def robots(base):

@@ -484,6 +484,9 @@ and championship standings.">
     <div class="fcol"><i>Sections</i>
       <a href="#news">News</a><a href="#standings">Standings</a><a href="#schedule">Schedule</a>
     </div>
+    <div class="fcol"><i>About</i>
+      <a href="/about">Who we are</a><a href="/noticias-propias">Analysis</a>
+    </div>
   </div>
 </footer>
 

@@ -1881,6 +1881,34 @@ and session reports from {articulos._e(articulos.NOMBRE)}.">
 </main></body></html>""")
 
 
+@app.get("/about", response_class=HTMLResponse)
+async def about(request: Request):
+    return HTMLResponse(articulos.about(_base_url(request)))
+
+
+# Imágenes fijas del sitio (hoy: la foto del autor). Se sirven desde
+# estatico/ para no depender de subirlas a ningún sitio externo: basta
+# con dejar el archivo en el repo y poner AUTOR_FOTO=/estatico/loquesea.jpg
+_ESTATICO_TIPOS = {".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+                   ".png": "image/png", ".webp": "image/webp",
+                   ".avif": "image/avif", ".svg": "image/svg+xml"}
+
+
+@app.get("/estatico/{nombre}")
+async def estatico(nombre: str):
+    # Solo un nombre de archivo, nada de rutas: sin esto, un ../ serviría
+    # cualquier fichero del servidor.
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,60}\.[A-Za-z0-9]{1,5}", nombre or ""):
+        return Response(status_code=404)
+    ext = os.path.splitext(nombre)[1].lower()
+    ruta = os.path.join("estatico", nombre)
+    if ext not in _ESTATICO_TIPOS or not os.path.isfile(ruta):
+        return Response(status_code=404)
+    with open(ruta, "rb") as f:
+        return Response(content=f.read(), media_type=_ESTATICO_TIPOS[ext],
+                        headers={"Cache-Control": "public, max-age=86400"})
+
+
 @app.get("/sitemap.xml")
 async def sitemap_xml(request: Request):
     return Response(content=articulos.sitemap(_base_url(request),

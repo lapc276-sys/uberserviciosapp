@@ -31,3 +31,5 @@ apex-motorsport-home.html
 # Artículos generados (contenido, no código)
 articulos/
 episodes/
+estatico/*
+!estatico/.gitkeep
