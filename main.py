@@ -664,6 +664,11 @@ class Estado:
         # {numero_de_curva: cuántos}. Es el dato que convierte "aquí cuesta
         # adelantar" de geometría en hecho comprobado.
         self.pases: dict[int, int] = {}
+        # Los últimos pases con la curva DONDE ocurrieron. El contador de
+        # arriba sirve para la estadística del circuito; esto es para que
+        # quien narra pueda decir dónde pasó, en vez de "le ha pasado" a
+        # secas. Se detectaba la curva y solo se escribía en el log.
+        self.pases_recientes: list = []
         self.pases_total: int = 0        # incluidos los que no caen en curva
         self.modo_calidad: str = "auto"    # auto | max | ahorro (botón del panel)
         self.off_air_manual: bool = False  # botón OFF AIR: silencio total, sin gasto
@@ -3884,7 +3889,20 @@ inside into turn one!" over abstract commentary. When the data shows a gap \
 shrinking, he is ON it.
 - {ANALISTA} earns her line: she speaks only when there is something the \
 picture does NOT explain — a strategy read, a degradation trend, why a pit \
-call was made. One point, then out."""
+call was made. One point, then out.
+- NEVER RE-EXPLAIN THE RULES. A flag, a penalty or a procedure gets \
+explained ONCE per race, briefly, the first time it happens. After that \
+you name it and move on — "still yellow in sector seven", not another \
+description of what a double yellow means. Assume the audience has been \
+watching. Re-teaching the basics every time is the fastest way to sound \
+like a machine and lose them.
+- OVERTAKES, PRECISELY. When a place changes hands, say WHERE and HOW: \
+the corner or the straight, whether it was into the braking zone, around \
+the outside, a slipstream down to the line, or the other car running wide. \
+"He got him" is not a description. If the data does not tell you where or \
+how, then say only what you know — who passed whom and for which \
+position — and do not invent a corner or a manoeuvre. Being short is \
+fine; being vague or making it up is not."""
 
 
 DUO_SCHEMA = {
@@ -4041,6 +4059,23 @@ async def narrar_datos(client: anthropic.AsyncAnthropic, eventos):
         if estrategia:
             contexto += (f"\nMEASURED STRATEGY DATA (real, quotable): "
                          f"{estrategia}")
+        # DÓNDE se ha adelantado en los últimos minutos. La curva sale de
+        # cruzar el GPS del pase con la geometría del circuito, así que es
+        # un hecho medido y se puede decir al aire. Sin esto lo único que
+        # llegaba era "X gana la posición N" y los pases se contaban en
+        # vago, sin sitio ni maniobra.
+        frescos = [p for p in estado.pases_recientes
+                   if time.time() - p["ts"] < 180]
+        if frescos:
+            det = "; ".join(
+                f"lap {p['vuelta']}: {p['quien']} passed {p['a_quien']} "
+                + (f"at turn {p['curva']}" if p["curva"]
+                   else "on a straight, not in a corner")
+                for p in frescos[-4:])
+            contexto += (
+                f"\nOVERTAKES JUST NOW, with the place each one happened "
+                f"(measured from GPS — quotable, and the ONLY source you "
+                f"may use for where a pass happened): {det}")
         # Curva destacada: la más lenta del circuito, medida del trazado real.
         # Es donde menos se adelanta, y da pie a explicar el trazado al aire.
         if estado.curvas:
@@ -9977,6 +10012,15 @@ async def bucle_mapa():
                     log.info("🏎️  Pase: %s a %s%s", t._nombre(quien),
                              t._nombre(a_quien),
                              f" en la curva {z}" if z else " (en recta)")
+                    # Y para quien lo narra: quién, a quién, dónde y en qué
+                    # vuelta. Sin esto solo le llegaba "X gana la posición
+                    # N", que es justo por lo que los adelantamientos se
+                    # contaban en vago.
+                    estado.pases_recientes.append({
+                        "quien": t._nombre(quien),
+                        "a_quien": t._nombre(a_quien),
+                        "curva": z, "vuelta": t.vuelta, "ts": time.time()})
+                    del estado.pases_recientes[:-8]
             pos_previas = actuales
 
 
