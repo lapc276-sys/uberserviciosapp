@@ -2257,6 +2257,16 @@ async def visor():
               text-shadow: 0 1px 10px rgba(0,0,0,.8); }
   #inter .m { margin-top: 24px; color: var(--dim); font-size: .8rem;
               letter-spacing: .24em; opacity: .75; }
+  /* El circuito que viene, dibujado en la pantalla de espera. Ya lo
+     tenemos cargado para la previa, así que enseñarlo no cuesta nada — y
+     una silueta de circuito dice a dónde vamos mejor que un nombre. */
+  #pista-espera { display: none; width: min(620px, 62vw); height: auto;
+                  margin: 26px auto 0; }
+  #pista-nombre { display: none; margin-top: 6px; color: var(--dim);
+                  font-size: .68rem; letter-spacing: .3em;
+                  text-transform: uppercase; }
+  body.standby #pista-espera.on { display: block; }
+  body.standby #pista-nombre.on { display: block; }
   /* Relojes del mundo (pantalla de espera): ciudades de referencia */
   #worldclock { display: none; margin-top: 30px; flex-wrap: wrap;
                 justify-content: center; gap: 10px 26px; max-width: 760px; }
@@ -2543,6 +2553,8 @@ async def visor():
 <div id="inter"><div>
   <div class="t" id="inter-t"></div>
   <div class="s" id="inter-s"></div>
+  <canvas id="pista-espera" width="620" height="330"></canvas>
+  <div class="cn" id="pista-nombre"></div>
   <div class="m" id="inter-m"></div>
   <div id="worldclock"></div>
 </div></div>
@@ -2940,6 +2952,66 @@ function lienzo(cv) {
   return { ctx, w, h };
 }
 
+// ── El circuito que viene, en la pantalla de espera ────────────────────
+// Solo la silueta: ni coches, ni curvas marcadas, ni encuadre que salte.
+// El trazado ya viene cargado (es el mismo que usa la previa), así que
+// esto no cuesta un dato más — y una silueta dice a dónde vamos mucho
+// mejor que el nombre del país escrito.
+function pintarPistaEspera(d) {
+  const cv = document.getElementById('pista-espera');
+  const nb = document.getElementById('pista-nombre');
+  if (!cv || !nb) return;
+  const pts = (d.mapa_trazado || []).map(p => [p.x, p.y]);
+  const esEspera = d.programa && d.programa.tipo === 'standby';
+  if (!esEspera || pts.length < 20) {
+    cv.classList.remove('on'); nb.classList.remove('on'); return;
+  }
+  cv.classList.add('on'); nb.classList.add('on');
+  nb.textContent = d.circuito_mapa || '';
+  const { ctx, w, h } = lienzo(cv);
+  ctx.clearRect(0, 0, w, h);
+  let mnX = Infinity, mxX = -Infinity, mnY = Infinity, mxY = -Infinity;
+  for (const [x, y] of pts) {
+    if (x < mnX) mnX = x; if (x > mxX) mxX = x;
+    if (y < mnY) mnY = y; if (y > mxY) mxY = y;
+  }
+  const pad = 22;
+  const s = Math.min((w - 2 * pad) / Math.max(1, mxX - mnX),
+                     (h - 2 * pad) / Math.max(1, mxY - mnY));
+  const ox = (w - (mxX - mnX) * s) / 2, oy = (h - (mxY - mnY) * s) / 2;
+  const P = pts.map(([x, y]) => [ox + (x - mnX) * s,
+                                 h - oy - (y - mnY) * s]);
+  // Los saltos no se unen, igual que en el mapa grande: si falta GPS, una
+  // recta cruzando el circuito no es el circuito.
+  const sep = [];
+  for (let i = 0; i < P.length - 1; i++)
+    sep.push(Math.hypot(P[i+1][0]-P[i][0], P[i+1][1]-P[i][1]));
+  const ord = sep.filter(v => v > 0).sort((a, b) => a - b);
+  const LIM = Math.max((ord[Math.floor(ord.length / 2)] || 0) * 6,
+                       Math.hypot(w, h) * 0.01);
+  ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+  const trazar = () => {
+    ctx.beginPath();
+    let mover = true;
+    for (let i = 0; i < P.length; i++) {
+      if (i && sep[i-1] > LIM) mover = true;
+      if (mover) { ctx.moveTo(P[i][0], P[i][1]); mover = false; }
+      else ctx.lineTo(P[i][0], P[i][1]);
+    }
+  };
+  ctx.save();
+  ctx.shadowColor = 'rgba(255,60,20,.45)';
+  ctx.shadowBlur = 14;
+  trazar();
+  ctx.strokeStyle = 'rgba(120,20,10,.45)'; ctx.lineWidth = 9; ctx.stroke();
+  ctx.restore();
+  trazar();
+  ctx.strokeStyle = 'rgba(236,238,243,.9)'; ctx.lineWidth = 2.6; ctx.stroke();
+  // Meta
+  ctx.beginPath(); ctx.arc(P[0][0], P[0][1], 4, 0, 7);
+  ctx.fillStyle = '#fff'; ctx.fill();
+}
+
 // Escapar antes de meter nada en innerHTML. El nombre del autor y la
 // licencia de una foto los escribe quien la subió a Commons, no nosotros.
 function esc(s) {
@@ -3312,7 +3384,12 @@ function pintarStandings() {
   for (const [serie, filas] of Object.entries(st.otros || {}))
     if ((filas || []).length)
       vistas.push({h: serie.toUpperCase(), rows: filas, tipo: 'o'});
-  if (!vistas.length) return;
+  // Sin ninguna tabla con filas, la caja se ESCONDE. Antes solo se salía
+  // de la función, así que si llegaba un standings vacío —o se vaciaba
+  // entre sesiones— quedaba en pantalla un recuadro con el título y nada
+  // debajo, que es lo que se veía en la pantalla de espera.
+  if (!vistas.length) { box.style.display = 'none'; return; }
+  box.style.display = '';
   standingsVista = standingsVista % vistas.length;
   const v = vistas[standingsVista];
   const hEl = document.getElementById('st-h');
@@ -3793,6 +3870,7 @@ async function tick() {
   pintarMapa(d);
   pintarCurva(d);
   pintarPodio(d);
+  pintarPistaEspera(d);
   // Reservar en la columna derecha el sitio que ocupa el cuadro de
   // campeonato, que va fijo encima de ella. Se mide en vez de fijarlo a
   // ojo porque su alto depende de cuántas filas tenga.
