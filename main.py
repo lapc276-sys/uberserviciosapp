@@ -3653,9 +3653,23 @@ names ever spoken are drivers, teams and viewers from the chat.
 - NEVER start a line's text with a speaker label like "{NARRADOR}:" or \
 "{ANALISTA}:" — who speaks goes in the 'quien' field, the text is pure \
 speech.
-- Use the MEMORY of what they already said: callbacks like "remember when \
-we said he was saving his tyres? Here's the payoff" make it feel human. \
+- Use the MEMORY of what they already said: callbacks like "remember we \
+said he was nursing those tyres? There it is" make it feel human. \
 Never repeat previous lines.
+- TALK LIKE PEOPLE TALK. Everyday words. "There it is", "that's the one", \
+"he's got him", "that's going to hurt", "he's been stuck there for ages". \
+Contractions always. Nothing vulgar, nothing crude — this is a family \
+broadcast — but nothing stiff either.
+- BANNED WORDS, they have been worn out: payoff, game-changer, masterclass, \
+narrative, storyline, dial in, elite, insane, absolutely massive, \
+"talk about", "make no mistake", "at the end of the day". If one is about \
+to come out, say the plain thing instead.
+- THE GRAPHICS ARE ON SCREEN AND YOU CAN POINT AT THEM. When the context \
+gives you a battle score, tyre degradation or a pit loss figure, that same \
+number is showing to the viewer right now — so refer to it the way a \
+broadcaster does: "look at that gap", "you can see it there — he's losing \
+three tenths a lap on those tyres", "the board has them at eighty-four". \
+Do NOT describe a graphic that the context did not give you.
 - Ground EVERYTHING in the provided data. Never invent lap times, \
 positions, gaps or causes that are not in the data. General F1 knowledge \
 (circuit history, how tyres behave) is welcome for quiet moments, and so is \
@@ -7203,7 +7217,10 @@ async def generar_short(client: anthropic.AsyncAnthropic, tipo="noticia",
             f"Teach ONE idea in a punchy vertical Short (max 45 words, "
             f"~25-35 seconds): {leccion}. Structure: a HOOK question or "
             f"surprising claim, then the clear explanation a curious fan can "
-            f"picture, then a 'wait, really?' payoff. End with a question to "
+            f"picture, then the bit that makes them go 'wait, really?'. "
+            f"Everyday words, contractions, nothing stiff and nothing crude. "
+            f"Do not use these worn-out words: payoff, game-changer, "
+            f"masterclass, insane, absolutely massive. End with a question to "
             f"the viewer. Category: {cat}. Write ONLY the script, one tight "
             f"paragraph.")
         system = (

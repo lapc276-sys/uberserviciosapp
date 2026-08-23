@@ -942,15 +942,29 @@ class Telemetria:
         return texto
 
     def estrategia_resumen(self):
-        """Datos de estrategia medidos, en una línea, para el narrador."""
+        """Datos de estrategia medidos, en una línea, para el narrador.
+
+        EN INGLÉS: esto entra en un prompt en inglés y sale por boca del
+        dúo. Estaba en español y era cuestión de tiempo que se colara una
+        palabra suelta en una emisión que solo publica en inglés.
+
+        Lleva además el marcador y el hueco de cada duelo, no solo la
+        lectura de estrategia. Son las cifras que el espectador está
+        viendo en el rótulo: si el narrador va a señalarlas, tiene que
+        tenerlas — y si no las tiene, se las inventaría.
+        """
         partes = []
         pit = self.perdida_pit()
         if pit:
-            partes.append(f"una parada cuesta ~{pit['segundos']:.1f}s "
-                          f"(mediana de {pit['muestras']} paradas medidas)")
+            partes.append(f"a pit stop costs ~{pit['segundos']:.1f}s "
+                          f"(median of {pit['muestras']} measured stops)")
         for r in self.battle_scores()[:2]:
+            trozo = (f"battle {r['entre']} for P{r['pos_delante']}: "
+                     f"{r['gap']:.2f}s and {r['sentido']}, "
+                     f"scoring {r['score']} out of 100 on the on-screen board")
             if r.get("estrategia"):
-                partes.append(f"duelo {r['entre']}: {r['estrategia']}")
+                trozo += f" — {r['estrategia']}"
+            partes.append(trozo)
         return "; ".join(partes)
 
     def alertas(self):
