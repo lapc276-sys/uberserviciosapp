@@ -33,3 +33,6 @@ articulos/
 episodes/
 estatico/*
 !estatico/.gitkeep
+
+# Diagramas generados para los shorts (se rehacen solos)
+shorts/g_diagrama_*.png

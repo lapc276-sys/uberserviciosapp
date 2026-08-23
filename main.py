@@ -43,6 +43,7 @@ from fastapi.responses import (HTMLResponse, JSONResponse,
                                PlainTextResponse, Response)
 
 import articulos
+import diagramas
 import portada
 import telegram_bot
 import telemetria
@@ -7211,12 +7212,34 @@ async def generar_short(client: anthropic.AsyncAnthropic, tipo="noticia",
             "vivid, factual. NEVER invent specific numbers, records or "
             "quotes — speak in accurate general terms. Write only the "
             "script.")
+        # El guion y su diagrama salen de la MISMA llamada: pedirlos por
+        # separado costaría el doble y el modelo podría dibujar algo que
+        # no cuadre con lo que acaba de escribir.
+        esquema = {
+            "type": "object",
+            "properties": {"guion": {"type": "string"},
+                           "diagrama": DIAGRAMA_SCHEMA},
+            "required": ["guion", "diagrama"],
+            "additionalProperties": False,
+        }
         try:
             r = await client.messages.create(
-                model=MODELO_AHORRO, max_tokens=120, system=system,
+                model=MODELO_AHORRO, max_tokens=900,
+                system=system + "\n\n" + SYSTEM_DIAGRAMA,
+                output_config={"format": {"type": "json_schema",
+                                          "schema": esquema}},
                 messages=[{"role": "user", "content": prompt}])
-            texto = next((b.text for b in r.content if b.type == "text"), "")
-            return texto.strip() if texto else None
+            if r.stop_reason == "refusal":
+                return None
+            d = json.loads(next((b.text for b in r.content
+                                 if b.type == "text"), "{}"))
+            texto = (d.get("guion") or "").strip()
+            if not texto:
+                return None
+            spec = _diagrama_kwargs(d.get("diagrama"))
+            # El guion se devuelve como siempre (una cadena); el diagrama
+            # viaja aparte para no romper a quien ya llama a esto.
+            return {"guion": texto, "diagrama": spec} if spec else texto
         except Exception as e:
             log.error("No se pudo generar short educativo (%s)", e)
             return None
@@ -7264,6 +7287,132 @@ async def generar_short(client: anthropic.AsyncAnthropic, tipo="noticia",
     except Exception as e:
         log.error("No se pudo generar short (%s)", e)
         return None
+
+
+# ── El diagrama que acompaña a un short técnico ───────────────────────
+# El guionista elige una de las cuatro plantillas y rellena sus huecos.
+# TODOS los campos van en `required` a propósito: el modo estricto de la
+# API no admite propiedades opcionales, así que los que no hagan falta se
+# devuelven vacíos y el código los descarta.
+DIAGRAMA_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "plantilla": {"type": "string",
+                      "enum": ["comparar", "tendencia", "flujo", "fases",
+                               "ninguna"]},
+        "titulo": {"type": "string"},
+        "etiqueta": {"type": "string"},
+        "pie": {"type": "string"},
+        # comparar
+        "izq_nombre": {"type": "string"}, "izq_valor": {"type": "string"},
+        "izq_unidad": {"type": "string"}, "izq_nota": {"type": "string"},
+        "der_nombre": {"type": "string"}, "der_valor": {"type": "string"},
+        "der_unidad": {"type": "string"}, "der_nota": {"type": "string"},
+        # tendencia
+        "puntos_y": {"type": "array", "items": {"type": "number"}},
+        "eje_x": {"type": "string"}, "eje_y": {"type": "string"},
+        "marca_i": {"type": "integer"}, "marca_texto": {"type": "string"},
+        # flujo
+        "forma": {"type": "string", "enum": ["suelo", "ala", "cuerpo", ""]},
+        "notas": {"type": "array", "items": {
+            "type": "object",
+            "properties": {"en": {"type": "number"},
+                           "texto": {"type": "string"}},
+            "required": ["en", "texto"], "additionalProperties": False}},
+        # fases
+        "pasos": {"type": "array", "items": {
+            "type": "object",
+            "properties": {"nombre": {"type": "string"},
+                           "detalle": {"type": "string"}},
+            "required": ["nombre", "detalle"], "additionalProperties": False}},
+    },
+    "required": ["plantilla", "titulo", "etiqueta", "pie",
+                 "izq_nombre", "izq_valor", "izq_unidad", "izq_nota",
+                 "der_nombre", "der_valor", "der_unidad", "der_nota",
+                 "puntos_y", "eje_x", "eje_y", "marca_i", "marca_texto",
+                 "forma", "notas", "pasos"],
+    "additionalProperties": False,
+}
+
+SYSTEM_DIAGRAMA = """You also choose a DIAGRAM that illustrates the script.
+
+Pick the ONE template that shows what the script explains:
+- comparar: two things with a measured figure each (two wing angles, two
+  compounds, before and after a rule change).
+- tendencia: something that rises or falls over a run, with one point
+  worth naming (tyre drop-off, downforce against speed, temperature).
+- flujo: air moving through a section — "suelo" for the floor and
+  diffuser, "ala" for a wing, "cuerpo" for bodywork.
+- fases: a sequence in time (braking, turn-in, apex, exit; the phases of
+  a stop).
+- ninguna: nothing here is worth drawing. Say this rather than forcing a
+  diagram onto a script that is not about a mechanism.
+
+HARD RULES:
+- Every label is in ENGLISH and SHORT. This is read on a phone.
+- Put NOTHING in the diagram that the script does not say. A figure you
+  invent to fill a slot is a figure the channel published as fact.
+- If you cannot fill a template honestly, answer "ninguna".
+- Leave every field of the other templates empty."""
+
+
+def _diagrama_kwargs(d):
+    """Pasa la respuesta plana del guionista a los argumentos de la
+    plantilla, tirando lo que venga vacío.
+
+    Viene plana porque el esquema estricto de la API no admite campos
+    opcionales; aquí se vuelve a armar cada forma.
+    """
+    if not isinstance(d, dict):
+        return None
+    plantilla = (d.get("plantilla") or "").strip().lower()
+    if plantilla not in ("comparar", "tendencia", "flujo", "fases"):
+        return None
+    base = {"plantilla": plantilla,
+            "titulo": (d.get("titulo") or "").strip(),
+            "pie": (d.get("pie") or "").strip()}
+    if d.get("etiqueta"):
+        base["etiqueta"] = d["etiqueta"].strip()
+    if not base["titulo"]:
+        return None
+
+    if plantilla == "comparar":
+        izq = {k: (d.get(f"izq_{k}") or "").strip()
+               for k in ("nombre", "valor", "unidad", "nota")}
+        der = {k: (d.get(f"der_{k}") or "").strip()
+               for k in ("nombre", "valor", "unidad", "nota")}
+        if not (izq["nombre"] and der["nombre"]):
+            return None
+        base.update(izq=izq, der=der)
+    elif plantilla == "tendencia":
+        ys = [y for y in (d.get("puntos_y") or [])
+              if isinstance(y, (int, float))]
+        if len(ys) < 4:
+            return None
+        base["puntos"] = [(i + 1, y) for i, y in enumerate(ys)]
+        base["eje_x"] = (d.get("eje_x") or "").strip()
+        base["eje_y"] = (d.get("eje_y") or "").strip()
+        i = d.get("marca_i")
+        if isinstance(i, int) and 0 <= i < len(ys) and d.get("marca_texto"):
+            base["marca"] = {"i": i, "texto": d["marca_texto"].strip()}
+    elif plantilla == "flujo":
+        forma = (d.get("forma") or "").strip().lower()
+        if forma not in ("suelo", "ala", "cuerpo"):
+            return None
+        base["forma"] = forma
+        base["notas"] = [(n["en"], (n.get("texto") or "").strip())
+                         for n in (d.get("notas") or [])
+                         if isinstance(n, dict) and "en" in n
+                         and (n.get("texto") or "").strip()][:3]
+    else:                                   # fases
+        pasos = [{"nombre": (p.get("nombre") or "").strip(),
+                  "detalle": (p.get("detalle") or "").strip()}
+                 for p in (d.get("pasos") or [])
+                 if isinstance(p, dict) and (p.get("nombre") or "").strip()]
+        if len(pasos) < 2:
+            return None
+        base["pasos"] = pasos[:5]
+    return base
 
 
 def _guardar_short(short_id, datos):
@@ -7370,6 +7519,12 @@ async def bucle_shorts():
                 tema = _tema_tecnico_siguiente() if tipo == "educativo" else None
                 guion = await generar_short(client, tipo, titulares=titulares,
                                             tema=tema)
+                # Los shorts técnicos vuelven con su diagrama; los demás,
+                # con el guion a secas.
+                diagrama = None
+                if isinstance(guion, dict):
+                    diagrama = guion.get("diagrama")
+                    guion = guion.get("guion")
                 if guion:
                     estado.api_sin_creditos = False  # volvió el saldo
                     # CTA hablado: una frase de cierre que pide seguir. Es lo
@@ -7385,6 +7540,8 @@ async def bucle_shorts():
                             20, min(55, len(guion_final.split()) * 3)),
                         "fuente_titulares": bool(titulares),
                     }
+                    if diagrama:
+                        datos["diagrama"] = diagrama
                     if tema:      # fotos del tema técnico (no el mix genérico)
                         datos["consulta"] = tema[2]
                         datos["categoria"] = tema[0]
@@ -8511,6 +8668,21 @@ async def bucle_youtube():
                 # Abrir con una FOTO real y meter el esquema después.
                 if not propias:
                     fotos = _foto_real_primero(fotos)
+
+                # 2a-ter) El diagrama que el guionista pidió al escribir el
+                # guion. Se nombra g_* porque el montador ya trata así los
+                # gráficos: a pantalla completa, sin rótulo ni zoom. No va
+                # el primero por lo mismo que las láminas — la portada del
+                # short tiene que ser una foto.
+                if short.get("diagrama"):
+                    png = os.path.join(
+                        "shorts", f"g_diagrama_{short.get('id', 'x')}.png")
+                    ruta = diagramas.dibujar(short["diagrama"], png)
+                    if ruta:
+                        fotos.insert(min(1, len(fotos)), ruta)
+                        log.info("📐 Diagrama '%s' añadido al short %s",
+                                 short["diagrama"].get("plantilla"),
+                                 short.get("id"))
 
                 # 2b) Sin material visual no se publica. El armador tiene un
                 # respaldo de fondo liso para no reventar, pero un short casi
