@@ -1,0 +1,402 @@
+<title>Anatomía de un adelantamiento</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800;900&family=Barlow:wght@400;500;600;700&family=Barlow+Condensed:wght@500;600;700&display=swap" rel="stylesheet">
+
+<style>
+  :root {
+    --void:  #07080B;
+    --panel: #0F131A;
+    --lit:   #161D28;
+    --line:  #222B39;
+    --hair:  #171E29;
+    --ink:   #F2F4F8;
+    --mute:  #7E8899;
+    --faint: #4E5866;
+    --acc:   #FF2D16;
+    --ata:   #FF8000;   /* el que ataca */
+    --def:   #2FC4E0;   /* el que defiende */
+    --ok:    #31D97A;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--void); color: var(--ink);
+    font-family: Barlow, "Segoe UI", system-ui, sans-serif;
+    line-height: 1.6; -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 40px 22px 70px; }
+
+  .kick { display: flex; align-items: center; gap: 11px; margin-bottom: 13px;
+          font-size: 11.5px; font-weight: 700; letter-spacing: .2em;
+          text-transform: uppercase; color: var(--acc); }
+  .kick::before { content: ""; width: 26px; height: 3px; background: var(--acc); }
+  h1 { font-family: Archivo, "Helvetica Neue", Arial, sans-serif;
+       font-weight: 900; font-size: clamp(27px, 5vw, 44px); line-height: .99;
+       letter-spacing: -.03em; text-transform: uppercase; text-wrap: balance; }
+  .lede { margin-top: 14px; max-width: 60ch; font-size: 16.5px;
+          color: var(--mute); text-wrap: pretty; }
+
+  /* ── el gráfico ── */
+  .cuadro { position: relative; margin-top: 34px; border: 1px solid var(--line);
+            border-radius: 4px; overflow: hidden; background: var(--panel); }
+  .cuadro svg.pista { display: block; width: 100%; height: auto; }
+
+  .marca { position: absolute; display: flex; flex-direction: column; gap: 2px;
+           padding: 8px 12px; background: rgba(9,11,15,.93);
+           border-left: 3px solid var(--acc); border-radius: 2px;
+           opacity: 0; transform: translateY(6px);
+           transition: opacity .3s ease, transform .3s ease;
+           pointer-events: none; white-space: nowrap; }
+  .marca.on { opacity: 1; transform: translateY(0); }
+  .marca b { font-family: Archivo, sans-serif; font-weight: 800;
+             font-size: 15px; letter-spacing: -.01em; line-height: 1.15; }
+  .marca span { font-size: 11px; font-weight: 600; letter-spacing: .11em;
+                text-transform: uppercase; color: var(--faint); }
+  .marca.ata { border-left-color: var(--ata); }
+  .marca.def { border-left-color: var(--def); }
+
+  /* rótulo inferior, como el de una retransmisión */
+  .rotulo { display: flex; align-items: stretch; gap: 0;
+            border-top: 1px solid var(--line); background: var(--lit); }
+  .rotulo .quien { display: flex; align-items: center; gap: 10px;
+                   padding: 11px 16px; min-width: 190px; }
+  .rotulo .quien i { width: 3px; align-self: stretch; border-radius: 2px;
+                     font-style: normal; }
+  .rotulo .quien .n { font-family: Archivo, sans-serif; font-weight: 800;
+                      font-size: 17px; letter-spacing: -.01em; }
+  .rotulo .quien .r { font-size: 10.5px; font-weight: 700; letter-spacing: .13em;
+                      text-transform: uppercase; color: var(--faint); }
+  .rotulo .medio { flex: 1; display: flex; align-items: center;
+                   justify-content: center; gap: 26px; padding: 0 16px;
+                   border-left: 1px solid var(--line);
+                   border-right: 1px solid var(--line); }
+  .dato { display: flex; flex-direction: column; align-items: center; gap: 1px; }
+  .dato .v { font-family: "Barlow Condensed", Barlow, sans-serif;
+             font-size: 25px; font-weight: 700; line-height: 1;
+             font-variant-numeric: tabular-nums; }
+  .dato .k { font-size: 9.5px; font-weight: 700; letter-spacing: .14em;
+             text-transform: uppercase; color: var(--faint); }
+
+  /* ── mandos ── */
+  .mandos { display: flex; align-items: center; gap: 14px; margin-top: 16px;
+            flex-wrap: wrap; }
+  button { font-family: inherit; cursor: pointer; color: var(--ink);
+           background: var(--lit); border: 1px solid var(--line);
+           border-radius: 2px; padding: 9px 18px; font-size: 13px;
+           font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
+           transition: border-color .15s, background .15s; }
+  button:hover { border-color: var(--faint); }
+  button.play { background: var(--acc); border-color: var(--acc); color: #fff; }
+  button:focus-visible { outline: 2px solid var(--acc); outline-offset: 2px; }
+  .barra { flex: 1; min-width: 200px; height: 4px; border-radius: 2px;
+           background: #1B222E; overflow: hidden; }
+  .barra i { display: block; height: 100%; width: 0; background: var(--acc); }
+  .reloj { font-family: "Barlow Condensed", Barlow, sans-serif; font-size: 17px;
+           font-weight: 600; color: var(--mute);
+           font-variant-numeric: tabular-nums; min-width: 74px;
+           text-align: right; }
+
+  /* ── explicación ── */
+  h2 { font-family: Archivo, sans-serif; font-weight: 800;
+       font-size: clamp(19px, 3vw, 25px); letter-spacing: -.02em;
+       margin: 52px 0 8px; }
+  .sub { color: var(--mute); font-size: 15px; margin-bottom: 20px;
+         max-width: 64ch; text-wrap: pretty; }
+  .fuentes { display: grid; grid-template-columns: repeat(2, minmax(0,1fr));
+             gap: 12px; }
+  @media (max-width: 660px) { .fuentes { grid-template-columns: 1fr; } }
+  .f { padding: 15px 17px; background: var(--panel); border: 1px solid var(--line);
+       border-radius: 3px; }
+  .f b { display: block; font-size: 14.5px; font-weight: 700; }
+  .f span { display: block; margin-top: 4px; font-size: 13px; color: var(--mute); }
+  .f .de { display: inline-block; margin-top: 9px; font-size: 10.5px;
+           font-weight: 700; letter-spacing: .12em; text-transform: uppercase;
+           color: var(--ok); }
+  .f.falta .de { color: var(--acc); }
+
+  .aviso { margin-top: 30px; padding: 18px 20px; background: var(--panel);
+           border: 1px solid var(--line); border-left: 3px solid var(--acc);
+           border-radius: 3px; font-size: 14.5px; color: var(--mute);
+           text-wrap: pretty; }
+  .aviso strong { color: var(--ink); font-weight: 600; }
+  .aviso p + p { margin-top: 9px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .marca { transition: none; }
+  }
+</style>
+
+<div class="wrap">
+
+  <p class="kick">Prototipo · Análisis</p>
+  <h1>Anatomía de un adelantamiento</h1>
+  <p class="lede">Lo mismo que hacen los canales de análisis con metraje de
+    carrera, pero dibujado desde las posiciones GPS que ya recibe el canal.
+    Sin imágenes de nadie.</p>
+
+  <div class="cuadro" id="cuadro">
+    <svg class="pista" viewBox="0 0 1000 520" role="img" aria-labelledby="tp">
+      <title id="tp">Dos coches trazando una curva, con el que ataca frenando
+        más tarde por dentro</title>
+
+      <defs>
+        <linearGradient id="asf" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#1A212C"/>
+          <stop offset="1" stop-color="#12171F"/>
+        </linearGradient>
+        <marker id="pf" viewBox="0 0 10 10" refX="8" refY="5"
+                markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" fill="#FF8000"/>
+        </marker>
+      </defs>
+
+      <rect width="1000" height="520" fill="#0C1016"/>
+
+      <!-- Asfalto -->
+      <path id="eje"
+            d="M 20 430 L 330 430 C 520 430 600 390 650 300
+               C 690 225 730 150 810 70"
+            fill="none" stroke="url(#asf)" stroke-width="118"
+            stroke-linecap="round"/>
+      <path d="M 20 430 L 330 430 C 520 430 600 390 650 300
+               C 690 225 730 150 810 70"
+            fill="none" stroke="#2A3442" stroke-width="120"
+            stroke-linecap="round" opacity=".25"/>
+
+      <!-- Pianos en el vértice -->
+      <path d="M 596 352 C 622 330 640 302 656 272" fill="none"
+            stroke="#E24A3A" stroke-width="9" stroke-dasharray="13 13"/>
+      <path d="M 596 352 C 622 330 640 302 656 272" fill="none"
+            stroke="#EDEDED" stroke-width="9" stroke-dasharray="13 13"
+            stroke-dashoffset="13"/>
+
+      <!-- Zona de frenada -->
+      <g id="zonaFreno" opacity="0">
+        <rect x="300" y="368" width="118" height="124" fill="#FF2D16"
+              opacity=".1"/>
+        <path d="M300 368 L300 492" stroke="#FF2D16" stroke-width="2"
+              stroke-dasharray="7 6"/>
+        <path d="M418 368 L418 492" stroke="#FF8000" stroke-width="2"
+              stroke-dasharray="7 6"/>
+      </g>
+
+      <!-- Trazadas. Se dibujan solas conforme avanza la reproducción. -->
+      <path id="lineaDef"
+            d="M 20 402 L 320 402 C 500 402 566 366 606 288
+               C 644 216 690 140 790 44"
+            fill="none" stroke="#2FC4E0" stroke-width="3" opacity=".85"
+            stroke-linecap="round"/>
+      <path id="lineaAta"
+            d="M 20 470 L 372 470 C 524 470 588 404 634 320
+               C 668 252 722 156 796 56"
+            fill="none" stroke="#FF8000" stroke-width="3" opacity=".85"
+            stroke-linecap="round"/>
+
+      <!-- Flecha del movimiento por dentro -->
+      <path id="flecha" d="M 396 478 C 452 478 492 446 518 406"
+            fill="none" stroke="#FF8000" stroke-width="2.5"
+            marker-end="url(#pf)" opacity="0" stroke-dasharray="6 5"/>
+
+      <!-- Coches -->
+      <g id="cocheDef">
+        <circle r="13" fill="#2FC4E0"/>
+        <circle r="13" fill="none" stroke="#0C1016" stroke-width="2.5"/>
+        <text y="4.5" text-anchor="middle" fill="#0C1016"
+              font-family="Archivo, sans-serif" font-size="11"
+              font-weight="900">D</text>
+      </g>
+      <g id="cocheAta">
+        <circle r="13" fill="#FF8000"/>
+        <circle r="13" fill="none" stroke="#0C1016" stroke-width="2.5"/>
+        <text y="4.5" text-anchor="middle" fill="#0C1016"
+              font-family="Archivo, sans-serif" font-size="11"
+              font-weight="900">A</text>
+      </g>
+
+      <!-- Número de curva -->
+      <g opacity=".5">
+        <circle cx="700" cy="380" r="20" fill="none" stroke="#7E8899"
+                stroke-width="1.5"/>
+        <text x="700" y="386" text-anchor="middle" fill="#7E8899"
+              font-family="Archivo, sans-serif" font-size="16"
+              font-weight="800">4</text>
+      </g>
+    </svg>
+
+    <!-- Acotaciones: aparecen cuando toca -->
+    <div class="marca ata" id="m1" style="left:22%;top:56%">
+      <span>Frenada</span><b>12 m más tarde</b></div>
+    <div class="marca ata" id="m2" style="left:39%;top:76%">
+      <span>Entrada</span><b>218 km/h</b></div>
+    <div class="marca def" id="m3" style="left:52%;top:26%">
+      <span>Defensa · entrada</span><b>209 km/h</b></div>
+    <div class="marca" id="m4" style="left:64%;top:46%">
+      <span>Curva 4</span><b>Adelantamiento completado</b></div>
+
+    <!-- Rótulo inferior -->
+    <div class="rotulo">
+      <div class="quien">
+        <i style="background:var(--ata)"></i>
+        <div><div class="n">ATACA</div><div class="r">Por dentro</div></div>
+      </div>
+      <div class="medio">
+        <div class="dato"><span class="v" id="dGap">0.41</span>
+          <span class="k">Hueco (s)</span></div>
+        <div class="dato"><span class="v" id="dVel">— </span>
+          <span class="k">Velocidad</span></div>
+        <div class="dato"><span class="v" id="dFase">RECTA</span>
+          <span class="k">Fase</span></div>
+      </div>
+      <div class="quien" style="justify-content:flex-end">
+        <div style="text-align:right"><div class="n">DEFIENDE</div>
+          <div class="r">Trazada normal</div></div>
+        <i style="background:var(--def)"></i>
+      </div>
+    </div>
+  </div>
+
+  <div class="mandos">
+    <button class="play" id="btn">▶ Reproducir</button>
+    <div class="barra"><i id="prog"></i></div>
+    <span class="reloj" id="reloj">0.0 / 9.0 s</span>
+  </div>
+
+  <h2>De dónde saldría cada cosa</h2>
+  <p class="sub">Todo lo verde ya lo tiene el canal hoy. Lo rojo es lo que
+    habría que empezar a guardar.</p>
+
+  <div class="fuentes">
+    <div class="f"><b>Las dos trazadas</b>
+      <span>Las coordenadas de cada coche, que es de donde ya sale el mapa
+        del circuito en la emisión.</span>
+      <span class="de">Ya lo recibimos</span></div>
+    <div class="f"><b>Quién adelanta a quién y dónde</b>
+      <span>El canal ya detecta el pase y lo asigna a su curva — es lo que
+        alimenta el mapa de calor de adelantamientos.</span>
+      <span class="de">Ya lo detectamos</span></div>
+    <div class="f"><b>El hueco segundo a segundo</b>
+      <span>El intervalo entre los dos coches, que es el mismo dato con el
+        que se puntúan los duelos en pantalla.</span>
+      <span class="de">Ya lo recibimos</span></div>
+    <div class="f falta"><b>Los segundos alrededor del pase</b>
+      <span>Hoy el pase se cuenta y se tira. Para animarlo hay que retener
+        una ventana de posiciones de ambos coches — unos ocho segundos
+        antes y cuatro después.</span>
+      <span class="de">Hay que guardarlo</span></div>
+  </div>
+
+  <div class="aviso">
+    <p><strong>Las cifras de este boceto son de relleno.</strong> Las
+      velocidades y la distancia de frenada están puestas a mano para ver
+      la maqueta. En el gráfico real saldrían medidas, o no saldrían: si un
+      dato no lo tenemos, esa acotación no se dibuja.</p>
+    <p><strong>Y por eso no va sobre metraje.</strong> Anotar un
+      adelantamiento sobre imágenes de la F1 es un strike, y repetido, el
+      cierre del canal. Dibujado desde nuestras coordenadas no tiene dueño
+      — y enseña la trazada y el punto de frenada, que en la toma de
+      televisión no se ven.</p>
+  </div>
+</div>
+
+<script>
+(() => {
+  const $ = (s) => document.querySelector(s);
+  const DUR = 9.0;                       // segundos que dura la secuencia
+  const lDef = $("#lineaDef"), lAta = $("#lineaAta");
+  const cDef = $("#cocheDef"), cAta = $("#cocheAta");
+  const largoDef = lDef.getTotalLength(), largoAta = lAta.getTotalLength();
+
+  // Las trazadas se revelan conforme avanzan los coches, en vez de estar
+  // ya pintadas: así se lee como algo que ocurre, no como un diagrama.
+  for (const [l, n] of [[lDef, largoDef], [lAta, largoAta]]) {
+    l.style.strokeDasharray = n; l.style.strokeDashoffset = n;
+  }
+
+  // Guion de la secuencia: cuándo aparece cada acotación y qué se enseña
+  // abajo. En el gráfico real esto lo marcaría el propio dato.
+  const GUION = [
+    { t: 0.0, fase: "RECTA",     gap: 0.41, vel: "—" },
+    { t: 2.2, fase: "FRENADA",   gap: 0.22, vel: "312 km/h", mostrar: "m1",
+      extra: () => { $("#zonaFreno").style.opacity = 1;
+                     $("#flecha").style.opacity = 1; } },
+    { t: 3.6, fase: "ENTRADA",   gap: 0.09, vel: "218 km/h", mostrar: "m2" },
+    { t: 4.4, fase: "VÉRTICE",   gap: 0.02, vel: "196 km/h", mostrar: "m3" },
+    { t: 6.2, fase: "SALIDA",    gap: 0.35, vel: "241 km/h", mostrar: "m4" },
+    { t: 8.0, fase: "COMPLETO",  gap: 0.68, vel: "288 km/h" },
+  ];
+
+  // El que ataca sale por detrás y llega antes al vértice: no van al mismo
+  // ritmo, y esa diferencia es justo lo que hay que ver.
+  const avance = (t, atacante) => {
+    const x = Math.min(1, t / DUR);
+    if (!atacante) return x * 0.96;
+    // Sale 7% por detrás y acaba por delante. La ganancia se concentra en
+    // la frenada y el vértice — que es donde de verdad se gana un sitio —
+    // con una curva en S para que no parezca que acelera de golpe.
+    const s = x * x * (3 - 2 * x);          // smoothstep
+    return x * 0.96 - 0.075 + 0.135 * s;
+  };
+
+  let t = 0, corriendo = false, ultimo = 0, hechas = new Set();
+
+  function pintar(t) {
+    const pd = avance(t, false), pa = avance(t, true);
+    const A = lDef.getPointAtLength(pd * largoDef);
+    const B = lAta.getPointAtLength(pa * largoAta);
+    cDef.setAttribute("transform", `translate(${A.x} ${A.y})`);
+    cAta.setAttribute("transform", `translate(${B.x} ${B.y})`);
+    lDef.style.strokeDashoffset = largoDef * (1 - pd);
+    lAta.style.strokeDashoffset = largoAta * (1 - pa);
+
+    let paso = GUION[0];
+    for (const g of GUION) if (t >= g.t) paso = g;
+    $("#dFase").textContent = paso.fase;
+    $("#dGap").textContent = paso.gap.toFixed(2);
+    $("#dVel").textContent = paso.vel;
+    for (const g of GUION) {
+      if (t >= g.t && !hechas.has(g.t)) {
+        hechas.add(g.t);
+        if (g.mostrar) $("#" + g.mostrar).classList.add("on");
+        if (g.extra) g.extra();
+      }
+    }
+    $("#prog").style.width = (t / DUR * 100) + "%";
+    $("#reloj").textContent = t.toFixed(1) + " / " + DUR.toFixed(1) + " s";
+  }
+
+  function reiniciar() {
+    t = 0; hechas.clear();
+    document.querySelectorAll(".marca").forEach(m => m.classList.remove("on"));
+    $("#zonaFreno").style.opacity = 0;
+    $("#flecha").style.opacity = 0;
+    pintar(0);
+  }
+
+  function bucle(ahora) {
+    if (!corriendo) return;
+    const dt = Math.min(.05, (ahora - ultimo) / 1000);
+    ultimo = ahora;
+    t += dt;
+    if (t >= DUR) { t = DUR; pintar(t); parar(); return; }
+    pintar(t);
+    requestAnimationFrame(bucle);
+  }
+
+  function arrancar() {
+    if (t >= DUR) reiniciar();
+    corriendo = true; ultimo = performance.now();
+    $("#btn").textContent = "❚❚ Pausa";
+    requestAnimationFrame(bucle);
+  }
+  function parar() {
+    corriendo = false;
+    $("#btn").textContent = t >= DUR ? "↻ Repetir" : "▶ Reproducir";
+  }
+  $("#btn").onclick = () => corriendo ? parar() : arrancar();
+
+  reiniciar();
+  // Arranca solo la primera vez, que es de lo que va la página
+  if (!matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    setTimeout(arrancar, 700);
+  }
+})();
+</script>
