@@ -72,15 +72,18 @@ CALENDARIO_VOZ = os.environ.get("CALENDARIO_VOZ", "")
 
 # Husos horarios para el calendario: las ciudades más importantes de cada
 # continente (no todas, las que sirven de referencia global)
+# Los nombres van en INGLÉS: esto sale en pantalla, y el canal emite en
+# inglés. "Nueva York" y "Londres" en mitad de una retransmisión inglesa
+# delatan de dónde viene la página.
 ZONAS_CALENDARIO = [
-    ("Los Ángeles", "America/Los_Angeles"),   # América oeste
-    ("Nueva York", "America/New_York"),        # América este
+    ("Los Angeles", "America/Los_Angeles"),   # América oeste
+    ("New York", "America/New_York"),          # América este
     ("São Paulo", "America/Sao_Paulo"),        # Sudamérica
-    ("Londres", "Europe/London"),              # Europa oeste
+    ("London", "Europe/London"),               # Europa oeste
     ("Madrid", "Europe/Madrid"),               # Europa central
-    ("Johannesburgo", "Africa/Johannesburg"),  # África
-    ("Dubái", "Asia/Dubai"),                   # Medio Oriente
-    ("Tokio", "Asia/Tokyo"),                   # Asia este
+    ("Johannesburg", "Africa/Johannesburg"),   # África
+    ("Dubai", "Asia/Dubai"),                   # Medio Oriente
+    ("Tokyo", "Asia/Tokyo"),                   # Asia este
 ]
 
 # Programa en demostración: "historia" muestra un modo fijo (sin
@@ -654,6 +657,9 @@ class Estado:
         self.mapa_ts: float = 0.0        # cuándo llegó la última posición
         self.mapa_trazado: list = []     # trazado completo del circuito (fijo)
         self.curvas: list = []           # curvas detectadas del trazado
+        self.circuito_mapa: str = ""     # de qué circuito es el trazado que
+                                         # hay dibujado (en la previa no hay
+                                         # sesión cargada que lo diga)
         # Adelantamientos MEDIDOS en esta sesión, repartidos por zona:
         # {numero_de_curva: cuántos}. Es el dato que convierte "aquí cuesta
         # adelantar" de geometría en hecho comprobado.
@@ -1666,6 +1672,9 @@ async def apex():
                       "otros": estado.standings_otros},
         "mapa": estado.mapa,
         "mapa_trazado": estado.mapa_trazado,
+        # De qué circuito es el trazado dibujado. En la previa no hay sesión
+        # cargada que ponga nombre al mapa, y un mapa sin nombre no dice nada.
+        "circuito_mapa": estado.circuito_mapa,
         "curvas": estado.curvas,
         # Adelantamientos contados en esta sesión, por número de curva
         "pases": {str(k): v for k, v in estado.pases.items()},
@@ -1736,6 +1745,34 @@ def _proxima_sesion_info():
         return {"sesion": s["sesion"], "pais": s["pais"],
                 "inicia": s.get("inicia")}
     return None
+
+
+def _circuito_proximo():
+    """Circuito que toca dibujar cuando no hay telemetría cargada.
+
+    Durante la previa la pantalla se quedaba en negro: el mapa depende de
+    una sesión en curso y en la previa todavía no la hay. Pero el trazado
+    de un circuito no cambia, así que se puede dibujar de antemano — solo
+    hay que saber cuál. Devuelve el nombre tal cual lo da el calendario;
+    de normalizarlo ya se encargan el caché y la búsqueda por circuito.
+    """
+    ahora = dt.datetime.now(dt.timezone.utc)
+    # La sesión que ya está en su ventana manda: en plena previa esa sesión
+    # ha dejado de ser "futura", y sin esto el mapa saltaría al circuito de
+    # la siguiente carrera justo cuando más falta hace el de esta.
+    with contextlib.suppress(Exception):
+        s = sesion_en_ventana(ahora, estado.horario, antes_min=240,
+                              despues_min=90)
+        if s and s.get("circuito"):
+            return s["circuito"]
+    fut = [x for x in estado.horario
+           if x.get("circuito") and x["inicio"] > ahora]
+    if fut:
+        return min(fut, key=lambda x: x["inicio"])["circuito"]
+    for c in estado.calendario:
+        if c.get("circuito"):
+            return c["circuito"]
+    return ""
 
 
 @app.get("/ambiente.mp3")
@@ -2237,13 +2274,17 @@ async def visor():
   #right-col { display: flex; flex-direction: column; gap: 14px; }
   /* Duelo cara a cara. El primero va grande (es el que se está contando);
      los demás quedan compactos debajo para dar contexto sin robar sitio. */
-  #intel .duelo { padding: 10px 0 11px; border-bottom: 1px solid var(--line); }
-  #intel .duelo:last-child { border-bottom: none; }
-  #intel .top { display: flex; justify-content: space-between;
-               font-size: .82rem; font-weight: 700; }
-  #intel .score.high { color: var(--accent); }
-  #intel .score.mid { color: var(--amber); }
-  #intel .score.low { color: var(--dim); }
+  /* Corner Spotlight usa la misma tarjeta que un duelo, así que el estilo
+     va por los dos contenedores. Estaba solo en #intel y en el panel de la
+     curva salía "TURN 1 · LEFT80%" de corrido, sin el hueco ni el color. */
+  #intel .duelo, #curva .duelo { padding: 10px 0 11px;
+                                 border-bottom: 1px solid var(--line); }
+  #intel .duelo:last-child, #curva .duelo:last-child { border-bottom: none; }
+  #intel .top, #curva .top { display: flex; justify-content: space-between;
+               gap: 10px; font-size: .82rem; font-weight: 700; }
+  #intel .score.high, #curva .score.high { color: var(--accent); }
+  #intel .score.mid, #curva .score.mid { color: var(--amber); }
+  #intel .score.low, #curva .score.low { color: var(--dim); }
   .razon { color: var(--dim); font-size: .68rem; margin-top: 2px; }
   .estr { color: var(--amber); font-size: .68rem; margin-top: 3px; }
 
@@ -2807,8 +2848,12 @@ function pintarMapa(d) {
   const grande = !d.hay_frame;
   caja.style.display = grande ? 'block' : 'none';
   panel.style.display = grande ? 'none' : 'block';
+  // "LIVE" solo cuando lo es. En la previa la pista está dibujada pero no
+  // hay nadie rodando, y anunciar en vivo lo que no lo está es engañar al
+  // que acaba de entrar.
   document.getElementById('mapa-titulo').textContent =
-    ((d.circuito || 'TRACK') + ' — LIVE TRACK MAP').toUpperCase();
+    ((d.circuito || d.circuito_mapa || 'TRACK') +
+     (d.en_vivo ? ' — LIVE TRACK MAP' : ' — CIRCUIT MAP')).toUpperCase();
   const linea = trazado.map(p => [p.x, p.y]);
   if (!linea.length) {
     // Sin el trazado completo no se pinta NADA de pista: ni puntitos
@@ -3370,11 +3415,18 @@ async function tick() {
   };
   aplicarPrograma(d.programa);
   document.body.classList.toggle('carrera', !!d.en_vivo);
+  // Fuera de sesión la cabecera decía "NO LIVE SESSION" y se acabó. En la
+  // previa eso es tirar la mejor línea de la pantalla: quien acaba de
+  // llegar quiere saber QUÉ viene y CUÁNTO falta, y eso ya lo sabemos.
+  const px_ = d.proxima_sesion;
   document.getElementById('gp').textContent =
-    d.en_vivo ? (d.gp + ' — ' + d.circuito) : 'NO LIVE SESSION';
+    d.en_vivo ? (d.gp + ' — ' + d.circuito)
+    : (px_ ? ('NEXT · ' + px_.sesion + ' — ' + px_.pais).toUpperCase()
+           : 'NO LIVE SESSION');
   document.getElementById('lap').textContent =
     d.en_vivo && d.vuelta ? 'LAP ' + d.vuelta +
-      (d.total_vueltas ? ' / ' + d.total_vueltas : '') : '';
+      (d.total_vueltas ? ' / ' + d.total_vueltas : '')
+    : (!d.en_vivo && px_ ? cuentaRegresiva(px_.inicia) : '');
   const c = d.clima || {};
   document.getElementById('clima').textContent =
     (c.aire != null ? 'AIR ' + Math.round(c.aire) + '°C  ' : '') +
@@ -6122,14 +6174,35 @@ def _guardar_trazado_cache(circuito, puntos):
         log.info("🗺️  Trazado de %s guardado para las miniaturas", circuito)
 
 
+def _leer_trazado(ruta):
+    with contextlib.suppress(Exception):
+        with open(ruta) as f:
+            p = json.load(f)
+        return p if isinstance(p, list) and len(p) > 20 else []
+    return []
+
+
 def _cargar_trazado_cache(circuito):
     clave = _clave_circuito(circuito)
     if not clave:
         return []
+    p = _leer_trazado(os.path.join(_TRAZADOS_DIR, f"{clave}.json"))
+    if p:
+        return p
+    # El mismo circuito llega con nombres distintos según de dónde venga el
+    # calendario: OpenF1 lo llama "Zandvoort" y el respaldo de Jolpica
+    # "Circuit Zandvoort". Si el nombre exacto no está guardado, vale aquel
+    # cuyo nombre encaje dentro del otro — y solo si encaja UNO, para no
+    # acabar dibujando un circuito por otro.
+    plano = clave.replace("_", "")
+    posibles = []
     with contextlib.suppress(Exception):
-        with open(os.path.join(_TRAZADOS_DIR, f"{clave}.json")) as f:
-            p = json.load(f)
-        return p if isinstance(p, list) and len(p) > 20 else []
+        for f in os.listdir(_TRAZADOS_DIR):
+            otro = f[:-5].replace("_", "") if f.endswith(".json") else ""
+            if len(otro) >= 4 and (otro in plano or plano in otro):
+                posibles.append(f)
+    if len(posibles) == 1:
+        return _leer_trazado(os.path.join(_TRAZADOS_DIR, posibles[0]))
     return []
 
 
@@ -9612,20 +9685,61 @@ async def bucle_mapa():
     ultimo_guardado = 0.0
     prox_intento_trazado = 0.0   # no repreguntar el trazado cada 2 s
     previo_probado = None        # circuito al que ya le buscamos trazado viejo
+    previa_probada = None        # circuito de previa ya intentado
+    prox_intento_previa = 0.0
     pos_previas = None           # foto anterior de la clasificación
     tele_pases = None            # de qué sesión son los pases que llevamos
     while True:
         await asyncio.sleep(2)
         t = estado.tele
         if t is None:
+            # Sin sesión cargada no hay coches en pista, pero SÍ puede haber
+            # pista. Antes aquí se borraba el trazado y la previa se emitía
+            # contra un rectángulo negro; el circuito, sin embargo, es el
+            # mismo esté o no rodando alguien, así que se dibuja el de la
+            # sesión que viene y el mapa (y con él las curvas) entra al aire
+            # desde la previa.
             if estado.mapa:
                 estado.mapa = []
-            if estado.mapa_trazado:
-                estado.mapa_trazado = []
-                estado.curvas = []
+            # Los adelantamientos contados eran de la sesión que acaba de
+            # terminar. Se borran aquí y no al cargar la siguiente: ahora el
+            # panel de curvas se ve YA en la previa, y decir "3 pasos aquí
+            # esta carrera" con los de la carrera anterior es mentir.
+            if estado.pases or estado.pases_total:
+                estado.pases, estado.pases_total = {}, 0
             tele_trazada = None
             previo_probado = None   # la próxima sesión merece su intento
             pos_previas = None
+            prox = _circuito_proximo()
+            if not prox:
+                continue
+            if (_clave_circuito(prox)
+                    != _clave_circuito(estado.circuito_mapa)):
+                estado.mapa_trazado = []
+                estado.curvas = []
+                estado.circuito_mapa = ""
+            if estado.mapa_trazado or time.time() < prox_intento_previa:
+                continue
+            prox_intento_previa = time.time() + 300
+            puntos = _cargar_trazado_cache(prox)
+            if not puntos and previa_probada != _clave_circuito(prox):
+                # Buscar en la API es caro y no depende de la hora: si este
+                # circuito no tiene GPS guardado, no lo va a tener en cinco
+                # minutos. Un intento por circuito y a otra cosa.
+                previa_probada = _clave_circuito(prox)
+                try:
+                    puntos = await telemetria.trazado_de_circuito(prox)
+                except Exception as e:
+                    log.info("Trazado de previa (%s): %s", prox, e)
+                    puntos = []
+                if puntos:
+                    _guardar_trazado_cache(prox, puntos)
+            if puntos:
+                estado.mapa_trazado = puntos
+                estado.curvas = curvas_del_trazado(puntos)
+                estado.circuito_mapa = prox
+                log.info("🗺️  Previa: mapa de %s al aire (%d puntos)",
+                         prox, len(puntos))
             continue
         # Guardar cada 10 s dónde va el replay, para retomar tras reinicio
         if time.time() - ultimo_guardado >= 10:
@@ -9639,6 +9753,15 @@ async def bucle_mapa():
         if t is not tele_trazada and time.time() >= prox_intento_trazado:
             prox_intento_trazado = time.time() + 60
             circuito = t.sesion.get("circuit_short_name") or ""
+            # Si lo dibujado viene de la previa y era OTRO circuito, fuera:
+            # más vale un momento de "LOADING TRACK MAP" que una pista que
+            # no es la de la carrera que se está narrando.
+            if (estado.circuito_mapa
+                    and _clave_circuito(estado.circuito_mapa)
+                    != _clave_circuito(circuito)):
+                estado.mapa_trazado = []
+                estado.curvas = []
+            estado.circuito_mapa = circuito
             # 1) Caché en disco: instantáneo y sin tocar la API.
             if not estado.mapa_trazado:
                 guardado = _cargar_trazado_cache(circuito)
