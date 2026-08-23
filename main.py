@@ -669,6 +669,12 @@ class Estado:
         # quien narra pueda decir dónde pasó, en vez de "le ha pasado" a
         # secas. Se detectaba la curva y solo se escribía en el log.
         self.pases_recientes: list = []
+        # Parrilla de salida {numero: puesto}, tomada en la vuelta 1. Sin
+        # ella no se puede decir de dónde viene nadie, que es la mitad de
+        # lo que quiere saber quien se incorpora tarde.
+        self.parrilla: dict = {}
+        # Qué resúmenes de "vas por aquí" ya se han dado (25, 50, 75).
+        self.recaps: set = set()
         self.pases_total: int = 0        # incluidos los que no caen en curva
         self.modo_calidad: str = "auto"    # auto | max | ahorro (botón del panel)
         self.off_air_manual: bool = False  # botón OFF AIR: silencio total, sin gasto
@@ -4036,6 +4042,120 @@ async def narrar_cierre(client: anthropic.AsyncAnthropic):
             "(documentaries and the next session), and a genuine goodbye. "
             "3 to 5 short lines, both voices — sounds like a real TV sign-"
             "off, not an abrupt cut.")}],
+    )
+    if response.stop_reason == "refusal":
+        return []
+    texto = next((b.text for b in response.content if b.type == "text"), "")
+    try:
+        return json.loads(texto).get("lineas", [])
+    except json.JSONDecodeError:
+        return []
+
+
+def _brief_recap():
+    """Hechos MEDIDOS para el resumen de "por dónde va la carrera".
+
+    Todo sale de nuestros propios datos: la tabla, la parrilla que
+    guardamos en la vuelta 1, los pases que hemos contado, la parada
+    cronometrada y la degradación de cada coche. Nada de esto es una
+    estimación ni viene de una estadística ajena, así que se puede decir
+    al aire tal cual.
+    """
+    t = estado.tele
+    if not t:
+        return ""
+    partes = []
+    tabla = t.tabla()
+    if tabla:
+        top = "; ".join(
+            f"P{f['pos']} {f['nombre']}"
+            + (f" ({f['gap']})" if f.get("gap") else " (leading)")
+            + (f" on {f['neumatico'].lower()}s, {f['vueltas_neumatico']} laps"
+               if f.get("neumatico") else "")
+            for f in tabla[:6])
+        partes.append(f"ORDER RIGHT NOW: {top}.")
+    # De dónde viene cada uno. Es lo que convierte una tabla en una historia.
+    if estado.parrilla and tabla:
+        nums = {p: n for n, p in t.posiciones.items()}
+        movs = []
+        for f in tabla:
+            n = nums.get(f["pos"])
+            salida = estado.parrilla.get(n)
+            if not salida:
+                continue
+            d = salida - f["pos"]
+            if abs(d) >= 3:
+                movs.append((abs(d), f"{f['nombre']} started P{salida}, "
+                                      f"now P{f['pos']} "
+                                      f"({'up' if d > 0 else 'down'} "
+                                      f"{abs(d)})"))
+        movs.sort(reverse=True)
+        if movs:
+            partes.append("BIGGEST MOVERS versus the grid: "
+                          + "; ".join(m for _, m in movs[:4]) + ".")
+    if estado.pases_total:
+        partes.append(f"OVERTAKES COUNTED so far this race: "
+                      f"{estado.pases_total}.")
+    pit = t.perdida_pit() or {}
+    if pit.get("segundos"):
+        partes.append(f"PIT STOP COST, timed from this race: "
+                      f"{pit['segundos']:.1f}s over {pit.get('muestras', 0)} "
+                      f"stops.")
+    deg = _degradacion_pista(t)
+    if len(deg) >= 3:
+        peor = max(deg, key=lambda d: d["pendiente"])
+        mejor = min(deg, key=lambda d: d["pendiente"])
+        # Una pendiente NEGATIVA no es "degradar poco": es seguir bajando
+        # el crono, que al principio de un relevo pasa según se quema
+        # combustible. Dicho como "el que menos degrada, -0.20s" se
+        # entiende al revés, así que se deja explicado.
+        m_txt = (f"{mejor['acr']} still improving by "
+                 f"{abs(mejor['pendiente']):.2f}s per lap"
+                 if mejor["pendiente"] < 0 else
+                 f"{mejor['acr']} holding on best at "
+                 f"{mejor['pendiente']:.2f}s per lap")
+        partes.append(
+            f"TYRE WEAR measured on clean laps: {peor['acr']} losing "
+            f"{peor['pendiente']:.2f}s per lap on "
+            f"{(peor.get('compuesto') or '?').lower()}s "
+            f"({peor.get('edad', 0)} laps old); {m_txt}.")
+    if t.incidentes:
+        hechos = "; ".join(i["texto"] for i in t.incidentes[-5:])
+        partes.append(f"RACE CONTROL so far: {hechos}.")
+    return "\n".join(partes)
+
+
+async def narrar_recap(client: anthropic.AsyncAnthropic, pct: int):
+    """Resumen de "vas por aquí" al cuarto, la mitad y las tres cuartas
+    partes de carrera. La gente NO entra al principio: entra cuando entra,
+    y sin esto se encuentra una tabla y dos voces hablando de algo que
+    lleva media hora pasando. Se cuenta lo que se ha perdido, con datos
+    reales, y se sigue."""
+    t = estado.tele
+    if not t:
+        return []
+    brief = _brief_recap()
+    if not brief:
+        return []
+    s = t.sesion
+    donde = {25: "a quarter", 50: "half", 75: "three quarters"}[pct]
+    response = await client.messages.create(
+        model=modelo_actual(), max_tokens=550, system=SYSTEM_DUO_VIVO,
+        output_config={"format": {"type": "json_schema",
+                                  "schema": DUO_SCHEMA}},
+        messages=[{"role": "user", "content": (
+            f"{donde.upper()} DISTANCE at the {s.get('country_name', '')} "
+            f"Grand Prix — lap {t.vuelta} of {t.total_vueltas}.\n\n"
+            f"MEASURED DATA (all of it real and quotable — use ONLY this, "
+            f"never invent a number, a name or an incident):\n{brief}\n\n"
+            "Write the CATCH-UP. Someone has just opened the stream and "
+            "has seen none of it. In 4 to 6 short lines, both voices, tell "
+            "them where the race stands and what they missed: the order at "
+            "the front and how it got there, who has climbed or dropped, "
+            "what the tyres are doing, and whether anything is building. "
+            "Sound like a broadcaster bringing viewers up to speed, not "
+            "like a list being read out — say the numbers that matter and "
+            "skip the rest. End pointed at what to watch for next.")}],
     )
     if response.stop_reason == "refusal":
         return []
@@ -11761,6 +11881,9 @@ async def _correr_sesion(clave):
             estado.tele = tele
             estado.tele_cargando = False
             estado.programa = None
+            # Sesión nueva: la parrilla y los resúmenes ya dados son de la
+            # anterior y no valen para esta.
+            estado.parrilla, estado.recaps = {}, set()
             # Carrera de la parrilla = evento en vivo real → calidad máxima
             estado.carrera_en_vivo = True
             if primera_vez:
@@ -11997,6 +12120,7 @@ async def bucle_telemetria():
             tele = telemetria.Telemetria(clave, VELOCIDAD_REPLAY)
             await tele.cargar()
             estado.tele = tele
+            estado.parrilla, estado.recaps = {}, set()
             estado.apertura_pendiente = True
             estado.ultimo_cta = time.time()
             log.info("📺 Al aire: %s", tele.descripcion())
@@ -12390,6 +12514,40 @@ async def difundir(lineas):
             estado.clientes_mac.discard(ws)
 
 
+def _guardar_parrilla():
+    """Foto del orden de salida, en cuanto empieza a rodarse.
+
+    Se toma UNA vez por sesión y no se vuelve a tocar: es la referencia
+    contra la que se mide quién ha subido y quién ha caído.
+    """
+    t = estado.tele
+    if not t or estado.parrilla or t.vuelta < 1 or not t.posiciones:
+        return
+    estado.parrilla = dict(t.posiciones)
+    log.info("🏁 Parrilla guardada (%d coches)", len(estado.parrilla))
+
+
+def _recap_pendiente():
+    """Qué resumen de carrera toca ahora (25, 50, 75), o None.
+
+    Solo en carrera y solo con el total de vueltas conocido: sin eso no
+    hay "por dónde vamos" que calcular. Cada uno se da una sola vez.
+    """
+    t = estado.tele
+    if not t or not t.total_vueltas or t.vuelta < 1:
+        return None
+    if t.sesion.get("session_name") not in _SESIONES_PASES:
+        return None
+    hecho = t.vuelta * 100 // t.total_vueltas
+    for pct in (75, 50, 25):
+        # Con un margen por arriba: si el resumen del 25% no llegó a
+        # darse (la carrera venía cargada de eventos), se da tarde, pero
+        # no se solapa con el siguiente ni se salta.
+        if pct <= hecho < pct + 20 and pct not in estado.recaps:
+            return pct
+    return None
+
+
 async def bucle_narracion():
     """Narra por telemetría (eventos) y por visión como respaldo."""
     if not os.environ.get("ANTHROPIC_API_KEY"):
@@ -12412,6 +12570,11 @@ async def bucle_narracion():
         await asyncio.sleep(2)
         ahora = time.time()
         desde_ultima = ahora - estado.narracion_ts
+        # La parrilla se guarda ANTES de cualquier corte: es un dato, no un
+        # segmento, no cuesta una llamada y solo hay una oportunidad de
+        # tomarla. Con el canal en espera en la vuelta 1 se habría perdido
+        # para el resto de la carrera.
+        _guardar_parrilla()
         # Botón OFF AIR: silencio total, cero llamadas a la API (aunque la
         # telemetría siga avanzando por dentro, que es gratis)
         if estado.off_air_manual:
@@ -12439,6 +12602,14 @@ async def bucle_narracion():
                 # documentales, con la tabla final todavía en pantalla
                 estado.cierre_pendiente = False
                 texto = await narrar_cierre(client)
+            elif _recap_pendiente() is not None:
+                # Al cuarto, la mitad y las tres cuartas partes: ponerse al
+                # día. Manda sobre la narración normal — es justo cuando
+                # está entrando gente y hay que decirles qué se han perdido.
+                pct = _recap_pendiente()
+                estado.recaps.add(pct)
+                log.info("📋 Resumen del %d%% de carrera", pct)
+                texto = await narrar_recap(client, pct)
             elif chat_listo:
                 pregunta = estado.chat_pendientes.pop(0)
                 estado.chat_ultima = ahora
