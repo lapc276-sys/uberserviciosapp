@@ -8757,9 +8757,31 @@ async def _vod_procesar(ruta):
                 json.dump(meta, f)
             return False
 
-    tema = (f"{meta.get('circuito') or meta.get('pais')} "
-            "Formula 1 circuit").strip()
-    fotos = await imagenes_wikimedia(tema)
+    # Un VOD dura una hora o dos, y hasta ahora se armaba con UNA búsqueda
+    # de cuatro fotos: la misma imagen volvía cada pocos minutos. Con
+    # varias consultas distintas hay material de sobra para que el montaje
+    # corte cada pocos segundos sin repetirse.
+    circuito = (meta.get("circuito") or meta.get("pais") or "").strip()
+    consultas = [q for q in (
+        f"{circuito} Formula 1 circuit" if circuito else "",
+        f"{circuito} Grand Prix" if circuito else "",
+        f"{meta.get('pais', '')} Grand Prix" if meta.get("pais") else "",
+        "Formula One car racing",
+        "Formula One pit stop",
+        "Formula One starting grid",
+        "Formula One paddock",
+    ) if q.strip()]
+    fotos, vistas = [], set()
+    for q in consultas:
+        with contextlib.suppress(Exception):
+            for u in await imagenes_wikimedia(q, n=6):
+                if u not in vistas and not _foto_sospechosa(u):
+                    vistas.add(u)
+                    fotos.append(u)
+        if len(fotos) >= 28:
+            break
+    log.info("🎞️  VOD: %d fotos únicas de %d búsquedas",
+             len(fotos), len(consultas))
 
     titulo = _vod_titulo(meta)
     if not _material_suficiente(fotos, f"VOD de {meta.get('sesion','sesión')}"):

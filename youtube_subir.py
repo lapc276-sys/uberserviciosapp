@@ -322,7 +322,7 @@ def _envolver(texto, ancho=26):
     return "\n".join(lineas[:4])
 
 
-def _construir_ffmpeg(imgs, audio, salida, per, w, h, fps, musica=None,
+def _construir_ffmpeg(imgs, audio, salida, pers, w, h, fps, musica=None,
                       es_clip=None):
     """Arma la lista de argumentos de ffmpeg (el rótulo ya viene pintado
     en las imágenes con Pillow — el drawtext del build estático no está
@@ -333,12 +333,14 @@ def _construir_ffmpeg(imgs, audio, salida, per, w, h, fps, musica=None,
     Las entradas marcadas en `es_clip` son segmentos de video YA
     normalizados (per s, w×h, mudos) — entran tal cual, sin -loop."""
     es_clip = es_clip or [False] * len(imgs)
+    if not isinstance(pers, (list, tuple)):
+        pers = [pers] * len(imgs)
     args = [_ffmpeg(), "-y"]
-    for img, cl in zip(imgs, es_clip):
+    for img, cl, d in zip(imgs, es_clip, pers):
         if cl:
             args += ["-i", img]
         else:
-            args += ["-loop", "1", "-t", f"{per:.2f}", "-i", img]
+            args += ["-loop", "1", "-t", f"{d:.2f}", "-i", img]
     args += ["-i", audio]                       # entrada n = voz
     n = len(imgs)
     if musica:
@@ -383,26 +385,31 @@ def _par(x):
     return x if x % 2 == 0 else x + 1
 
 
-def _construir_ffmpeg_kb(imgs, es_chart, titulo_png, audio, salida, per,
+def _construir_ffmpeg_kb(imgs, es_chart, titulo_png, audio, salida, pers,
                          w, h, fps, musica=None, es_clip=None):
     """Como _construir_ffmpeg pero con efecto Ken Burns (zoom lento) en las
     FOTOS. Los gráficos (es_chart) quedan estáticos y encajados; los clips
     (es_clip, ya normalizados) entran tal cual — traen movimiento propio.
     El título va como overlay FIJO encima (no se mueve con el zoom)."""
     es_clip = es_clip or [False] * len(imgs)
-    frames = max(2, int(round(per * fps)))
+    # Cada toma dura lo suyo (`pers` es una lista, no un número): el primer
+    # minuto va más rápido y los gráficos aguantan más porque llevan texto.
+    if not isinstance(pers, (list, tuple)):
+        pers = [pers] * len(imgs)
+    media = sum(pers) / max(1, len(pers))
+    frames = max(2, int(round(media * fps)))
     # zoom que sube 1.0→~1.18 (o baja, alternando) a lo largo de la foto
     paso = 0.18 / frames
     up = _par(w * 1.30)
     hp = _par(h * 1.30)
 
     args = [_ffmpeg(), "-y"]
-    for img, cl in zip(imgs, es_clip):
+    for img, cl, d in zip(imgs, es_clip, pers):
         if cl:
             args += ["-i", img]
         else:
             args += ["-loop", "1", "-framerate", str(fps),
-                     "-t", f"{per:.2f}", "-i", img]
+                     "-t", f"{d:.2f}", "-i", img]
     args += ["-i", audio]                       # entrada n = voz
     n = len(imgs)
     idx = n
@@ -821,6 +828,113 @@ async def armar_video(audio_path, fotos_urls, titulo, salida_mp4,
     return ok
 
 
+# ── Ritmo visual ──────────────────────────────────────────────────────
+# Cuánto dura cada toma. Antes una foto podía quedarse quieta hasta 18
+# segundos: la gente se va. Estos son los números que manda la práctica de
+# YouTube — corte cada pocos segundos, y más rápido al principio, porque
+# el primer minuto decide si se quedan.
+TOMA_ARRANQUE = float(os.environ.get("TOMA_ARRANQUE", "3.2"))   # primeros 60 s
+TOMA_NORMAL = float(os.environ.get("TOMA_NORMAL", "4.6"))       # el resto
+TOMA_CHART = float(os.environ.get("TOMA_CHART", "6.5"))         # tienen texto
+TOMA_CLIP = float(os.environ.get("TOMA_CLIP", "5.0"))           # video propio
+ARRANQUE_S = 60.0
+# Tope de tomas: cada una es una entrada de ffmpeg y el filtergraph crece
+# con ellas. Por encima de esto el encode se vuelve lentísimo, así que en
+# un video muy largo las tomas duran más de lo ideal.
+MAX_TOMAS = int(os.environ.get("MAX_TOMAS", "240"))
+# Cuántas veces puede repetirse una misma foto en un video. Con el Ken
+# Burns alternando acercar y alejar, una foto que vuelve pasa por otra
+# toma; catorce veces ya no.
+VUELTAS_MAX = int(os.environ.get("VUELTAS_MAX", "14"))
+
+
+def _plan_tomas(dur, imgs, es_chart, es_clip, horizontal):
+    """Reparte el video en tomas: qué se ve en cada una y cuánto dura.
+
+    Devuelve (imgs, es_chart, es_clip, duraciones).
+
+    Dos cosas cambian respecto a repartir el tiempo a partes iguales:
+
+    - Las fotos ROTAN EN CICLO. Antes las repeticiones se añadían al final
+      de la lista, así que la misma foto podía salir dos veces seguidas.
+      En ciclo, una foto no vuelve hasta que han pasado todas las demás.
+    - El primer minuto va más rápido. Es donde se decide si el
+      espectador se queda, y ahí la variedad importa más que en el diez.
+    """
+    n = len(imgs)
+    if not n:
+        return imgs, es_chart, es_clip, []
+
+    # Un cierre con tarjeta se queda de último pase lo que pase
+    cierre = None
+    if es_chart and es_chart[-1] and n > 1:
+        cierre = (imgs[-1], es_chart[-1], es_clip[-1])
+        imgs, es_chart, es_clip = imgs[:-1], es_chart[:-1], es_clip[:-1]
+
+    fotos = [i for i in range(len(imgs)) if not es_chart[i] and not es_clip[i]]
+    otros = [i for i in range(len(imgs)) if es_chart[i] or es_clip[i]]
+    if not fotos and not otros:
+        return imgs, es_chart, es_clip, [max(2.0, dur)]
+
+    base = TOMA_NORMAL if horizontal else 3.0
+    arranque = TOMA_ARRANQUE if horizontal else 2.6
+    # Si el video es tan largo que no cabe a este ritmo, las tomas se
+    # alargan lo justo para no pasar del tope.
+    if dur / base > MAX_TOMAS:
+        base = dur / MAX_TOMAS
+        arranque = base
+    # Con poco material no hay ritmo que valga: cortar treinta veces a la
+    # MISMA foto no se lee como montaje, se lee como un video roto. Cada
+    # foto aparece un número limitado de veces y, si no dan para llenar el
+    # video, las tomas se alargan en vez de multiplicarse.
+    if fotos:
+        tope_fotos = len(fotos) * (VUELTAS_MAX if len(fotos) >= 3 else 1)
+        cabe = tope_fotos + len(otros)
+        if cabe and dur / base > cabe:
+            base = arranque = dur / cabe
+
+    def _dura(idx, transcurrido):
+        if es_clip[idx]:
+            return TOMA_CLIP
+        if es_chart[idx]:
+            return TOMA_CHART
+        return arranque if transcurrido < ARRANQUE_S else base
+
+    dur_cierre = TOMA_CHART if cierre else 0.0
+    objetivo = max(0.0, dur - dur_cierre)
+
+    # Los gráficos y clips se reparten por el video en vez de amontonarse.
+    cada = max(4, (len(fotos) or 1)) if otros else 0
+
+    sec, chart2, clip2, pers = [], [], [], []
+    t = 0.0
+    k = j = puesto = 0
+    while t < objetivo and len(sec) < MAX_TOMAS:
+        if otros and cada and puesto and puesto % cada == 0 and j < len(otros):
+            idx = otros[j]; j += 1
+        elif fotos:
+            idx = fotos[k % len(fotos)]; k += 1      # ciclo: nunca seguidas
+        elif otros:
+            idx = otros[j % len(otros)]; j += 1
+        else:
+            break
+        d = _dura(idx, t)
+        # La última toma se ajusta para no pasarse del audio
+        if t + d > objetivo:
+            d = max(1.5, objetivo - t)
+        sec.append(imgs[idx]); chart2.append(es_chart[idx])
+        clip2.append(es_clip[idx]); pers.append(d)
+        t += d; puesto += 1
+
+    if not sec:                       # audio muy corto: una sola toma
+        sec, chart2, clip2, pers = ([imgs[0]], [es_chart[0]], [es_clip[0]],
+                                    [max(1.5, objetivo)])
+    if cierre:
+        sec.append(cierre[0]); chart2.append(cierre[1])
+        clip2.append(cierre[2]); pers.append(max(2.0, dur - t))
+    return sec, chart2, clip2, pers
+
+
 def _imagen_valida(path):
     """True si Pillow puede abrir el archivo como imagen RASTER. Descarta los
     SVG (mapas de circuito de Wikimedia), páginas HTML de error y archivos
@@ -859,7 +973,11 @@ async def _armar_video_base(audio_path, fotos_urls, titulo, salida_mp4,
         # y las URLs se recortan, llevan título y Ken Burns. En un video
         # largo (16:9) entran hasta 24 imágenes para que roten seguido; en
         # un short vertical bastan 8.
-        tope = 24 if horizontal else 8
+        # Cuántas imágenes DISTINTAS entran. Cada una se prepara una sola
+        # vez aunque salga varias veces en el montaje, así que subir esto
+        # no encarece el encode: lo que da es variedad, y sin variedad no
+        # se puede cortar cada cuatro segundos sin repetirse.
+        tope = 40 if horizontal else 10
         imgs = []          # rutas listas
         es_chart = []      # gráfico/tarjeta: completo, sin rótulo ni zoom
         es_clip = []       # clip de video de la biblioteca (en movimiento)
@@ -931,57 +1049,44 @@ async def _armar_video_base(audio_path, fotos_urls, titulo, salida_mp4,
             else:
                 return False
 
-        per = max(2.0, dur / len(imgs))
+        # El plan de tomas: qué se ve, en qué orden y cuánto dura cada
+        # una. Antes se repartía el tiempo a partes iguales y las fotos
+        # repetidas se pegaban al final de la lista, así que la misma
+        # imagen salía dos veces seguidas y podía quedarse quieta casi
+        # veinte segundos.
+        imgs, es_chart, es_clip, pers = _plan_tomas(
+            dur, imgs, es_chart, es_clip, horizontal)
+        if not imgs:
+            return False
 
-        # Ritmo visual: ninguna imagen quieta más de ~18 s (el ojo se cansa
-        # y la gente se va). Si hay pocas fotos para el largo del video, se
-        # REPITEN en segunda pasada — con el Ken Burns alternando acercar/
-        # alejar, la foto repetida parece otra toma. Los gráficos y las
-        # tarjetas no se repiten.
-        if horizontal and per > 18.0:
-            # Si el video termina con una tarjeta de cierre (chart al
-            # final), mantenerla de ÚLTIMA: los repetidos van antes.
-            cola = []
-            if es_chart and es_chart[-1]:
-                cola = [(imgs.pop(), es_chart.pop(), es_clip.pop())]
-            fotos_i = [i for i, (ch, cl) in enumerate(zip(es_chart, es_clip))
-                       if not ch and not cl]
-            total = len(imgs) + len(cola)
-            while fotos_i and dur / total > 18.0 and total < 60:
-                j = fotos_i[(total - len(fotos_i)) % len(fotos_i)]
-                imgs.append(imgs[j])
-                es_chart.append(es_chart[j])
-                es_clip.append(False)
-                total += 1
-            for im_, ch_, cl_ in cola:
-                imgs.append(im_)
-                es_chart.append(ch_)
-                es_clip.append(cl_)
-            per = max(2.0, dur / len(imgs))
-
-        # Normalizar los clips de la biblioteca a per segundos, w×h, mudos.
-        # Un clip que falle se cae de la lista y el video sigue con el resto.
+        # Normalizar los clips de la biblioteca a su duración de toma,
+        # w×h y mudos. Un clip que falle se cae de la lista y el video
+        # sigue con el resto — pero su tiempo tiene que ir a algún sitio o
+        # el video saldría más corto que la narración.
         if any(es_clip):
             listos = {}
-            for i, (img, cl) in enumerate(zip(imgs, es_clip)):
+            for img, cl, d in zip(imgs, es_clip, pers):
                 if not cl or img in listos:
                     continue
-                destino = img + f".seg.mp4"
+                destino = img + ".seg.mp4"
                 listos[img] = destino if await asyncio.to_thread(
-                    _preparar_clip, img, destino, per, w, h, fps) else None
-            filtrado = [(listos.get(im, im) if cl else im, ch, cl)
-                        for im, ch, cl in zip(imgs, es_chart, es_clip)
+                    _preparar_clip, img, destino, d, w, h, fps) else None
+            filtrado = [(listos.get(im, im) if cl else im, ch, cl, d)
+                        for im, ch, cl, d in zip(imgs, es_chart, es_clip, pers)
                         if not (cl and listos.get(im) is None)]
             if not filtrado:
                 return False
-            imgs, es_chart, es_clip = (list(x) for x in zip(*filtrado))
-            # Los clips ya quedaron recortados al per anterior; si alguno
-            # se cayó, las FOTOS absorben su tiempo para que el video no
-            # quede más corto que la narración.
-            n_cl = sum(es_clip)
-            n_resto = len(imgs) - n_cl
-            if n_resto > 0:
-                per = max(2.0, (dur - n_cl * per) / n_resto)
+            perdido = sum(pers) - sum(x[3] for x in filtrado)
+            imgs, es_chart, es_clip, pers = (list(x) for x in zip(*filtrado))
+            if perdido > 0.05:
+                # El hueco se reparte entre las tomas que NO son clip: los
+                # clips ya están recortados a su duración y estirarlos los
+                # dejaría congelados al final.
+                estirables = [i for i, cl in enumerate(es_clip) if not cl]
+                if estirables:
+                    extra = perdido / len(estirables)
+                    for i in estirables:
+                        pers[i] += extra
 
         musica = await _musica_docu() if con_musica else None
         limite = 1800 if horizontal else 300  # un VOD largo tarda en codificar
@@ -1009,7 +1114,7 @@ async def _armar_video_base(audio_path, fotos_urls, titulo, salida_mp4,
             titulo_png = _titulo_overlay(
                 titulo, w, h, os.path.join(tmp, "titulo.png"), chip=chip)
             args = _construir_ffmpeg_kb(imgs, es_chart, titulo_png, audio_path,
-                                        salida_mp4, per, w, h, fps,
+                                        salida_mp4, pers, w, h, fps,
                                         musica=musica, es_clip=es_clip)
             ok, err = _correr_ffmpeg(args, salida_mp4, limite)
             if ok:
@@ -1022,7 +1127,7 @@ async def _armar_video_base(audio_path, fotos_urls, titulo, salida_mp4,
             _prep(lambda img, w_, h_: _preparar_imagen(img, titulo, w_, h_))
 
         # 2) Plan clásico (concat sin movimiento), con música
-        args = _construir_ffmpeg(imgs, audio_path, salida_mp4, per, w, h, fps,
+        args = _construir_ffmpeg(imgs, audio_path, salida_mp4, pers, w, h, fps,
                                  musica=musica, es_clip=es_clip)
         ok, err = _correr_ffmpeg(args, salida_mp4, limite)
         if ok:
@@ -1032,7 +1137,7 @@ async def _armar_video_base(audio_path, fotos_urls, titulo, salida_mp4,
         # 3) Último recurso: sin música por si el mix de audio fue el problema
         if musica:
             log.info("Reintento el video sin música de fondo")
-            args = _construir_ffmpeg(imgs, audio_path, salida_mp4, per, w, h,
+            args = _construir_ffmpeg(imgs, audio_path, salida_mp4, pers, w, h,
                                      fps, musica=None, es_clip=es_clip)
             ok, err = _correr_ffmpeg(args, salida_mp4, limite)
             if ok:
