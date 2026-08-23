@@ -3148,18 +3148,47 @@ btn.onclick = () => {
   // El gesto ya esta hecho: el ambiente vuelve a intentarlo solo en el
   // siguiente tick, y las lineas de voz al llegar el proximo segmento.
 };
+// La línea que suena ahora, y cómo cortarla. Sin esto no había forma de
+// callar lo que ya estaba sonando: llegaba un segmento nuevo y el viejo
+// seguía hasta el final, con las dos voces encima.
+let audioActual = null, cortarLinea = null;
+
+function pararVoz() {
+  if (cortarLinea) cortarLinea();
+  // La voz del navegador ENCOLA: sin cancel() las frases se apilan y
+  // siguen hablando encima de todo lo que venga después.
+  if (window.speechSynthesis) speechSynthesis.cancel();
+}
+
 function reproducirLinea(seg, i) {
   return new Promise(res => {
     const a = new Audio('/audio/' + seg + '/' + i);
-    a.onended = () => res(true);
-    a.onerror = () => res(false);
-    a.play().catch(e => { bloqueado(e); res(false); });
+    audioActual = a;
+    let hecho = false;
+    const fin = (ok) => {
+      if (hecho) return;            // pause() no dispara 'ended': hay que
+      hecho = true;                 // asegurar que esto pasa UNA vez
+      if (audioActual === a) audioActual = null;
+      cortarLinea = null;
+      res(ok);
+    };
+    // pause() no resuelve la promesa por su cuenta, así que el cortador
+    // la resuelve a mano o el bucle se quedaría esperando para siempre.
+    cortarLinea = () => { try { a.pause(); } catch (e) {} fin(true); };
+    a.onended = () => fin(true);
+    a.onerror = () => fin(false);
+    a.play().catch(e => { bloqueado(e); fin(false); });
   });
 }
-function fallbackTTS(l, idioma) {
-  const u = new SpeechSynthesisUtterance(l.texto);
-  u.lang = idioma === 'es' ? 'es-ES' : 'en-GB';
-  speechSynthesis.speak(u);
+
+// Espera que se puede interrumpir: si mientras tanto llega un segmento
+// nuevo, se abandona. Un setTimeout suelto no se puede cancelar y dejaba
+// la emisión parada hasta nueve segundos por línea fallida.
+async function esperar(ms) {
+  const fin = Date.now() + ms;
+  while (Date.now() < fin && !pendiente) {
+    await new Promise(r => setTimeout(r, 120));
+  }
 }
 // --- Subtítulo: solo la línea narrada ahora mismo ---
 let capLineas = [], capIdx = -1, capTs = 0;
@@ -3189,20 +3218,23 @@ setInterval(() => {
 }, 1000);
 async function reproducirSegmento(seg, lineas, idioma) {
   pendiente = { seg, lineas, idioma };  // si ya habla, gana el más nuevo
-  if (reproduciendo) return;
+  // "Gana el más nuevo" hay que hacerlo cumplir: antes el bucle terminaba
+  // todas las líneas viejas primero, así que el segmento nuevo esperaba
+  // detrás. Se calla lo que suena y el bucle lo recoge al instante.
+  if (reproduciendo) { pararVoz(); return; }
   reproduciendo = true;
   while (pendiente) {
     const t = pendiente; pendiente = null;
-    for (let i = 0; i < t.lineas.length; i++) {
+    for (let i = 0; i < t.lineas.length && !pendiente; i++) {
       mostrarLinea(t.lineas, i);  // el subtítulo sigue a la voz
       const ok = await reproducirLinea(t.seg, i);
       if (!ok) {
-        fallbackTTS(t.lineas[i], t.idioma);
-        // Si no sonó, nada marca cuándo termina la línea y el bucle se
-        // comería el segmento entero en un parpadeo. Se le da el tiempo
-        // que cuesta leerla para que el subtítulo siga siendo legible.
-        const seg = Math.min(9000, 1800 + (t.lineas[i].texto || '').length * 55);
-        await new Promise(r => setTimeout(r, seg));
+        // Si la línea no sonó se sigue en SILENCIO, con el subtítulo el
+        // tiempo que cuesta leerla. Antes aquí hablaba la voz sintética
+        // del navegador: una voz robótica saliendo al aire encima de la
+        // buena es peor que no oír nada.
+        await esperar(Math.min(9000,
+                               1800 + (t.lineas[i].texto || '').length * 55));
       }
     }
   }
@@ -3234,8 +3266,8 @@ function aplicarPrograma(p) {
   const musica = document.getElementById('musica');
   if (inter && p.musica && vozActiva) {
     if (musica.getAttribute('src') !== p.musica) musica.src = p.musica;
-    if (musica.paused) { musica.volume = 0.35;
-                         musica.play().catch(bloqueado); }
+    if (musica.paused) { musica.play().catch(bloqueado); }
+    musica.volume = reproduciendo ? 0.12 : 0.35;   // se aparta de la voz
   } else if (!musica.paused) {
     musica.pause();
   }
@@ -3463,7 +3495,12 @@ async function tick() {
     amb = new Audio('/ambiente.mp3');
     amb.loop = true; amb.volume = 0.15;
     amb.play().catch(e => { bloqueado(e); amb = null; });
-  } else if (amb && (!d.ambiente || !vozActiva)) {
+  }
+  // El motor de fondo baja mientras alguien habla. No se puede subir la
+  // voz por encima de 1.0, así que la forma de que se entienda es que lo
+  // demás se aparte.
+  if (amb) amb.volume = reproduciendo ? 0.05 : 0.15;
+  if (amb && (!d.ambiente || !vozActiva)) {
     amb.pause(); amb = null;
   }
   // incidentes
