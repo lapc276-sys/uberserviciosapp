@@ -3152,6 +3152,15 @@ btn.onclick = () => {
 // callar lo que ya estaba sonando: llegaba un segmento nuevo y el viejo
 // seguía hasta el final, con las dos voces encima.
 let audioActual = null, cortarLinea = null;
+// Mientras esto esté puesto no suena nada. Hace falta aparte de cortar la
+// línea: cortarla solo termina ESA, y el bucle pasaba a la siguiente.
+let mudo = false;
+
+function callar() {
+  mudo = true;
+  pendiente = null;
+  pararVoz();
+}
 
 function pararVoz() {
   if (cortarLinea) cortarLinea();
@@ -3225,7 +3234,7 @@ async function reproducirSegmento(seg, lineas, idioma) {
   reproduciendo = true;
   while (pendiente) {
     const t = pendiente; pendiente = null;
-    for (let i = 0; i < t.lineas.length && !pendiente; i++) {
+    for (let i = 0; i < t.lineas.length && !pendiente && !mudo; i++) {
       mostrarLinea(t.lineas, i);  // el subtítulo sigue a la voz
       const ok = await reproducirLinea(t.seg, i);
       if (!ok) {
@@ -3246,6 +3255,15 @@ function aplicarPrograma(p) {
   const credito = document.getElementById('credito');
   const inter = !!(p && p.tipo === 'interludio');
   const standby = !!(p && p.tipo === 'standby');
+  // OFF AIR quiere decir que no habla nadie, y eso incluye lo que estaba
+  // sonando en ese momento. Sin esto, darle al botón dejaba la voz
+  // terminando el segmento por encima de la tarjeta de espera.
+  if (standby && !mudo) {
+    callar();
+    capLineas = []; capIdx = -1; pintarCaption();
+  } else if (!standby && mudo) {
+    mudo = false;          // vuelve la programación: se puede hablar otra vez
+  }
   document.body.classList.toggle('interludio', inter);
   document.body.classList.toggle('standby', standby);
   const wc = document.getElementById('worldclock');
@@ -11311,6 +11329,13 @@ def poner_standby():
     estado.programa = tarjeta
     # Limpiar el subtítulo del programa anterior para que no quede pegado
     estado.lineas = []
+    # Y el audio con él. Vaciar solo las líneas impedía que arrancara un
+    # segmento NUEVO, pero el que ya estaba sonando seguía hasta el final:
+    # medio minuto de narración encima de una tarjeta de OFF AIR. Al subir
+    # el id, las peticiones de audio del segmento viejo pasan a dar 404 y
+    # no queda nada que reproducir.
+    estado.audios = []
+    estado.segmento_id += 1
 
 
 async def bucle_programacion():
