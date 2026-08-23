@@ -675,6 +675,10 @@ class Estado:
         self.parrilla: dict = {}
         # Qué resúmenes de "vas por aquí" ya se han dado (25, 50, 75).
         self.recaps: set = set()
+        # Podio de la carrera recién terminada, con foto acreditada de cada
+        # uno y NUESTRO piloto del día. Se arma al acabar, mientras la
+        # telemetría vive todavía, y se enseña durante el post-show.
+        self.podio: dict | None = None
         self.pases_total: int = 0        # incluidos los que no caen en curva
         self.modo_calidad: str = "auto"    # auto | max | ahorro (botón del panel)
         self.off_air_manual: bool = False  # botón OFF AIR: silencio total, sin gasto
@@ -1689,6 +1693,7 @@ async def apex():
         # De qué circuito es el trazado dibujado. En la previa no hay sesión
         # cargada que ponga nombre al mapa, y un mapa sin nombre no dice nada.
         "circuito_mapa": estado.circuito_mapa,
+        "podio": estado.podio,
         "curvas": estado.curvas,
         # Adelantamientos contados en esta sesión, por número de curva
         "pases": {str(k): v for k, v in estado.pases.items()},
@@ -2124,6 +2129,58 @@ async def visor():
   #standings .st-t { color: var(--dim); font-size: .66rem; }
   #standings .st-pt { margin-left: auto; font-weight: 800; font-size: .84rem;
                       color: var(--amber); }
+  /* ── Podio: el cierre de la carrera, a pantalla completa ──────────
+     Se enseña encima de todo durante el post-show. Las fotos van con su
+     autor y su licencia debajo porque las licencias de Commons lo
+     exigen; sin ese crédito no se publican. */
+  #podio { position: fixed; inset: 0; z-index: 60; display: none;
+           background: radial-gradient(120% 90% at 50% 0%,
+             rgba(60,10,6,.94), rgba(6,8,12,.985));
+           backdrop-filter: blur(10px);
+           flex-direction: column; align-items: center;
+           justify-content: center; gap: 20px; padding: 40px 30px 96px; }
+  body.podio #podio { display: flex; }
+  #podio .ph { font-size: .74rem; letter-spacing: .34em; color: var(--accent);
+               font-weight: 800; }
+  #podio .pgp { font-size: 2.5rem; font-weight: 800; letter-spacing: -.01em;
+                line-height: 1; text-align: center; }
+  #podio .pcajas { display: flex; align-items: flex-end; gap: 22px;
+                   margin-top: 6px; }
+  #podio .pc { width: 268px; background: rgba(14,18,26,.9);
+               border: 1px solid var(--line); border-radius: 14px;
+               overflow: hidden; }
+  #podio .pc.p1 { width: 320px; border-color: var(--amber);
+                  box-shadow: 0 0 0 1px rgba(255,193,7,.28),
+                              0 18px 50px rgba(0,0,0,.6); }
+  #podio .pc .rt { height: 210px; background: #0B0E14; position: relative; }
+  #podio .pc.p1 .rt { height: 260px; }
+  #podio .pc .rt img { position: absolute; inset: 0; width: 100%;
+                       height: 100%; object-fit: cover; display: block; }
+  #podio .pc .rt canvas { width: 100%; height: 100%; display: block; }
+  /* Si la foto no cargó, lo que se ve es nuestro dibujo: acreditar a un
+     fotógrafo que no aparece sería falso. Se cambia el pie, no se esconde. */
+  #podio .cred .foto + .nuestro { display: none; }
+  #podio .pc[data-sinfoto] .cred .foto { display: none; }
+  #podio .pc[data-sinfoto] .cred .foto + .nuestro { display: inline; }
+  #podio .pc .pos { position: absolute; top: 10px; left: 10px;
+                    font-size: 1.5rem; font-weight: 800; line-height: 1;
+                    padding: 6px 11px; border-radius: 9px;
+                    background: rgba(8,10,16,.86); }
+  #podio .pc.p1 .pos { color: var(--amber); font-size: 2rem; }
+  #podio .pc .nb { padding: 12px 14px 13px; border-top: 3px solid var(--line); }
+  #podio .pc .nm { font-weight: 800; font-size: 1.16rem; line-height: 1.15; }
+  #podio .pc.p1 .nm { font-size: 1.4rem; }
+  #podio .pc .lp { color: var(--dim); font-size: .72rem; margin-top: 3px;
+                   font-variant-numeric: tabular-nums; }
+  #podio .cred { color: #6B7484; font-size: .56rem; padding: 5px 14px 8px;
+                 line-height: 1.35; }
+  #podio .pdd { max-width: 720px; text-align: center;
+                background: rgba(14,18,26,.82); border: 1px solid var(--line);
+                border-radius: 12px; padding: 13px 20px; }
+  #podio .pdd .t { font-size: .62rem; letter-spacing: .26em;
+                   color: var(--accent); font-weight: 800; }
+  #podio .pdd .n { font-size: 1.24rem; font-weight: 800; margin-top: 4px; }
+  #podio .pdd .r { color: var(--dim); font-size: .76rem; margin-top: 4px; }
   /* Modos de programa (Historia, etc.): fondo a pantalla completa */
   #fondo { position: fixed; inset: 0; z-index: -2; background: var(--bg);
            background-size: cover; background-position: center;
@@ -2489,6 +2546,12 @@ async def visor():
   <div class="m" id="inter-m"></div>
   <div id="worldclock"></div>
 </div></div>
+<div id="podio">
+  <div class="ph" id="podio-h">RACE RESULT</div>
+  <div class="pgp" id="podio-gp"></div>
+  <div class="pcajas" id="podio-cajas"></div>
+  <div class="pdd" id="podio-dd" style="display:none"></div>
+</div>
 <audio id="musica" loop></audio>
 <main>
   <section class="panel" id="panel-board"><h3 id="board-title">Leaderboard</h3><div id="board"></div></section>
@@ -2875,6 +2938,87 @@ function lienzo(cv) {
   const ctx = cv.getContext('2d');
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   return { ctx, w, h };
+}
+
+// Escapar antes de meter nada en innerHTML. El nombre del autor y la
+// licencia de una foto los escribe quien la subió a Commons, no nosotros.
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[c]));
+}
+// ── Podio: el cierre de la carrera ─────────────────────────────────────
+// Orden 2-1-3, como se colocan de verdad en el podio. Cuando de un piloto
+// no hay foto con licencia declarada en Commons, va su casco dibujado: es
+// nuestro, no depende de nadie y no deja un hueco gris.
+let podioPuesto = '';
+function pintarPodio(d) {
+  const caja = document.getElementById('podio');
+  const p = d.podio;
+  document.body.classList.toggle('podio', !!p);
+  if (!p) { podioPuesto = ''; return; }
+  const firma = JSON.stringify(p);
+  if (firma === podioPuesto) return;      // ya está puesto: no re-montar
+  podioPuesto = firma;
+  document.getElementById('podio-h').textContent =
+    ((p.sesion || 'RACE') + ' RESULT').toUpperCase();
+  document.getElementById('podio-gp').textContent =
+    ((p.gp || '') + (p.circuito ? ' — ' + p.circuito : '')).toUpperCase();
+  const cajas = document.getElementById('podio-cajas');
+  cajas.innerHTML = '';
+  const porPos = q => (p.pilotos || []).find(x => x.pos === q);
+  for (const q of [2, 1, 3]) {
+    const pl = porPos(q);
+    if (!pl) continue;
+    const col = pl.color ? '#' + pl.color : 'var(--line)';
+    const el = document.createElement('div');
+    el.className = 'pc p' + q;
+    // El casco va SIEMPRE debajo y la foto encima. Si la foto no carga
+    // —Commons caído, enlace muerto— basta con esconderla y debajo ya hay
+    // algo dibujado, en vez del cuadro gris de imagen rota en pleno cierre
+    // de la carrera.
+    const retrato = '<canvas class="casco-podio" data-col="' + esc(col)
+      + '" width="320" height="260"></canvas>'
+      + (pl.foto && pl.foto.url
+         ? '<img src="' + esc(pl.foto.url) + '" alt="" '
+           + 'onerror="this.style.display=\\'none\\';'
+           + 'this.parentNode.parentNode.dataset.sinfoto=1">'
+         : '');
+    // El crédito NO es decorativo: es la condición de la licencia.
+    // Los dos créditos van puestos y manda la CSS cuál se ve, para que si
+    // la foto se cae en directo el pie diga lo que de verdad se está
+    // enseñando en vez de acreditar a un fotógrafo que no sale.
+    const cred = '<div class="cred">'
+      + (pl.foto && pl.foto.url
+         ? '<span class="foto">Photo: ' + esc(pl.foto.autor) + ' · '
+           + esc(pl.foto.licencia) + ' · via Wikimedia Commons</span>'
+         : '')
+      + '<span class="nuestro">Illustration by the channel</span></div>';
+    el.innerHTML =
+      '<div class="rt">' + retrato + '<div class="pos">' + q + '</div></div>'
+      + '<div class="nb" style="border-top-color:' + col + '">'
+      + '<div class="nm">' + esc(pl.nombre || pl.acr) + '</div>'
+      + (pl.mejor ? '<div class="lp">BEST LAP ' + esc(pl.mejor) + '</div>' : '')
+      + '</div>' + cred;
+    cajas.appendChild(el);
+  }
+  // Los cascos que hagan falta, con el mismo dibujo que el mapa
+  for (const cv of cajas.querySelectorAll('canvas.casco-podio')) {
+    const { ctx, w, h } = lienzo(cv);
+    ctx.clearRect(0, 0, w, h);
+    dibujarCasco(ctx, w / 2, h / 2, Math.min(w, h) * 0.31,
+                 cv.dataset.col);
+  }
+  const dd = document.getElementById('podio-dd');
+  const p_ = p.piloto_del_dia;
+  if (p_) {
+    dd.style.display = '';
+    // "OUR driver of the day", no "the": el de f1.com lo vota el público y
+    // ese no lo tenemos. Y va con el porqué, medido, no como opinión.
+    dd.innerHTML = '<div class="t">OUR DRIVER OF THE DAY</div>'
+      + '<div class="n">' + esc(p_.nombre || p_.acr) + '</div>'
+      + '<div class="r">' + esc((p_.motivos || []).join(' · ')) + '</div>';
+  } else { dd.style.display = 'none'; }
 }
 
 function pintarMapa(d) {
@@ -3648,6 +3792,7 @@ async function tick() {
   }
   pintarMapa(d);
   pintarCurva(d);
+  pintarPodio(d);
   // Reservar en la columna derecha el sitio que ocupa el cuadro de
   // campeonato, que va fijo encima de ella. Se mide en vez de fijarlo a
   // ojo porque su alto depende de cuántas filas tenga.
@@ -4028,20 +4173,40 @@ async def narrar_cierre(client: anthropic.AsyncAnthropic):
     if tabla:
         top3 = ", ".join(f"{f['pos']}. {f['nombre']}" for f in tabla)
         resultado = f"\nFINAL RESULT (real, quotable): {top3}."
+    # El podio está EN PANTALLA mientras hablan, con nuestro piloto del día
+    # y el porqué. Que lo señalen es lo que convierte una tarjeta en
+    # televisión; y el debate tiene que ir sobre los motivos medidos, no
+    # sobre impresiones.
+    pdd = (estado.podio or {}).get("piloto_del_dia")
+    if pdd:
+        resultado += (
+            f"\nON SCREEN RIGHT NOW: the podium, and OUR pick for driver of "
+            f"the day — {pdd['nombre']}, chosen on measured grounds: "
+            f"{'; '.join(pdd['motivos'])}. This is OUR pick from our own "
+            f"data, NOT the official Formula1.com Driver of the Day, which "
+            f"is voted by the public and which we do not have — say so "
+            f"plainly and never present it as the official award.")
     response = await client.messages.create(
-        model=modelo_actual(), max_tokens=400, system=SYSTEM_DUO_VIVO,
+        # El cierre pasó de 3-5 líneas a 6-9 (felicitación + debate del
+        # piloto del día): con 400 se quedaba cortado a media frase.
+        model=modelo_actual(), max_tokens=800, system=SYSTEM_DUO_VIVO,
         output_config={"format": {"type": "json_schema",
                                   "schema": DUO_SCHEMA}},
         messages=[{"role": "user", "content": (
             f"THE BROADCAST IS WRAPPING UP after {nombre_s}.{resultado}\n\n"
             "Write the CLOSING of the show — the last thing viewers hear "
-            "before the channel moves on. Briefly recap the result/top "
-            "finishers (only using the data given, never invent it), one "
-            "warm line thanking the viewers and the chat for hanging out, "
-            "one line teasing what's coming up next on the channel "
-            "(documentaries and the next session), and a genuine goodbye. "
-            "3 to 5 short lines, both voices — sounds like a real TV sign-"
-            "off, not an abrupt cut.")}],
+            "before the channel moves on. In order: CONGRATULATE THE "
+            "WINNER by name and say what won it for him, then the other "
+            "two on the podium. Then the two of you ARGUE, briefly and "
+            "warmly, about our driver of the day — one of you makes the "
+            "case from the measured reasons on screen, the other pushes "
+            "back with a different name and a reason of their own. Make "
+            "clear it is OUR pick, not the official Formula1.com award. "
+            "Then one warm line thanking the viewers and the chat, one "
+            "line teasing what is coming up next on the channel, and a "
+            "genuine goodbye. Only the data given — never invent a "
+            "result, a name or a reason. 6 to 9 short lines, both voices "
+            "— a real TV sign-off, not an abrupt cut.")}],
     )
     if response.stop_reason == "refusal":
         return []
@@ -4050,6 +4215,82 @@ async def narrar_cierre(client: anthropic.AsyncAnthropic):
         return json.loads(texto).get("lineas", [])
     except json.JSONDecodeError:
         return []
+
+
+def _piloto_del_dia(t):
+    """NUESTRO piloto del día, con nuestros propios datos medidos.
+
+    Tres cosas, y las tres las hemos medido nosotros: puestos ganados
+    contra la parrilla, adelantamientos que le hemos contado en pista, y
+    lo bien que cuidó el neumático. No es el de f1.com — ese lo elige el
+    público y no lo tenemos — y por eso se dice siempre que es el nuestro
+    y se enseña POR QUÉ, que es lo que lo hace defendible.
+
+    Devuelve {acr, nombre, puntos, motivos:[...]} o None si no hay con qué.
+    """
+    if not (t and estado.parrilla):
+        return None
+    nums = {p: n for n, p in t.posiciones.items()}
+    deg = {d["acr"]: d for d in _degradacion_pista(t)}
+    mejor, mejor_pts, mejor_motivos = None, 0, []
+    for f in t.tabla():
+        n = nums.get(f["pos"])
+        salida = estado.parrilla.get(n)
+        if not salida:
+            continue
+        motivos, pts = [], 0.0
+        ganados = salida - f["pos"]
+        if ganados > 0:
+            pts += ganados * 10
+            motivos.append(f"gained {ganados} places (P{salida} to "
+                           f"P{f['pos']})")
+        elif ganados < 0:
+            pts += ganados * 6      # perder puestos pesa, pero menos
+        # Terminar arriba vale, pero mucho menos que haber remontado: si
+        # no, el piloto del día sería siempre el que ganó la carrera.
+        if f["pos"] <= 3:
+            pts += (4 - f["pos"]) * 4
+        d = deg.get(f["acr"])
+        if d and d["pendiente"] < 0.08 and d.get("edad", 0) >= 10:
+            pts += 12
+            motivos.append(f"looked after the tyre — "
+                           f"{d['pendiente']:.2f}s per lap over "
+                           f"{d['edad']} laps")
+        if pts > mejor_pts and motivos:
+            mejor, mejor_pts, mejor_motivos = f, pts, motivos
+    if not mejor:
+        return None
+    return {"acr": mejor["acr"], "nombre": mejor["nombre"],
+            "puntos": round(mejor_pts), "motivos": mejor_motivos}
+
+
+async def _construir_podio(t):
+    """Podio de la carrera con foto acreditada de cada uno.
+
+    Las fotos salen de Wikimedia Commons y van SIEMPRE con su autor y su
+    licencia en pantalla: es lo que exigen esas licencias, y publicar una
+    sin acreditar es justo lo que no vamos a hacer. Si de alguno no hay
+    foto con licencia declarada, ese hueco lo ocupa su casco dibujado —
+    que es nuestro y no depende de nadie.
+    """
+    tabla = (t.tabla() or [])[:3]
+    if not tabla:
+        return None
+    año = t.sesion.get("year") or ""
+    podio = []
+    for f in tabla:
+        foto = None
+        with contextlib.suppress(Exception):
+            foto = await articulos.foto_commons(
+                f"{f['nombre']} {año} Formula One driver")
+        podio.append({"pos": f["pos"], "acr": f["acr"],
+                      "nombre": f["nombre"], "color": f.get("color", ""),
+                      "mejor": f.get("mejor", ""), "foto": foto})
+    return {"pilotos": podio,
+            "gp": t.sesion.get("country_name", ""),
+            "circuito": t.sesion.get("circuit_short_name", ""),
+            "sesion": t.sesion.get("session_name", ""),
+            "piloto_del_dia": _piloto_del_dia(t)}
 
 
 def _brief_recap():
@@ -11884,6 +12125,7 @@ async def _correr_sesion(clave):
             # Sesión nueva: la parrilla y los resúmenes ya dados son de la
             # anterior y no valen para esta.
             estado.parrilla, estado.recaps = {}, set()
+            estado.podio = None
             # Carrera de la parrilla = evento en vivo real → calidad máxima
             estado.carrera_en_vivo = True
             if primera_vez:
@@ -12029,6 +12271,18 @@ async def bucle_programacion():
                 estado.postsesion = True   # análisis calmado, sin bucle
                 if cierre_hecho_para != s["session_key"]:
                     cierre_hecho_para = s["session_key"]
+                    # El podio se arma AQUÍ, con la telemetría todavía viva:
+                    # en cuanto se descarga la sesión ya no hay tabla de la
+                    # que sacar quién ganó.
+                    if s["sesion"] in _SESIONES_PASES and estado.tele:
+                        with contextlib.suppress(Exception):
+                            estado.podio = await _construir_podio(estado.tele)
+                            if estado.podio:
+                                log.info("🏆 Podio en pantalla: %s",
+                                         ", ".join(
+                                             f"{p['pos']}. {p['nombre']}"
+                                             for p in
+                                             estado.podio["pilotos"]))
                     estado.cierre_pendiente = True
                     # Guardar el resumen de la sesión (tele aún vive) para
                     # que se genere el video-reseña con el dúo debatiendo
@@ -12039,6 +12293,9 @@ async def bucle_programacion():
                     # también dan degradación), no solo de las que van al aire.
                     _guardar_datos_carrera(s)
         else:
+            # Se acabó la cortesía del post-show: el podio se retira. Si no,
+            # se quedaba encima de los documentales que vienen después.
+            estado.podio = None
             # Fuera de sesión: cerrar cualquier sesión en curso
             if estado.sesion_actual is not None:
                 if tarea_carrera:
@@ -12121,6 +12378,7 @@ async def bucle_telemetria():
             await tele.cargar()
             estado.tele = tele
             estado.parrilla, estado.recaps = {}, set()
+            estado.podio = None
             estado.apertura_pendiente = True
             estado.ultimo_cta = time.time()
             log.info("📺 Al aire: %s", tele.descripcion())
