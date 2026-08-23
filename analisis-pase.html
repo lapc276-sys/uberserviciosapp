@@ -224,31 +224,31 @@
 
     <!-- Acotaciones: aparecen cuando toca -->
     <div class="marca ata" id="m1" style="left:22%;top:56%">
-      <span>Frenada</span><b>12 m más tarde</b></div>
+      <span>Braking</span><b>12 m later</b></div>
     <div class="marca ata" id="m2" style="left:39%;top:76%">
-      <span>Entrada</span><b>218 km/h</b></div>
+      <span>Entry</span><b>218 km/h</b></div>
     <div class="marca def" id="m3" style="left:52%;top:26%">
-      <span>Defensa · entrada</span><b>209 km/h</b></div>
+      <span>Defending · entry</span><b>209 km/h</b></div>
     <div class="marca" id="m4" style="left:64%;top:46%">
-      <span>Curva 4</span><b>Adelantamiento completado</b></div>
+      <span>Turn 4</span><b>Pass completed</b></div>
 
     <!-- Rótulo inferior -->
     <div class="rotulo">
       <div class="quien">
         <i style="background:var(--ata)"></i>
-        <div><div class="n">ATACA</div><div class="r">Por dentro</div></div>
+        <div><div class="n">ATTACKING</div><div class="r">On the inside</div></div>
       </div>
       <div class="medio">
         <div class="dato"><span class="v" id="dGap">0.41</span>
-          <span class="k">Hueco (s)</span></div>
+          <span class="k">Gap (s)</span></div>
         <div class="dato"><span class="v" id="dVel">— </span>
-          <span class="k">Velocidad</span></div>
-        <div class="dato"><span class="v" id="dFase">RECTA</span>
-          <span class="k">Fase</span></div>
+          <span class="k">Speed</span></div>
+        <div class="dato"><span class="v" id="dFase">STRAIGHT</span>
+          <span class="k">Phase</span></div>
       </div>
       <div class="quien" style="justify-content:flex-end">
-        <div style="text-align:right"><div class="n">DEFIENDE</div>
-          <div class="r">Trazada normal</div></div>
+        <div style="text-align:right"><div class="n">DEFENDING</div>
+          <div class="r">Normal line</div></div>
         <i style="background:var(--def)"></i>
       </div>
     </div>
@@ -314,14 +314,14 @@
   // Guion de la secuencia: cuándo aparece cada acotación y qué se enseña
   // abajo. En el gráfico real esto lo marcaría el propio dato.
   const GUION = [
-    { t: 0.0, fase: "RECTA",     gap: 0.41, vel: "—" },
-    { t: 2.2, fase: "FRENADA",   gap: 0.22, vel: "312 km/h", mostrar: "m1",
+    { t: 0.0, fase: "STRAIGHT",  gap: 0.41, vel: "—" },
+    { t: 2.2, fase: "BRAKING",   gap: 0.22, vel: "312 km/h", mostrar: "m1",
       extra: () => { $("#zonaFreno").style.opacity = 1;
                      $("#flecha").style.opacity = 1; } },
-    { t: 3.6, fase: "ENTRADA",   gap: 0.09, vel: "218 km/h", mostrar: "m2" },
-    { t: 4.4, fase: "VÉRTICE",   gap: 0.02, vel: "196 km/h", mostrar: "m3" },
-    { t: 6.2, fase: "SALIDA",    gap: 0.35, vel: "241 km/h", mostrar: "m4" },
-    { t: 8.0, fase: "COMPLETO",  gap: 0.68, vel: "288 km/h" },
+    { t: 3.6, fase: "ENTRY",     gap: 0.09, vel: "218 km/h", mostrar: "m2" },
+    { t: 4.4, fase: "APEX",      gap: 0.02, vel: "196 km/h", mostrar: "m3" },
+    { t: 6.2, fase: "EXIT",      gap: 0.35, vel: "241 km/h", mostrar: "m4" },
+    { t: 8.0, fase: "COMPLETE",  gap: 0.68, vel: "288 km/h" },
   ];
 
   // El que ataca sale por detrás y llega antes al vértice: no van al mismo
