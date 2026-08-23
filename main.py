@@ -3219,10 +3219,11 @@ function reproducirLinea(seg, i) {
   return new Promise(res => {
     const a = new Audio('/audio/' + seg + '/' + i);
     audioActual = a;
-    let hecho = false;
+    let hecho = false, vigilante = null;
     const fin = (ok) => {
       if (hecho) return;            // pause() no dispara 'ended': hay que
       hecho = true;                 // asegurar que esto pasa UNA vez
+      if (vigilante) clearInterval(vigilante);
       if (audioActual === a) audioActual = null;
       cortarLinea = null;
       res(ok);
@@ -3232,6 +3233,16 @@ function reproducirLinea(seg, i) {
     cortarLinea = () => { try { a.pause(); } catch (e) {} fin(true); };
     a.onended = () => fin(true);
     a.onerror = () => fin(false);
+    // Vigilante de atasco. Ya nadie corta la frase en curso, así que si un
+    // audio se queda a medias sin dar 'ended' ni 'error' —descarga colgada—
+    // el bucle esperaría a esa frase para siempre y la emisión se quedaba
+    // muda. Si el reloj del audio deja de avanzar seis segundos, se da por
+    // perdida y se sigue. Ocho segundos: una frase entera dura menos.
+    let avance = Date.now();
+    a.ontimeupdate = () => { avance = Date.now(); };
+    vigilante = setInterval(() => {
+      if (!a.paused && Date.now() - avance > 8000) fin(false);
+    }, 1000);
     a.play().catch(e => { bloqueado(e); fin(false); });
   });
 }
@@ -3273,15 +3284,24 @@ setInterval(() => {
 }, 1000);
 async function reproducirSegmento(seg, lineas, idioma) {
   pendiente = { seg, lineas, idioma };  // si ya habla, gana el más nuevo
-  // "Gana el más nuevo" hay que hacerlo cumplir: antes el bucle terminaba
-  // todas las líneas viejas primero, así que el segmento nuevo esperaba
-  // detrás. Se calla lo que suena y el bucle lo recoge al instante.
-  if (reproduciendo) { pararVoz(); return; }
+  // El segmento nuevo tiene prioridad, pero NO sobre la frase que está
+  // sonando. Antes aquí se llamaba a pararVoz() y el que entraba cortaba a
+  // la otra a media palabra: en antena eso no suena a urgencia, suena a
+  // fallo. El bucle de abajo ya sale en cuanto hay algo pendiente, así que
+  // basta con dejar que termine la frase en curso — un par de segundos —
+  // y el relevo se oye como un relevo. Cortar en seco se sigue haciendo,
+  // pero solo desde callar(): OFF AIR sí manda callar ya.
+  if (reproduciendo) return;
   reproduciendo = true;
   while (pendiente) {
     const t = pendiente; pendiente = null;
     for (let i = 0; i < t.lineas.length && !pendiente && !mudo; i++) {
       mostrarLinea(t.lineas, i);  // el subtítulo sigue a la voz
+      // Un respiro al cambiar de voz. Pegadas al milisegundo las dos
+      // pistas suenan a archivo de audio, no a dos personas hablando.
+      if (i && t.lineas[i].quien !== t.lineas[i - 1].quien) {
+        await esperar(220);
+      }
       const ok = await reproducirLinea(t.seg, i);
       if (!ok) {
         // Si la línea no sonó se sigue en SILENCIO, con el subtítulo el
