@@ -1649,7 +1649,10 @@ async def apex():
         "foco": foco_director(t),
         # Los duelos caducan: sin posiciones nuevas en 30 s la sesión ya no
         # está rodando y lo que queda son huecos de clasificación final.
-        "duelos": (t.battle_scores()[:3]
+        # Cinco, no tres: el rótulo grande las va rotando y con tres se
+        # quedaban fuera peleas por debajo del segundo. El panel lateral
+        # sigue enseñando solo las tres primeras, que es lo que le cabe.
+        "duelos": (t.battle_scores()[:5]
                    if t and time.time() - estado.mapa_ts < 30 else []),
         "pit": t.perdida_pit() if t else None,
         "degradacion": _degradacion_pista(t),
@@ -2090,6 +2093,12 @@ async def visor():
      Race Intelligence, sobre el ticker) — así no tapa el mapa del centro */
   body.carrera #standings { display: block; left: auto; right: 22px;
                             bottom: 78px; top: auto; width: 280px; }
+  /* El cuadro de campeonato va FIJO abajo a la derecha, encima de la misma
+     franja donde vive la columna de paneles. Sin reservarle el sitio los
+     dos se pisan (Corner Spotlight quedaba debajo de la tabla y no se leía
+     ninguno de los dos). La reserva la mide el navegador en cada vuelta:
+     la tabla cambia de alto según cuántas filas trae. */
+  body.carrera #right-col { padding-bottom: var(--reserva-standings, 0px); }
   #standings .st-h { font-size: .6rem; letter-spacing: .18em;
                      color: var(--accent); text-transform: uppercase;
                      font-weight: 800; margin-bottom: 8px; }
@@ -2223,6 +2232,9 @@ async def visor():
   .tyre.S { color: var(--down); border-color: var(--down); }
   .tyre.M { color: var(--amber); border-color: var(--amber); }
   .tyre.H { color: var(--txt); border-color: var(--dim); }
+  /* Lluvia: los mismos colores que les pone la F1 en pantalla */
+  .tyre.I { color: #43B02A; border-color: #43B02A; }
+  .tyre.W { color: #3FA9F5; border-color: #3FA9F5; }
   .gap { color: var(--dim); font-size: .72rem; min-width: 3.6em;
          text-align: right; }
   .delta { font-size: .8rem; width: 1.1em; text-align: right;
@@ -2603,16 +2615,34 @@ function pintarRotulo(d) {
   if (!caja) return;
   const duelos = d.duelos || [], deg = d.degradacion || [];
   const cartas = [];
-  if (duelos[0] && duelos[0].score >= 55)
-    cartas.push(['duelo', () => cartaDuelo(duelos[0])]);
+  // CADA pelea es su propia tarjeta, y la clave lleva la pareja dentro.
+  //
+  // Antes entraba solo duelos[0] con la clave fija 'duelo', y de ahí dos
+  // fallos a la vez: las demás peleas cerradas no salían NUNCA por muy
+  // apretadas que estuvieran, y cuando la de arriba cambiaba de pareja la
+  // clave seguía siendo la misma, así que la tarjeta no se volvía a montar
+  // y se quedaba clavada la anterior — ALB vs ALO en pantalla con esa
+  // pelea ya deshecha hacía rato.
+  for (const dl of duelos) {
+    if (dl && dl.score >= 55)
+      cartas.push(['duelo:' + dl.entre, () => cartaDuelo(dl)]);
+  }
   if (deg.length >= 3) cartas.push(['deg', () => cartaDegradacion(deg)]);
   if (d.pit) cartas.push(['pit', () => cartaPit(d.pit, deg)]);
   if (!cartas.length) { caja.classList.remove('on'); rotClave = ''; return; }
 
   const ahora = Date.now();
   if (!rotTs) rotTs = ahora;
-  if (ahora - rotTs > ROT_SEGUNDOS) { rotIdx++; rotTs = ahora; }
-  const [clave, dibujar] = cartas[rotIdx % cartas.length];
+  // La que está puesta se queda hasta cumplir su turno; si desapareció de
+  // la lista (la pelea se deshizo) se pasa a la siguiente en el acto en vez
+  // de seguir enseñando algo que ya no está pasando.
+  let i = cartas.findIndex(c => c[0] === rotClave);
+  if (i < 0) { i = rotIdx % cartas.length; rotTs = ahora; }
+  else if (ahora - rotTs > ROT_SEGUNDOS) {
+    i = (i + 1) % cartas.length; rotTs = ahora;
+  }
+  rotIdx = i;
+  const [clave, dibujar] = cartas[i];
   if (clave !== rotClave) {
     rotClave = clave;
     caja.innerHTML = '';
@@ -2878,36 +2908,51 @@ function pintarMapa(d) {
   }
   const cv = document.getElementById(grande ? 'mapa-grande' : 'mapa');
   const { ctx, w, h } = lienzo(cv);
-  // Encuadre ROBUSTO: un glitch de coordenadas (un coche o punto que salta a
-  // un valor imposible) dispara la escala y colapsa el mapa a una raya. Se
-  // descartan atípicos por rango intercuartílico en cada eje, sobre trazado
-  // Y coches juntos, y con lo que queda se calcula el bounding box real.
-  const bpts = linea.concat(coches.map(c => [c.x, c.y]));
-  const _lim = arr => {
+  // Encuadre. Un glitch de coordenadas (un punto que salta a un valor
+  // imposible) dispara la escala y colapsa el mapa a una raya, así que se
+  // descartan atípicos por rango intercuartílico.
+  //
+  // Lo que se descartaba antes seguía DIBUJÁNDOSE: el encuadre se calculaba
+  // sin esos puntos pero la línea se pintaba con todos, así que la parte
+  // apartada quedaba fuera del lienzo y la pista salía cortada. Ahora se
+  // filtra UNA vez y el encuadre y el dibujo usan exactamente los mismos
+  // puntos.
+  //
+  // Y el encuadre sale SOLO del trazado, no de los coches: el circuito es
+  // fijo y ya contiene por donde se rueda, mientras que un coche con la
+  // posición corrupta —o parado en el pit lane— estiraba el mapa entero y
+  // hacía que saltara de tamaño entre fotogramas.
+  const _fuera = arr => {
     const v = arr.slice().sort((a, b) => a - b), n = v.length;
     const q1 = v[n >> 2], q3 = v[(3 * n) >> 2], iqr = (q3 - q1) || 1;
     return [q1 - 3 * iqr, q3 + 3 * iqr];
   };
-  const [xlo, xhi] = _lim(bpts.map(p => p[0]));
-  const [ylo, yhi] = _lim(bpts.map(p => p[1]));
+  const [xlo, xhi] = _fuera(linea.map(p => p[0]));
+  const [ylo, yhi] = _fuera(linea.map(p => p[1]));
+  let lin = linea.filter(([x, y]) => x >= xlo && x <= xhi
+                                     && y >= ylo && y <= yhi);
+  if (lin.length < 8) lin = linea;         // filtró de más: mejor crudo
   let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-  for (const [x, y] of bpts) {
-    if (x < xlo || x > xhi || y < ylo || y > yhi) continue;  // glitch
+  for (const [x, y] of lin) {
     if (x < minX) minX = x; if (x > maxX) maxX = x;
     if (y < minY) minY = y; if (y > maxY) maxY = y;
-  }
-  if (minX === Infinity) {                 // todo filtrado (raro): usar crudo
-    for (const [x, y] of bpts) {
-      if (x < minX) minX = x; if (x > maxX) maxX = x;
-      if (y < minY) minY = y; if (y > maxY) maxY = y;
-    }
   }
   const pad = grande ? 60 : 20;
   const s = Math.min((w - 2 * pad) / Math.max(1, maxX - minX),
                      (h - 2 * pad) / Math.max(1, maxY - minY));
   // Centrar el trazado en el lienzo
   const offX = (w - (maxX - minX) * s) / 2, offY = (h - (maxY - minY) * s) / 2;
-  const px = x => offX + (x - minX) * s, py = y => h - offY - (y - minY) * s;
+  const _px = x => offX + (x - minX) * s, _py = y => h - offY - (y - minY) * s;
+  const px = _px, py = _py;
+  // Un coche cuya posición cae fuera del circuito NO se dibuja. Antes
+  // estiraba el encuadre y el mapa entero encogía; sujetarlo al borde
+  // tampoco vale, porque entonces se enseña un casco en un sitio donde ese
+  // coche no está. Si no sabemos dónde va, no se pinta y ya.
+  const enCuadro = c => {
+    const p = mapaSuave[c.n] || c;
+    const X = _px(p.x), Y = _py(p.y);
+    return X >= -4 && X <= w + 4 && Y >= -4 && Y <= h + 4;
+  };
   ctx.clearRect(0, 0, w, h);
   {
     // Pista: glow suave, cinta de asfalto y una línea de acento encima.
@@ -2923,7 +2968,9 @@ function pintarMapa(d) {
     // Grosores relativos al lienzo, para que se vean igual a cualquier
     // resolución en vez de engordar cuando el mapa es pequeño.
     const gr = w / 980;
-    const pt = linea.map(([x, y]) => [px(x), py(y)]);
+    // Sin sujetar: la pista se dibuja con los MISMOS puntos que fijaron el
+    // encuadre, así que cae dentro por construcción.
+    const pt = lin.map(([x, y]) => [_px(x), _py(y)]);
     // Separación entre muestras consecutivas
     const sep = [];
     for (let i = 0; i < pt.length - 1; i++)
@@ -2931,9 +2978,18 @@ function pintarMapa(d) {
     // SALTOS: si a un coche le faltan muestras (boxes, corte de señal) dos
     // puntos consecutivos quedan lejísimos y se dibujaría una RECTA cruzando
     // el circuito. Se parte la línea en tramos y esos saltos no se pintan.
-    const ordS = sep.slice().sort((a,b) => a-b);
-    const med = ordS[Math.floor(ordS.length/2)] || 1;
-    const LIM = Math.max(med * 6, 1e-6);
+    // La mediana se saca de las separaciones REALES: si el trazado trae
+    // puntos repetidos (y los trae — muestras de un coche parado, o un
+    // caché sobremuestreado) y son más de la mitad, la mediana salía CERO,
+    // el límite con ella, y entonces TODA separación contaba como salto:
+    // la pista se partía en trozos de un punto y no se dibujaba ni una
+    // línea. Mapa en negro con los coches flotando, que es justo lo que se
+    // veía. Los ceros no dicen nada de la escala, así que no entran.
+    const ordS = sep.filter(v => v > 0).sort((a, b) => a - b);
+    const med = ordS[Math.floor(ordS.length / 2)] || 0;
+    // Y un suelo por si aun así sale minúsculo: nunca por debajo del 1% de
+    // la diagonal del lienzo.
+    const LIM = Math.max(med * 6, Math.hypot(w, h) * 0.01);
     const tramos = [];
     let cur = [pt[0]], curIdx = [];
     for (let i = 1; i < pt.length; i++) {
@@ -2996,7 +3052,8 @@ function pintarMapa(d) {
   // acaba de llegar a la F1 eso no le dice nada, y un casco sí se reconoce.
   const rC = grande ? 15 : 6;
   // El líder primero: elige antes dónde va su chapa y se dibuja encima.
-  const orden = coches.slice().sort((a, b) => (a.p || 99) - (b.p || 99));
+  const orden = coches.filter(enCuadro)
+                      .sort((a, b) => (a.p || 99) - (b.p || 99));
   const punto = c => {
     const p = mapaSuave[c.n] || c;
     return [px(p.x), py(p.y)];
@@ -3021,7 +3078,15 @@ function pintarMapa(d) {
     // esto, en cuanto el pelotón se junta —que es justo lo que la gente
     // quiere mirar— las chapas se pisan y no se lee ninguna. Se dibuja
     // además una guía del casco a la chapa cuando queda lejos.
+    // Un hueco solo vale si además cabe ENTERO en el lienzo. Sin esto las
+    // chapas de los coches del borde se salían por un lado de la pantalla
+    // y se leían a medias o no se leían.
+    const dentro = b => b[0] >= 2 && b[1] >= 2 && b[2] <= w - 2 && b[3] <= h - 2;
     let x = X + rC + 5, y = Y - alto / 2, puesto = false;
+    // Tres anillos y no más. Un rótulo que hay que irse a buscar al otro
+    // lado del mapa, unido por una guía que cruza la pista, se lee peor que
+    // no ponerlo: en un pelotón junto acababan repartidos por todo el
+    // lienzo y tapando el trazado.
     for (const anillo of [0, 1, 2, 3]) {
       const dist = rC + 5 + anillo * (alto + 4);
       for (const g of [0, -28, 28, -58, 58, 90, -90, 128, -128, 180]) {
@@ -3029,12 +3094,20 @@ function pintarMapa(d) {
         const cx0 = X + Math.cos(a) * dist - (Math.cos(a) < -0.2 ? ancho : 0)
                     - (Math.abs(Math.cos(a)) <= 0.2 ? ancho / 2 : 0);
         const cy0 = Y + Math.sin(a) * dist - alto / 2;
-        if (libre([cx0, cy0, cx0 + ancho, cy0 + alto])) {
+        const caja = [cx0, cy0, cx0 + ancho, cy0 + alto];
+        if (dentro(caja) && libre(caja)) {
           x = cx0; y = cy0; puesto = true; break;
         }
       }
       if (puesto) break;
     }
+    // Sin hueco en ningún anillo, el rótulo NO se dibuja: solo el casco.
+    // Apilar chapas hasta taparse unas a otras no informa de nada — se
+    // convierte en una mancha encima de la pista, que es lo que se veía en
+    // cuanto el pelotón se juntaba. Como se recorren por posición, los de
+    // delante cogen sitio primero y el que se queda sin él es un coche de
+    // media tabla, cuyo puesto ya está en la izquierda con su nombre.
+    if (!puesto) continue;
     puestas.push([x, y, x + ancho, y + alto]);
     const cxm = x + ancho / 2, cym = y + alto / 2;
     if (Math.hypot(cxm - X, cym - Y) > rC + ancho * 0.6) {
@@ -3523,8 +3596,14 @@ async function tick() {
       }
       posPrevias[f.acr] = f.pos;
       const color = f.color ? '#' + f.color : 'var(--line)';
-      const tyre = f.neumatico
-        ? '<span class="tyre ' + f.neumatico + '">' + f.neumatico + '</span>'
+      // La chapa del neumático lleva la INICIAL, que es lo que la CSS
+      // dibuja (.tyre.S / .M / .H, caja de 1.3em). Aquí se metía el
+      // compuesto entero: "SOFT" no cabía en la caja, se salía por encima
+      // del tiempo de vuelta —"SOFT1:14.321" de corrido— y además la clase
+      // quedaba .tyre.SOFT, que no existe, así que tampoco tomaba color.
+      const ini = (f.neumatico || '').toUpperCase().slice(0, 1);
+      const tyre = ini
+        ? '<span class="tyre ' + ini + '">' + ini + '</span>'
         : '<span class="tyre"></span>';
       row.innerHTML = '<span class="p">' + f.pos + '</span>' +
         '<span class="chip" style="background:' + color + '"></span>' +
@@ -3558,6 +3637,16 @@ async function tick() {
   }
   pintarMapa(d);
   pintarCurva(d);
+  // Reservar en la columna derecha el sitio que ocupa el cuadro de
+  // campeonato, que va fijo encima de ella. Se mide en vez de fijarlo a
+  // ojo porque su alto depende de cuántas filas tenga.
+  {
+    const sb = document.getElementById('standings');
+    const alto = (sb && getComputedStyle(sb).display !== 'none')
+      ? Math.ceil(sb.getBoundingClientRect().height) + 90 : 0;
+    document.documentElement.style.setProperty(
+      '--reserva-standings', alto + 'px');
+  }
   // Race Intelligence: duelos con puntaje y su porqué (nunca un número
   // sin explicación — regla de oro de métricas honestas)
   const intel = document.getElementById('intel');
@@ -3566,7 +3655,7 @@ async function tick() {
   if (!duelos.length) {
     intel.innerHTML = '<div class="vacio">No close battles right now</div>';
   }
-  duelos.forEach(dl => intel.appendChild(dueloCompacto(dl)));
+  duelos.slice(0, 3).forEach(dl => intel.appendChild(dueloCompacto(dl)));
   // El duelo más caliente sale además en grande sobre el ticker, como el
   // rótulo de una retransmisión. En la columna lateral no cabía: 256 px
   // recortaban los nombres y los tiempos.
@@ -3597,7 +3686,11 @@ async function tick() {
   // incidentes
   const inc = document.getElementById('incidentes');
   inc.innerHTML = '';
-  for (const i of d.incidentes) {
+  // Race Control crecía sin tope. En una carrera con banderas es una lista
+  // de veinte mensajes que empuja la columna hacia abajo hasta meterse por
+  // debajo del cuadro de campeonato, y se solapan los dos. Los seis
+  // últimos son los que importan; lo viejo ya se contó.
+  for (const i of d.incidentes.slice(0, 6)) {
     const el = document.createElement('div'); el.className = 'inc';
     el.innerHTML = '<span class="lapn">L' + i.vuelta + '</span><span>' +
       i.texto + '</span>';
@@ -6237,9 +6330,19 @@ def curvas_del_trazado(puntos, ventana=6, umbral_grados=14):
     Devuelve [{numero, angulo, direccion, velocidad_rel, x, y, indice}]
     numeradas desde meta, o [] si el trazado no da para medirlo.
     """
-    pts = [(float(p["x"]), float(p["y"])) for p in (puntos or [])
-           if isinstance(p, dict) and p.get("x") is not None
-           and p.get("y") is not None]
+    crudo = [(float(p["x"]), float(p["y"])) for p in (puntos or [])
+             if isinstance(p, dict) and p.get("x") is not None
+             and p.get("y") is not None]
+    # Fuera los puntos REPETIDOS. El trazado los trae (un coche parado
+    # manda la misma posición muchas veces, y el caché de una sesión vieja
+    # llega sobremuestreado), y aquí la separación entre muestras ES la
+    # medida de velocidad: un punto repetido vale separación cero, o sea
+    # "parado". Con suficientes repetidos la curva salía al 0% de la punta
+    # — que es lo que se leía en pantalla: "TURN 1 · RIGHT 0%".
+    pts = []
+    for p in crudo:
+        if not pts or math.dist(p, pts[-1]) > 1e-9:
+            pts.append(p)
     n = len(pts)
     if n < 40:
         return []
@@ -9826,6 +9929,13 @@ async def bucle_mapa():
             pos = await t.posiciones_pista()
         except Exception:
             continue
+        # Sin posiciones nuevas los coches se quedaban CLAVADOS en la última
+        # lectura: cascos inmóviles en mitad de la pista mientras la carrera
+        # seguía, que es peor que no enseñar ninguno — el que mira se cree
+        # que eso es donde van. Pasado medio minuto sin datos se retiran.
+        if not pos and estado.mapa and time.time() - estado.mapa_ts > 30:
+            estado.mapa = []
+            log.info("🗺️  Sin posiciones desde hace 30 s — mapa sin coches")
         if pos:
             # Cuándo llegó la última posición. Un duelo solo existe si hay
             # coches rodando: al acabar la sesión los huecos que quedan son
