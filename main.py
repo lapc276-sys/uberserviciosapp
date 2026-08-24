@@ -679,6 +679,13 @@ class Estado:
         # uno y NUESTRO piloto del día. Se arma al acabar, mientras la
         # telemetría vive todavía, y se enseña durante el post-show.
         self.podio: dict | None = None
+        # Rastro reciente de cada coche {numero: [(ts, x, y), ...]}. Sin
+        # guardar esto, un adelantamiento se detecta y se pierde: para
+        # DIBUJARLO hacen falta los segundos de ANTES, y para entonces ya
+        # han pasado. Se guarda poco y se tira solo.
+        self.hist_pos: dict = {}
+        # El último adelantamiento con su dibujo listo para pantalla.
+        self.pase_destacado: dict | None = None
         self.pases_total: int = 0        # incluidos los que no caen en curva
         self.modo_calidad: str = "auto"    # auto | max | ahorro (botón del panel)
         self.off_air_manual: bool = False  # botón OFF AIR: silencio total, sin gasto
@@ -1694,6 +1701,12 @@ async def apex():
         # cargada que ponga nombre al mapa, y un mapa sin nombre no dice nada.
         "circuito_mapa": estado.circuito_mapa,
         "podio": estado.podio,
+        # El adelantamiento solo mientras sea reciente. Un cuadro que se
+        # queda puesto deja de contar lo que pasa y pasa a estorbar.
+        "pase": (estado.pase_destacado
+                 if (estado.pase_destacado
+                     and time.time() - estado.pase_destacado["ts"] < PASE_VIDA)
+                 else None),
         "curvas": estado.curvas,
         # Adelantamientos contados en esta sesión, por número de curva
         "pases": {str(k): v for k, v in estado.pases.items()},
@@ -2460,6 +2473,26 @@ async def visor():
                                 color: var(--dim); }
   .duelo.hero .estr { font-size: .76rem; margin-top: 8px; }
   .duelo.hero .razon { font-size: .7rem; margin-top: 4px; }
+  /* Tarjeta del adelantamiento: el dibujo manda, el texto acompaña */
+  .carta.pase .cab { display: flex; align-items: center; gap: 9px;
+                     margin-bottom: 9px; }
+  .carta.pase .cab .et { font-size: .74rem; font-weight: 800;
+                         letter-spacing: .2em; color: var(--accent); }
+  .carta.pase .cab .pn { font-size: .74rem; font-weight: 700;
+                         letter-spacing: .16em; color: var(--dim); }
+  .carta.pase .cuerpo { display: grid; grid-template-columns: 1fr 210px;
+                        gap: 14px; align-items: center; }
+  .carta.pase .lienzo { width: 100%; height: auto; display: block;
+                        background: rgba(8,10,16,.5); border-radius: 10px; }
+  .carta.pase .fila { display: flex; align-items: center; gap: 8px;
+                      padding: 4px 0; }
+  .carta.pase .fila i { width: 11px; height: 11px; border-radius: 3px;
+                        flex: none; }
+  .carta.pase .fila b { font-size: 1.02rem; font-weight: 800; }
+  .carta.pase .fila span { color: var(--dim); font-size: .72rem;
+                           letter-spacing: .12em; }
+  .carta.pase .nota { color: var(--dim); font-size: .62rem; margin-top: 7px;
+                      line-height: 1.4; }
   /* Los dos coches, con el hueco en medio */
   .vs { display: grid; grid-template-columns: 1fr auto 1fr; gap: 8px;
         align-items: center; }
@@ -2709,6 +2742,10 @@ function pintarRotulo(d) {
   // clave seguía siendo la misma, así que la tarjeta no se volvía a montar
   // y se quedaba clavada la anterior — ALB vs ALO en pantalla con esa
   // pelea ya deshecha hacía rato.
+  // Un adelantamiento recién ocurrido MANDA sobre todo lo demás: es lo
+  // único de esta lista que acaba de pasar. Se pone el primero y se
+  // reinicia el turno para que salga ya, no cuando toque.
+  if (d.pase) cartas.push(['pase:' + d.pase.ts, () => cartaPase(d.pase)]);
   for (const dl of duelos) {
     if (dl && dl.score >= 55)
       cartas.push(['duelo:' + dl.entre, () => cartaDuelo(dl)]);
@@ -2723,7 +2760,12 @@ function pintarRotulo(d) {
   // la lista (la pelea se deshizo) se pasa a la siguiente en el acto en vez
   // de seguir enseñando algo que ya no está pasando.
   let i = cartas.findIndex(c => c[0] === rotClave);
-  if (i < 0) { i = rotIdx % cartas.length; rotTs = ahora; }
+  // Si acaba de entrar un adelantamiento, se salta el turno de lo que
+  // hubiera puesto: un pase que se enseña trece segundos tarde ya no lo
+  // está viendo nadie.
+  const iPase = cartas.findIndex(c => c[0].startsWith('pase:'));
+  if (iPase >= 0 && !rotClave.startsWith('pase:')) { i = iPase; rotTs = ahora; }
+  else if (i < 0) { i = rotIdx % cartas.length; rotTs = ahora; }
   else if (ahora - rotTs > ROT_SEGUNDOS) {
     i = (i + 1) % cartas.length; rotTs = ahora;
   }
@@ -2739,6 +2781,97 @@ function pintarRotulo(d) {
     caja.firstChild._actualizar(d);
   }
   caja.classList.add('on');
+}
+
+// ── Tarjeta: el adelantamiento, dibujado ───────────────────────────────
+// Los dos recorridos REALES de los dos coches en los segundos alrededor
+// del pase, sobre el trozo de circuito donde ocurrió. No es una
+// reconstrucción ni una ilustración: son las posiciones que nos llegaron.
+function cartaPase(p) {
+  const el = document.createElement('div');
+  el.className = 'carta pase';
+  const cq = p.col_quien ? '#' + p.col_quien : '#FF2D16';
+  const ca = p.col_a_quien ? '#' + p.col_a_quien : '#8892A3';
+  const donde = p.curva ? 'INTO TURN ' + p.curva : 'ON THE STRAIGHT';
+  el.innerHTML =
+    '<div class="cab"><span class="et">OVERTAKE</span>'
+    + '<span class="pn">LAP ' + esc(p.vuelta) + ' · ' + esc(donde) + '</span>'
+    + '</div>'
+    + '<div class="cuerpo">'
+    + '<canvas class="lienzo" width="470" height="230"></canvas>'
+    + '<div class="quienes">'
+    + '<div class="fila"><i style="background:' + cq + '"></i>'
+    + '<b>' + esc(p.quien) + '</b><span>passed</span></div>'
+    + '<div class="fila"><i style="background:' + ca + '"></i>'
+    + '<b>' + esc(p.a_quien) + '</b></div>'
+    + '<div class="nota">Both lines are the cars\\' own GPS, '
+    + 'the seconds either side of the pass</div>'
+    + '</div></div>';
+  const cv = el.querySelector('canvas');
+  // El lienzo se dibuja cuando ya está en el documento y tiene medidas.
+  requestAnimationFrame(() => {
+    const { ctx, w, h } = lienzo(cv);
+    ctx.clearRect(0, 0, w, h);
+    // El encuadre lo mandan los COCHES, no el asfalto. Metiendo el trozo
+    // de circuito en el cálculo, el zoom lo fijaba un trozo de pista mucho
+    // más largo que el adelantamiento y el pase quedaba diminuto en una
+    // esquina. El asfalto se dibuja igual y se sale del cuadro, que es
+    // justo lo que hace que se lea como un trozo de circuito.
+    const todo = p.ruta_quien.concat(p.ruta_a_quien);
+    if (todo.length < 3) return;
+    let mnX = Infinity, mxX = -Infinity, mnY = Infinity, mxY = -Infinity;
+    for (const [x, y] of todo) {
+      if (x < mnX) mnX = x; if (x > mxX) mxX = x;
+      if (y < mnY) mnY = y; if (y > mxY) mxY = y;
+    }
+    // Un respiro alrededor para que las líneas no toquen el borde
+    const mgX = Math.max((mxX - mnX) * 0.16, 1), mgY = Math.max((mxY - mnY) * 0.16, 1);
+    mnX -= mgX; mxX += mgX; mnY -= mgY; mxY += mgY;
+    const pad = 18;
+    const s = Math.min((w - 2 * pad) / Math.max(1, mxX - mnX),
+                       (h - 2 * pad) / Math.max(1, mxY - mnY));
+    const ox = (w - (mxX - mnX) * s) / 2, oy = (h - (mxY - mnY) * s) / 2;
+    const X = x => ox + (x - mnX) * s, Y = y => h - oy - (y - mnY) * s;
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    // El asfalto de fondo, si tenemos el trozo de circuito. Se recorta al
+    // lienzo para que lo que sobresale no pinte por encima del marco.
+    if ((p.trozo || []).length > 2) {
+      ctx.save();
+      ctx.beginPath(); ctx.rect(0, 0, w, h); ctx.clip();
+      ctx.beginPath();
+      p.trozo.forEach(([x, y], i) =>
+        i ? ctx.lineTo(X(x), Y(y)) : ctx.moveTo(X(x), Y(y)));
+      ctx.strokeStyle = 'rgba(150,160,180,.18)';
+      ctx.lineWidth = Math.max(26, h * 0.22); ctx.stroke();
+      ctx.restore();
+    }
+    // Y encima cada coche. El que adelanta va más grueso y por delante.
+    // Cada rastro se pinta como una ESTELA: transparente y fina donde el
+    // coche estaba hace unos segundos, sólida y gruesa donde está ahora.
+    // Dos líneas planas no dicen hacia dónde van, y sin eso el cuadro no
+    // se entiende: parecen dos rayas paralelas.
+    const linea = (ruta, color, grosor) => {
+      if (ruta.length < 2) return;
+      for (let i = 1; i < ruta.length; i++) {
+        const f = i / (ruta.length - 1);          // 0 = lo más viejo
+        ctx.globalAlpha = 0.16 + 0.84 * f;
+        ctx.lineWidth = grosor * (0.42 + 0.58 * f);
+        ctx.beginPath();
+        ctx.moveTo(X(ruta[i-1][0]), Y(ruta[i-1][1]));
+        ctx.lineTo(X(ruta[i][0]), Y(ruta[i][1]));
+        ctx.strokeStyle = color; ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+      // Punto gordo donde ACABA: es donde está ahora ese coche.
+      const [ux, uy] = ruta[ruta.length - 1];
+      ctx.beginPath(); ctx.arc(X(ux), Y(uy), grosor * 1.6, 0, 7);
+      ctx.fillStyle = color; ctx.fill();
+      ctx.strokeStyle = 'rgba(8,10,16,.85)'; ctx.lineWidth = 1.5; ctx.stroke();
+    };
+    linea(p.ruta_a_quien, ca, 3);
+    linea(p.ruta_quien, cq, 4.5);
+  });
+  return el;
 }
 
 // ── Tarjeta: degradación medida ────────────────────────────────────────
@@ -10284,6 +10417,7 @@ async def bucle_mapa():
     previo_probado = None        # circuito al que ya le buscamos trazado viejo
     previa_probada = None        # circuito de previa ya intentado
     prox_intento_previa = 0.0
+    pase_pend = None             # pase detectado, esperando su "después"
     pos_previas = None           # foto anterior de la clasificación
     tele_pases = None            # de qué sesión son los pases que llevamos
     while True:
@@ -10425,6 +10559,13 @@ async def bucle_mapa():
                  # quién es un coche importa menos que saber en qué puesto va.
                  "p": t.posiciones.get(n) or 0}
                 for n, p in pos.items()]
+            # Rastro: lo justo para poder dibujar un adelantamiento con sus
+            # segundos previos. Unas 20 muestras (~40 s) por coche.
+            ahora_h = time.time()
+            for n, p in pos.items():
+                h = estado.hist_pos.setdefault(n, [])
+                h.append((ahora_h, p["x"], p["y"]))
+                del h[:-20]
         # ── Adelantamientos por zona (Fase B) ─────────────────────────
         # Cada pase se apunta a la curva donde ocurrió. Con eso, "aquí es
         # difícil adelantar" deja de ser geometría y pasa a ser un hecho
@@ -10460,7 +10601,76 @@ async def bucle_mapa():
                         "a_quien": t._nombre(a_quien),
                         "curva": z, "vuelta": t.vuelta, "ts": time.time()})
                     del estado.pases_recientes[:-8]
+                    # Y se apunta para DIBUJARLO. No ahora: en este
+                    # instante solo existe el rastro de antes del pase, y
+                    # la mitad interesante —los dos coches saliendo de la
+                    # curva ya cambiados de orden— todavía no ha ocurrido.
+                    # Se publica unos segundos después, cuando el rastro
+                    # de después ya está guardado.
+                    if pase_pend is None:
+                        pase_pend = {
+                            "quien": quien, "a_quien": a_quien,
+                            "nom_quien": t.pilotos.get(quien, {}).get(
+                                "acronimo", str(quien)),
+                            "nom_a_quien": t.pilotos.get(a_quien, {}).get(
+                                "acronimo", str(a_quien)),
+                            "col_quien": t.pilotos.get(quien, {}).get(
+                                "color", ""),
+                            "col_a_quien": t.pilotos.get(a_quien, {}).get(
+                                "color", ""),
+                            "curva": z, "vuelta": t.vuelta,
+                            "ts": time.time(), "listo": time.time() + 6}
             pos_previas = actuales
+        # ── Publicar el pase apuntado, ya con su "después" ────────────
+        if pase_pend and time.time() >= pase_pend["listo"]:
+            carta = _carta_pase(pase_pend)
+            if carta:
+                estado.pase_destacado = carta
+                log.info("🎬 Adelantamiento en pantalla: %s a %s%s",
+                         carta["quien"], carta["a_quien"],
+                         f" (curva {carta['curva']})" if carta["curva"]
+                         else "")
+            pase_pend = None
+
+
+#: Cuánto dura en pantalla un adelantamiento antes de dejar sitio a otra
+#: cosa. Un pase deja de ser noticia enseguida.
+PASE_VIDA = 40
+
+
+def _carta_pase(p):
+    """Arma el cuadro de un adelantamiento a partir del rastro guardado.
+
+    Devuelve los dos recorridos y el trozo de circuito donde ocurrió, ya
+    recortado a la zona: dibujar el circuito entero para enseñar un pase
+    que ocupa cincuenta metros no deja ver nada. None si el rastro no da.
+    """
+    ha, hb = (estado.hist_pos.get(p["quien"]) or [],
+              estado.hist_pos.get(p["a_quien"]) or [])
+    # Desde 10 s antes del pase hasta lo último que haya llegado.
+    desde = p["ts"] - 10
+    ra = [(x, y) for ts, x, y in ha if ts >= desde]
+    rb = [(x, y) for ts, x, y in hb if ts >= desde]
+    if len(ra) < 3 or len(rb) < 3:
+        return None
+    # Recorte del circuito a la zona, con margen: solo los puntos del
+    # trazado cercanos a donde pasó todo.
+    xs = [x for x, _ in ra + rb]
+    ys = [y for _, y in ra + rb]
+    cx, cy = (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2
+    radio = max(math.hypot(max(xs) - min(xs), max(ys) - min(ys)), 1.0) * 1.6
+    trozo = [[q["x"], q["y"]] for q in estado.mapa_trazado
+             if math.dist((q["x"], q["y"]), (cx, cy)) <= radio]
+    return {
+        "quien": p["nom_quien"], "a_quien": p["nom_a_quien"],
+        "col_quien": p["col_quien"], "col_a_quien": p["col_a_quien"],
+        "curva": p["curva"], "vuelta": p["vuelta"], "ts": p["ts"],
+        "ruta_quien": [[x, y] for x, y in ra],
+        "ruta_a_quien": [[x, y] for x, y in rb],
+        # El trozo puede salir vacío (sin trazado cargado): la tarjeta se
+        # dibuja igual, solo que sin la cinta de asfalto de fondo.
+        "trozo": trozo,
+    }
 
 
 async def bucle_vod():
@@ -12204,6 +12414,7 @@ async def _correr_sesion(clave):
             # anterior y no valen para esta.
             estado.parrilla, estado.recaps = {}, set()
             estado.podio = None
+            estado.hist_pos, estado.pase_destacado = {}, None
             # Carrera de la parrilla = evento en vivo real → calidad máxima
             estado.carrera_en_vivo = True
             if primera_vez:
@@ -12374,6 +12585,7 @@ async def bucle_programacion():
             # Se acabó la cortesía del post-show: el podio se retira. Si no,
             # se quedaba encima de los documentales que vienen después.
             estado.podio = None
+            estado.hist_pos, estado.pase_destacado = {}, None
             # Fuera de sesión: cerrar cualquier sesión en curso
             if estado.sesion_actual is not None:
                 if tarea_carrera:
@@ -12457,6 +12669,7 @@ async def bucle_telemetria():
             estado.tele = tele
             estado.parrilla, estado.recaps = {}, set()
             estado.podio = None
+            estado.hist_pos, estado.pase_destacado = {}, None
             estado.apertura_pendiente = True
             estado.ultimo_cta = time.time()
             log.info("📺 Al aire: %s", tele.descripcion())
