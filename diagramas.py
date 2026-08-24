@@ -156,6 +156,22 @@ def _bezier(p0, p1, p2, p3, n=60):
     return out
 
 
+def _escala(tam):
+    """La medida de referencia para TODO lo que ocupa alto: tipografías,
+    separaciones verticales, radios.
+
+    Las plantillas nacieron para el vertical de los shorts (1080x1920) y
+    lo medían todo con el ancho, que ahí es el lado corto. En un lienzo
+    apaisado el ancho pasa a ser el lado LARGO, así que esas mismas
+    fracciones pedían mucho más alto del que hay: el dibujo se salía por
+    abajo y los textos se pisaban unos a otros.
+
+    Usando el lado corto, el vertical no cambia ni un píxel —ahí el lado
+    corto ES el ancho— y el apaisado encaja.
+    """
+    return min(tam)
+
+
 def _alto_pie(img, dib, texto):
     """Cuánto ocupa el pie, para que el dibujo sepa dónde termina."""
     if not texto:
@@ -239,6 +255,7 @@ def comparar(salida, titulo, izq, der, pie="", etiqueta="Compared",
     """
     img, dib, y, y_fin = _marco(tam, titulo, etiqueta, pie)
     w, h = img.size
+    esc = _escala(tam)
     m = int(w * 0.075)
     ancho = w - 2 * m
 
@@ -259,29 +276,29 @@ def comparar(salida, titulo, izq, der, pie="", etiqueta="Compared",
     hueco = max(int(h * .10), (y_fin - y - int(h * .03)) // 2)
     for datos, color, frac in ((izq, FRIO, fa), (der, CALIDO, fb)):
         y_bloque = y
-        f_n = _fuente(int(w * 0.034), True)
+        f_n = _fuente(int(esc * 0.034), True)
         _texto(dib, (m, y), str(datos.get("nombre", "")).upper(), f_n,
-               APAGADO, esp=int(w * .004))
-        y += int(w * 0.05)
+               APAGADO, esp=int(esc * .004))
+        y += int(esc * 0.05)
 
-        f_v = _fuente(int(w * 0.095), True)
+        f_v = _fuente(int(esc * 0.095), True)
         ancho_v = _texto(dib, (m, y), str(datos.get("valor", "")), f_v, TINTA)
         if datos.get("unidad"):
-            f_u = _fuente(int(w * 0.038), True)
-            dib.text((m + ancho_v + int(w * .014), y + int(w * .052)),
+            f_u = _fuente(int(esc * 0.038), True)
+            dib.text((m + ancho_v + int(esc * .014), y + int(esc * .052)),
                      str(datos["unidad"]), font=f_u, fill=TENUE)
-        y += int(w * 0.115)
+        y += int(esc * 0.115)
 
-        dib.rectangle([m, y, m + ancho, y + int(w * .022)], fill=PANEL)
-        dib.rectangle([m, y, m + int(ancho * frac), y + int(w * .022)],
+        dib.rectangle([m, y, m + ancho, y + int(esc * .022)], fill=PANEL)
+        dib.rectangle([m, y, m + int(ancho * frac), y + int(esc * .022)],
                       fill=color)
-        y += int(w * 0.045)
+        y += int(esc * 0.045)
 
         if datos.get("nota"):
-            f_no = _fuente(int(w * 0.028), False)
+            f_no = _fuente(int(esc * 0.028), False)
             for ln in _partir(dib, str(datos["nota"]), f_no, ancho)[:2]:
                 dib.text((m, y), ln, font=f_no, fill=TENUE)
-                y += int(w * 0.038)
+                y += int(esc * 0.038)
         y = y_bloque + hueco
 
     _pie(img, dib, pie)
@@ -301,15 +318,18 @@ def tendencia(salida, titulo, puntos, eje_x="", eje_y="", marca=None,
         return None
     img, dib, y, y_fin = _marco(tam, titulo, etiqueta, pie)
     w, h = img.size
+    esc = _escala(tam)
     m = int(w * 0.075)
 
     # La acotación se dibuja ENCIMA de la caja, así que su alto se reserva
     # antes: si no, se sube sobre el título y lo tapa.
-    reserva = int(w * .075) if marca else 0
-    caja_x = m + int(w * .09)
+    reserva = int(esc * .075) if marca else 0
+    caja_x = m + int(esc * .09)
     caja_y = y + reserva
     caja_w = w - caja_x - m
-    caja_h = max(int(h * .16), y_fin - caja_y - int(w * .075))
+    # El alto lo manda el hueco real, no un mínimo: en apaisado ese mínimo
+    # era mayor que el sitio disponible y la caja se salía por abajo.
+    caja_h = max(int(h * .12), y_fin - caja_y - int(esc * .075))
 
     xs = [p[0] for p in puntos]
     ys = [p[1] for p in puntos]
@@ -338,32 +358,32 @@ def tendencia(salida, titulo, puntos, eje_x="", eje_y="", marca=None,
     # Relleno bajo la curva, que da cuerpo sin robar atención
     dib.polygon(pts + [(pts[-1][0], caja_y + caja_h),
                        (pts[0][0], caja_y + caja_h)], fill="#1A1F2B")
-    dib.line(pts, fill=ACENTO, width=max(4, int(w * .006)), joint="curve")
+    dib.line(pts, fill=ACENTO, width=max(4, int(esc * .006)), joint="curve")
 
     if marca and 0 <= marca.get("i", -1) < len(pts):
         mx, my = pts[marca["i"]]
         dib.line([(mx, caja_y), (mx, caja_y + caja_h)], fill=CALIDO, width=2)
-        r = int(w * .014)
+        r = int(esc * .014)
         dib.ellipse([mx - r, my - r, mx + r, my + r], fill=CALIDO)
         if marca.get("texto"):
-            f_m = _fuente(int(w * 0.030), True)
+            f_m = _fuente(int(esc * 0.030), True)
             t = str(marca["texto"])
             tw = dib.textlength(t, font=f_m)
-            bx = min(max(caja_x, mx - tw / 2 - int(w * .02)),
-                     caja_x + caja_w - tw - int(w * .04))
-            by = caja_y - int(w * .062)
-            dib.rectangle([bx, by, bx + tw + int(w * .04),
-                           by + int(w * .052)], fill=PANEL, outline=CALIDO)
-            dib.text((bx + int(w * .02), by + int(w * .011)), t,
+            bx = min(max(caja_x, mx - tw / 2 - int(esc * .02)),
+                     caja_x + caja_w - tw - int(esc * .04))
+            by = caja_y - int(esc * .062)
+            dib.rectangle([bx, by, bx + tw + int(esc * .04),
+                           by + int(esc * .052)], fill=PANEL, outline=CALIDO)
+            dib.text((bx + int(esc * .02), by + int(esc * .011)), t,
                      font=f_m, fill=TINTA)
 
-    f_e = _fuente(int(w * 0.026), True)
+    f_e = _fuente(int(esc * 0.026), True)
     if eje_x:
-        _texto(dib, (caja_x + caja_w / 2, caja_y + caja_h + int(w * .022)),
-               eje_x.upper(), f_e, TENUE, esp=int(w * .004), centro=True)
+        _texto(dib, (caja_x + caja_w / 2, caja_y + caja_h + int(esc * .022)),
+               eje_x.upper(), f_e, TENUE, esp=int(esc * .004), centro=True)
     if eje_y:
         _texto(dib, (m, caja_y + caja_h / 2), eje_y.upper(), f_e, TENUE,
-               esp=int(w * .004))
+               esp=int(esc * .004))
 
     _pie(img, dib, pie)
     return _guardar(img, salida)
@@ -381,16 +401,21 @@ def flujo(salida, titulo, forma, flechas=5, notas=(), pie="",
     """
     img, dib, y, y_fin = _marco(tam, titulo, etiqueta, pie)
     w, h = img.size
+    esc = _escala(tam)
     m = int(w * 0.075)
     ancho = w - 2 * m
 
     notas = list(notas)[:3]
-    alto_notas = (int(w * .052) * len(notas)
-                  + (int(w * .095) if notas else 0))
+    alto_notas = (int(esc * .052) * len(notas)
+                  + (int(esc * .095) if notas else 0))
     # El dibujo tiene proporción propia: dejarlo estirarse a todo el alto
     # de un vertical lo deformaba hasta comerse la cabecera.
+    #
+    # Y el alto NUNCA puede pasar del hueco que queda: antes había un
+    # mínimo fijo que en apaisado era el triple de lo disponible, y el
+    # dibujo salía por debajo del lienzo llevándose los números con él.
     disp = y_fin - y - alto_notas
-    alto = max(int(w * .34), min(int(w * .62), disp))
+    alto = min(disp, max(int(esc * .34), min(int(esc * .62), disp)))
     y = y + max(0, (disp - alto) // 2)       # centrado en el hueco
     suelo = y + alto
 
@@ -410,13 +435,13 @@ def flujo(salida, titulo, forma, flechas=5, notas=(), pie="",
 
     # El coche por encima (relleno) y el asfalto por debajo
     dib.polygon(techo + [(m + ancho, y), (m, y)], fill="#1C222D")
-    dib.line(techo, fill=TINTA, width=max(4, int(w * .0055)), joint="curve")
+    dib.line(techo, fill=TINTA, width=max(4, int(esc * .0055)), joint="curve")
     dib.line([(m, suelo), (m + ancho, suelo)], fill=TENUE,
-             width=max(4, int(w * .006)))
+             width=max(4, int(esc * .006)))
     # Rayado del asfalto, para que se lea como suelo y no como borde
     for i in range(0, ancho, int(w * .045)):
-        dib.line([(m + i, suelo + 2), (m + i + int(w * .022),
-                                       suelo + int(w * .022))],
+        dib.line([(m + i, suelo + 2), (m + i + int(esc * .022),
+                                       suelo + int(esc * .022))],
                  fill="#1A202A", width=3)
 
     # Las corrientes van DENTRO del canal, y donde se estrecha van más
@@ -433,7 +458,7 @@ def flujo(salida, titulo, forma, flechas=5, notas=(), pie="",
         return tuple(int(a + (b - a) * t) for a, b in zip(c1, c2))
 
     k = max(2, min(6, int(flechas or 4)))
-    grosor = max(3, int(w * .0045))
+    grosor = max(3, int(esc * .0045))
     for i in range(k):
         fy = (i + 1) / (k + 1)
         pts = [(m + ancho * (j / n), suelo - canal(j / n) * fy)
@@ -442,7 +467,7 @@ def flujo(salida, titulo, forma, flechas=5, notas=(), pie="",
         for a, b, j in zip(pts, pts[1:], range(0, n + 1, 4)):
             dib.line([a, b], fill=_color(j / n), width=grosor)
         _flecha(dib, pts[-2], pts[-1], _color(1.0), grosor=grosor,
-                punta=int(w * .020))
+                punta=int(esc * .020))
 
     # Marca de la garganta: es el punto del que habla el guion
     fg = 0.45 if forma == "suelo" else 0.5
@@ -451,26 +476,26 @@ def flujo(salida, titulo, forma, flechas=5, notas=(), pie="",
 
     # Marcas numeradas sobre el dibujo, y la lista debajo alineada. Colgar
     # cada texto de su propia x hacía que el de la derecha se saliera.
-    f_i = _fuente(int(w * 0.026), True)
-    f_n = _fuente(int(w * 0.030), True)
-    r = int(w * .020)
+    f_i = _fuente(int(esc * 0.026), True)
+    f_n = _fuente(int(esc * 0.030), True)
+    r = int(esc * .020)
     for i, (frac, _t) in enumerate(notas):
         nx = m + ancho * max(0.0, min(1.0, float(frac)))
-        cy_m = suelo + int(w * .034)
+        cy_m = suelo + int(esc * .034)
         dib.line([(nx, suelo), (nx, cy_m - r)], fill=CALIDO, width=2)
         dib.ellipse([nx - r, cy_m - r, nx + r, cy_m + r], fill=FONDO,
                     outline=CALIDO, width=3)
-        _texto(dib, (nx, cy_m - int(w * .015)), str(i + 1), f_i, CALIDO,
+        _texto(dib, (nx, cy_m - int(esc * .015)), str(i + 1), f_i, CALIDO,
                centro=True)
 
-    yy = suelo + int(w * .085)
+    yy = suelo + int(esc * .085)
     for i, (_f, texto) in enumerate(notas):
-        dib.ellipse([m, yy + int(w * .004), m + int(w * .030),
-                     yy + int(w * .034)], fill=CALIDO)
-        _texto(dib, (m + int(w * .015), yy + int(w * .008)), str(i + 1),
+        dib.ellipse([m, yy + int(esc * .004), m + int(esc * .030),
+                     yy + int(esc * .034)], fill=CALIDO)
+        _texto(dib, (m + int(esc * .015), yy + int(esc * .008)), str(i + 1),
                f_i, FONDO, centro=True)
-        _texto(dib, (m + int(w * .048), yy), str(texto), f_n, TINTA)
-        yy += int(w * .052)
+        _texto(dib, (m + int(esc * .048), yy), str(texto), f_n, TINTA)
+        yy += int(esc * .052)
 
     _pie(img, dib, pie)
     return _guardar(img, salida)
@@ -486,40 +511,41 @@ def fases(salida, titulo, pasos, pie="", etiqueta="Sequence", tam=VERT):
         return None
     img, dib, y, y_fin = _marco(tam, titulo, etiqueta, pie)
     w, h = img.size
+    esc = _escala(tam)
     m = int(w * 0.075)
     pasos = list(pasos)[:5]
 
-    x_carril = m + int(w * .035)
+    x_carril = m + int(esc * .035)
     # Los pasos se reparten el hueco: dos pasos no deben quedar pegados
     # arriba con media pantalla vacía debajo.
-    y0 = y + int(w * .04)
-    alto_paso = max(int(w * .11),
-                    (y_fin - y0 - int(w * .06)) // max(1, len(pasos) - 1)
-                    if len(pasos) > 1 else int(w * .11))
+    y0 = y + int(esc * .04)
+    alto_paso = max(int(esc * .11),
+                    (y_fin - y0 - int(esc * .06)) // max(1, len(pasos) - 1)
+                    if len(pasos) > 1 else int(esc * .11))
     dib.line([(x_carril, y0), (x_carril, y0 + alto_paso * (len(pasos) - 1))],
              fill=LINEA, width=4)
 
-    f_n = _fuente(int(w * 0.040), True)
-    f_d = _fuente(int(w * 0.028), False)
+    f_n = _fuente(int(esc * 0.040), True)
+    f_d = _fuente(int(esc * 0.028), False)
     for i, paso in enumerate(pasos):
         py = y0 + alto_paso * i
-        r = int(w * .022)
+        r = int(esc * .022)
         col = ACENTO if i == 0 else TENUE
         dib.ellipse([x_carril - r, py - r, x_carril + r, py + r],
                     fill=FONDO, outline=col, width=4)
-        f_i = _fuente(int(w * 0.024), True)
-        _texto(dib, (x_carril, py - int(w * .012)), str(i + 1), f_i, col,
+        f_i = _fuente(int(esc * 0.024), True)
+        _texto(dib, (x_carril, py - int(esc * .012)), str(i + 1), f_i, col,
                centro=True)
 
-        tx = x_carril + int(w * .055)
-        dib.text((tx, py - int(w * .026)), str(paso.get("nombre", "")).upper(),
+        tx = x_carril + int(esc * .055)
+        dib.text((tx, py - int(esc * .026)), str(paso.get("nombre", "")).upper(),
                  font=f_n, fill=TINTA)
         if paso.get("detalle"):
-            yy = py + int(w * .026)
+            yy = py + int(esc * .026)
             for ln in _partir(dib, str(paso["detalle"]), f_d,
                               w - tx - m)[:2]:
                 dib.text((tx, yy), ln, font=f_d, fill=APAGADO)
-                yy += int(w * .038)
+                yy += int(esc * .038)
 
     _pie(img, dib, pie)
     return _guardar(img, salida)
