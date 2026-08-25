@@ -51,13 +51,27 @@ _UA = {"User-Agent":
        "(https://github.com/lapc276-sys/uberserviciosapp; automated "
        "motorsport channel) httpx"}
 
-_FUENTES = [
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-    "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
-    "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
-    "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
-    "/Library/Fonts/Arial.ttf",
-]
+# La tipografía del canal delante; DejaVu queda de respaldo. Esta lista la
+# consultan también la miniatura de los videos y los rótulos de ffmpeg.
+try:
+    import fuentes as _fu
+    _FUENTES = _fu.lista(negrita=True) + ["/Library/Fonts/Arial.ttf"]
+except Exception:                        # pragma: no cover
+    _fu = None
+    _FUENTES = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
+        "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+        "/Library/Fonts/Arial.ttf",
+    ]
+
+
+def recargar_fuentes():
+    """Reconstruye la lista tras instalar la tipografía del canal."""
+    global _FUENTES
+    if _fu is not None:
+        _FUENTES = _fu.lista(negrita=True) + ["/Library/Fonts/Arial.ttf"]
 
 # Música de fondo para documentales/programas (estilo Nat Geo/Discovery):
 # instrumental suave, muy bajita, bajo la narración. El track lo aporta el

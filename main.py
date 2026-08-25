@@ -44,6 +44,7 @@ from fastapi.responses import (HTMLResponse, JSONResponse,
 
 import articulos
 import diagramas
+import fuentes
 import portada
 import telegram_bot
 import telemetria
@@ -567,6 +568,16 @@ async def lifespan(app: FastAPI):
     # paga TTS/Claude de nuevo por contenido ya generado
     for d in ("cache", "episodes", "shorts", "vods"):
         os.makedirs(d, exist_ok=True)
+    # Tipografía del canal (Titillium Web / Barlow, licencia OFL). Se baja
+    # una vez y queda en disco; sin red se sigue con la del sistema. Hay
+    # que RECARGAR después: las listas de fuentes se fijan al importar los
+    # módulos, y en ese momento todavía no había nada descargado.
+    with contextlib.suppress(Exception):
+        n = fuentes.asegurar()
+        if n:
+            diagramas.recargar_fuentes()
+            youtube_subir.recargar_fuentes()
+            log.info("🔤 Tipografía del canal activa (%d archivos)", n)
     tareas = [asyncio.create_task(bucle_telemetria()),
               asyncio.create_task(bucle_narracion()),
               asyncio.create_task(bucle_ambiente()),

@@ -37,3 +37,6 @@ estatico/*
 # Diagramas generados para los shorts (se rehacen solos)
 shorts/g_diagrama_*.png
 miniatura*.jpg
+
+# Tipografía descargada en el arranque (OFL, se baja sola)
+tipos/

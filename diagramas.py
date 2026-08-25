@@ -55,19 +55,41 @@ ESQ_TENUE = "#1C7A3C"
 ESQ_FLUJO = "#42E8FF"
 ESQ_MARCA = "#FFB020"
 
-_FUENTES_BOLD = [
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-    "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
-    "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
-    "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
-]
-_FUENTES_NORMAL = [
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-    "/usr/share/fonts/dejavu/DejaVuSans.ttf",
-    "/usr/share/fonts/TTF/DejaVuSans.ttf",
-    "/System/Library/Fonts/Supplemental/Arial.ttf",
-]
+# La tipografía del canal primero, la del sistema como respaldo. Si las
+# propias no llegaron a instalarse, todo se dibuja igual que antes.
+try:
+    import fuentes as _f
+    _FUENTES_BOLD = _f.lista(negrita=True)
+    _FUENTES_NORMAL = _f.lista(negrita=False)
+except Exception:                        # pragma: no cover
+    _f = None
+    _FUENTES_BOLD = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
+        "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+    ]
+    _FUENTES_NORMAL = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/TTF/DejaVuSans.ttf",
+        "/System/Library/Fonts/Supplemental/Arial.ttf",
+    ]
+
+
 _cache_fuente = {}
+
+
+def recargar_fuentes():
+    """Vuelve a mirar qué hay instalado. Se llama tras `fuentes.asegurar()`,
+    porque las listas se fijan al importar y en ese momento aún no se ha
+    descargado nada."""
+    global _FUENTES_BOLD, _FUENTES_NORMAL
+    if _f is None:
+        return
+    _FUENTES_BOLD = _f.lista(negrita=True)
+    _FUENTES_NORMAL = _f.lista(negrita=False)
+    _cache_fuente.clear()
 
 
 def _fuente(tam, negrita=True):
