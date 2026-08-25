@@ -6546,6 +6546,13 @@ async def _titulo_y_gancho(client, contexto, vertical=False):
         return None, None
 
 
+#: Alto reservado abajo para la insignia de duración que YouTube pinta
+#: sobre la miniatura. Medido en una miniatura de 1280x720: la insignia
+#: ocupa la esquina inferior derecha y cualquier texto por debajo de esta
+#: altura queda tapado.
+ALTO_INSIGNIA_YT = 108
+
+
 def _fuente_miniatura(size):
     """Fuente bold al tamaño pedido (o la default si no hay TTF)."""
     from PIL import ImageFont
@@ -6582,12 +6589,29 @@ def _ajustar_texto_miniatura(draw, texto, max_w, max_h, lineas_max=3):
         lineas = _envolver_ancho(draw, texto, fnt, max_w)
         if len(lineas) > lineas_max:
             continue
+        # Que quepa de ANCHO, no solo de alto. `_envolver_ancho` acepta una
+        # palabra más larga que el hueco si la línea está vacía —tiene que
+        # hacerlo, o entraría en bucle— así que devuelve líneas que se
+        # salen, y aquí solo se miraba el número de líneas y el alto. Por
+        # eso "CONTROVERSIAL DECISION" salía a 156 px cortando 331 px
+        # fuera del lienzo: cabía en dos líneas, cabía de alto, y nadie
+        # comprobó lo único que fallaba.
+        if any(draw.textlength(ln, font=fnt) > max_w for ln in lineas):
+            continue
         alto_linea = int(size * 1.16)
         if alto_linea * len(lineas) <= max_h:
             return fnt, lineas
         mejor = (fnt, lineas)
-    return mejor or (_fuente_miniatura(72),
-                     _envolver_ancho(draw, texto, _fuente_miniatura(72), max_w))
+    if mejor:
+        return mejor
+    # Nada encajó: se baja hasta que la palabra más larga quepa de verdad.
+    for size in range(72, 23, -4):
+        fnt = _fuente_miniatura(size)
+        lineas = _envolver_ancho(draw, texto, fnt, max_w)
+        if all(draw.textlength(ln, font=fnt) <= max_w for ln in lineas):
+            return fnt, lineas
+    fnt = _fuente_miniatura(24)
+    return fnt, _envolver_ancho(draw, texto, fnt, max_w)
 
 
 async def _miniatura_video(gancho, fotos, salida, trazado=None):
@@ -6688,7 +6712,12 @@ async def _miniatura_video(gancho, fotos, salida, trazado=None):
         except Exception:
             alto = 150
         total = alto * len(lineas)
-        y0 = H - total - 60              # anclado abajo
+        # YouTube pinta la DURACIÓN encima de la miniatura, abajo a la
+        # derecha. Con 60 px de margen la última línea quedaba justo
+        # debajo y la insignia se comía su final: "SUSPENSION WINS RAC",
+        # "DOWNFORCE MATH BREA", "THIN AIR ADVANTAG". No es que el texto
+        # se cortara — es que YouTube lo tapaba. Se sube por encima.
+        y0 = H - total - ALTO_INSIGNIA_YT
         # Barra roja de acento, con peso real
         d.rectangle([margen, y0 - 42, margen + 120, y0 - 18], fill=(225, 6, 0))
         grosor = max(6, fnt.size // 16)
