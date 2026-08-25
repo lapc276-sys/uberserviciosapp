@@ -227,13 +227,11 @@ SEGMENTOS = [
                            "zone behind the exhaust, Article 2.3.7.",
              "fuente": "ftm"},
         ],
-        "diagrama": dict(
-            plantilla="flujo", titulo="A wing fed by the exhaust",
-            etiqueta="Airflow",
-            pie="Our own schematic of the reported layout",
-            forma="ala", notas=[
-                {"en": 0.3, "texto": "Exhaust gas is aimed over a winglet"},
-                {"en": 0.7, "texto": "Rear load, and cleaner air to the wing"}]),
+        # Este segmento no usa una plantilla paramétrica: usa el esquema
+        # propio de esquemas_2026.py, con geometría escrita a mano desde
+        # la descripción publicada. Es el único modo honesto de enseñar
+        # la disposición de una pieza concreta.
+        "esquema": "ftm",
     },
     {
         "id": "mclaren",

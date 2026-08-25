@@ -40,6 +40,21 @@ FRIO = "#2FC4E0"
 CALIDO = "#FF8000"
 VERDE = "#31D97A"
 
+# ── Modo ESQUEMA ───────────────────────────────────────────────────────
+# Un corte técnico dibujado como si fuera una lectura de instrumentos:
+# rejilla, trazo de neón sobre negro y nada de relleno. Sirve para
+# enseñar la DISPOSICIÓN de unas piezas cuando la única referencia
+# disponible es la descripción escrita de alguien que sí la vio — que es
+# el caso siempre que se habla de una pieza de un equipo concreto. El
+# estilo es deliberadamente el opuesto a una ilustración técnica al uso,
+# para que nadie confunda un esquema nuestro con el dibujo de otro.
+ESQ_FONDO = "#05080A"
+ESQ_REJILLA = "#0E2318"
+ESQ_LINEA = "#39FF6A"
+ESQ_TENUE = "#1C7A3C"
+ESQ_FLUJO = "#42E8FF"
+ESQ_MARCA = "#FFB020"
+
 _FUENTES_BOLD = [
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
     "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
@@ -180,7 +195,10 @@ def _alto_pie(img, dib, texto):
     f = _fuente(int(w * (0.030 if h > w else 0.024)), False)
     n = len(_partir(dib, texto, f, w - 2 * int(w * 0.075))[:3])
     alto = int(w * (0.042 if h > w else 0.034))
-    return int(h * 0.055) + alto * n + int(w * 0.05)
+    # El colchón bajo el pie se medía con el ancho: en apaisado son 64 px
+    # robados al dibujo para nada. Con el lado corto son 36, y en vertical
+    # no cambia (allí el lado corto ES el ancho).
+    return int(h * 0.055) + alto * n + int(_escala((w, h)) * 0.05)
 
 
 def _marco(tam, titulo, etiqueta, pie=""):
@@ -551,11 +569,154 @@ def fases(salida, titulo, pasos, pie="", etiqueta="Sequence", tam=VERT):
     return _guardar(img, salida)
 
 
+def esquema(salida, titulo, piezas, flujo_lineas=(), notas=(), pie="",
+            etiqueta="Schematic", tam=VERT, aspecto=3.0):
+    """Un corte técnico en trazo de neón sobre rejilla.
+
+    `piezas` = [{"puntos": [[x, y], ...], "nombre": str, "clave": bool}]
+    con x e y en 0..1 sobre el área de dibujo. `clave=True` la resalta.
+    `flujo_lineas` = [[[x, y], ...], ...] recorridos de aire.
+    `notas` = [(x, y, texto)] llamadas numeradas sobre el dibujo.
+    `aspecto` = ancho/alto que tiene el dibujo POR SÍ MISMO. Un corte
+    lateral de un coche mide como tres de ancho por uno de alto; sin
+    declararlo, las coordenadas 0..1 se estiran a la caja que toque y en
+    vertical el coche sale deformado en un bulto.
+
+    Por qué existe: para hablar de la pieza de un equipo hace falta
+    enseñar cómo está dispuesta, y la única fuente legítima es la
+    DESCRIPCIÓN publicada, no la lámina de quien la dibujó. Esto dibuja
+    desde esa descripción, con geometría propia y en un estilo que no se
+    parece a ninguna ilustración técnica del ramo.
+    """
+    if not piezas:
+        return None
+    from PIL import Image, ImageDraw, ImageFilter
+    w, h = tam
+    esc = _escala(tam)
+    img = Image.new("RGB", (w, h), ESQ_FONDO)
+    dib = ImageDraw.Draw(img)
+
+    # Rejilla de fondo: es lo que lo hace leerse como una pantalla.
+    paso = max(24, int(esc * .045))
+    for x in range(0, w, paso):
+        dib.line([(x, 0), (x, h)], fill=ESQ_REJILLA, width=1)
+    for y in range(0, h, paso):
+        dib.line([(0, y), (w, y)], fill=ESQ_REJILLA, width=1)
+
+    m = int(w * 0.075)
+    y = int(h * (0.075 if h > w else 0.07))
+    if etiqueta:
+        f_et = _fuente(int(esc * (0.026 if h > w else 0.020)), True)
+        dib.rectangle([m, y + int(esc * .012), m + int(esc * .038),
+                       y + int(esc * .017)], fill=ESQ_LINEA)
+        _texto(dib, (m + int(esc * .055), y), etiqueta.upper(), f_et,
+               ESQ_LINEA, esp=int(esc * .006))
+        y += int(esc * (0.052 if h > w else 0.042))
+    if titulo:
+        f_tit = _fuente(int(esc * (0.062 if h > w else 0.048)), True)
+        for ln in _partir(dib, titulo, f_tit, w - 2 * m)[:3]:
+            dib.text((m, y), ln, font=f_tit, fill="#DFFFE9")
+            y += int(esc * (0.072 if h > w else 0.056))
+        y += int(esc * 0.03)
+
+    alto_notas = int(esc * .052) * len(notas) + (int(esc * .05) if notas else 0)
+    y_fin = h - _alto_pie(img, dib, pie) - alto_notas
+    hueco = (m, y, w - m, max(y + int(esc * .2), y_fin))
+    hw, hh = hueco[2] - hueco[0], hueco[3] - hueco[1]
+    # El dibujo conserva SU proporción dentro del hueco, centrado: se
+    # queda con el ancho o con el alto, el que se agote antes.
+    asp = max(0.2, float(aspecto or 3.0))
+    if hw / hh > asp:
+        ch = hh
+        cw = hh * asp
+    else:
+        cw = hw
+        ch = hw / asp
+    cx0 = hueco[0] + (hw - cw) / 2
+    cy0 = hueco[1] + (hh - ch) / 2
+    caja = (cx0, cy0, cx0 + cw, cy0 + ch)
+    X = lambda fx: caja[0] + cw * max(0.0, min(1.0, float(fx)))
+    Y = lambda fy: caja[1] + ch * max(0.0, min(1.0, float(fy)))
+
+    # El resplandor va en su propia capa: dibujar y desenfocar sobre la
+    # imagen final emborronaría también la rejilla y el título.
+    halo = Image.new("RGB", (w, h), "#000000")
+    dhalo = ImageDraw.Draw(halo)
+    for pz in piezas:
+        pts = [(X(a), Y(b)) for a, b in pz.get("puntos", [])]
+        if len(pts) < 2:
+            continue
+        col = ESQ_LINEA if pz.get("clave") else ESQ_TENUE
+        dhalo.line(pts, fill=col, width=max(5, int(esc * .010)),
+                   joint="curve")
+    for ruta in flujo_lineas:
+        pts = [(X(a), Y(b)) for a, b in ruta]
+        if len(pts) >= 2:
+            dhalo.line(pts, fill=ESQ_FLUJO, width=max(4, int(esc * .007)),
+                       joint="curve")
+    halo = halo.filter(ImageFilter.GaussianBlur(max(4, int(esc * .012))))
+    # Se SUMA, no se mezcla: mezclando, el resplandor apagaría la rejilla
+    # allí donde pasa por encima, y lo que se quiere es que la ilumine.
+    from PIL import ImageChops
+    img = ImageChops.add(img, halo)
+    dib = ImageDraw.Draw(img)
+
+    # Y encima el trazo limpio
+    for pz in piezas:
+        pts = [(X(a), Y(b)) for a, b in pz.get("puntos", [])]
+        if len(pts) < 2:
+            continue
+        col = ESQ_LINEA if pz.get("clave") else ESQ_TENUE
+        dib.line(pts, fill=col, width=max(2, int(esc * .004)), joint="curve")
+    for ruta in flujo_lineas:
+        pts = [(X(a), Y(b)) for a, b in ruta]
+        if len(pts) < 2:
+            continue
+        dib.line(pts, fill=ESQ_FLUJO, width=max(2, int(esc * .003)),
+                 joint="curve")
+        _flecha(dib, pts[-2], pts[-1], ESQ_FLUJO,
+                grosor=max(2, int(esc * .003)), punta=int(esc * .018))
+
+    # Llamadas numeradas sobre el dibujo
+    f_i = _fuente(int(esc * 0.026), True)
+    r = int(esc * .020)
+    for i, nota in enumerate(notas):
+        nx, ny = X(nota[0]), Y(nota[1])
+        dib.ellipse([nx - r, ny - r, nx + r, ny + r], fill=ESQ_FONDO,
+                    outline=ESQ_MARCA, width=3)
+        _texto(dib, (nx, ny - int(esc * .015)), str(i + 1), f_i, ESQ_MARCA,
+               centro=True)
+
+    # Y la lista debajo
+    f_n = _fuente(int(esc * 0.030), True)
+    yy = hueco[3] + int(esc * .03)
+    for i, nota in enumerate(notas):
+        dib.ellipse([m, yy + int(esc * .004), m + int(esc * .030),
+                     yy + int(esc * .034)], fill=ESQ_MARCA)
+        _texto(dib, (m + int(esc * .015), yy + int(esc * .008)), str(i + 1),
+               f_i, ESQ_FONDO, centro=True)
+        _texto(dib, (m + int(esc * .048), yy), str(nota[2]), f_n, "#CFF7DC")
+        yy += int(esc * .052)
+
+    if pie:
+        f_p = _fuente(int(esc * (0.030 if h > w else 0.024)), False)
+        lineas = _partir(dib, pie, f_p, w - 2 * m)[:3]
+        alto = int(esc * (0.042 if h > w else 0.034))
+        yp = h - int(h * 0.055) - alto * len(lineas)
+        dib.line([(m, yp - int(esc * .035)), (w - m, yp - int(esc * .035))],
+                 fill=ESQ_TENUE, width=2)
+        for ln in lineas:
+            dib.text((m, yp), ln, font=f_p, fill=ESQ_TENUE)
+            yp += alto
+    return _guardar(img, salida)
+
+
 PLANTILLAS = {
     "comparar": comparar,
     "tendencia": tendencia,
     "flujo": flujo,
     "fases": fases,
+    "esquema": esquema,
 }
 
 
