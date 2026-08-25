@@ -43,6 +43,8 @@ FUENTES = {
     "w17_motorsport": "https://www.motorsport.com/f1/news/mercedes-surprise-unique-2026-f1-front-wing-design-revealed/10793256/",
     "aero_activa": "https://www.formula1.com/en/latest/article/the-beginners-guide-to-the-2026-regulations.6j0tS0hrHG2T01tpmK6XYz",
     "modos": "https://f1chronicle.com/2026-f1-aerodynamics-explained/",
+    "ftm": "https://www.motorsport.com/f1/news/fia-bans-ferrari-style-exhaust-wings-f1-2027/10833603/",
+    "ftm_crash": "https://www.crash.net/f1/news/1099521/1/ferrari-pioneered-innovation-banned-f1-2027-after-fia-clampdown",
 }
 
 SEGMENTOS = [
@@ -188,8 +190,54 @@ SEGMENTOS = [
             der_nota="Centre of pressure moves rearward"),
     },
     {
+        "id": "ftm",
+        "desde": 153, "hasta": 216,
+        "titulo": "Ferrari's exhaust wing",
+        "narracion": (
+            "And then Ferrari found something nobody else had. The rules "
+            "allow an aerodynamic device within sixty millimetres of the "
+            "rear axle. So Ferrari moved the differential as far back as it "
+            "would go, used the space beneath the deformable crash "
+            "structure, and put a small winglet above the tailpipe — fed by "
+            "the exhaust gases themselves. It makes rear load, it lengthens "
+            "the diffuser in effect, and it cleans up the air going through "
+            "the bottom of the rear wing. It is reckoned to be worth at "
+            "least half a second a lap, even after the seven to thirteen "
+            "horsepower it costs to partly block the exhaust. Which is the "
+            "clearest lesson in this whole sport. The gain was not in the "
+            "wing. It was in reading the rulebook and moving a gearbox. And "
+            "from twenty twenty-seven it is banned: a new exclusion zone "
+            "behind the exhaust, written specifically to kill it."),
+        "hechos": [
+            {"afirmacion": "Ferrari exploited a loophole allowing aero "
+                           "devices within 60mm of the rear axle, moving the "
+                           "differential rearward and using space beneath "
+                           "the deformable crash structure for a winglet "
+                           "above the tailpipe fed by exhaust gases.",
+             "fuente": "ftm"},
+            {"afirmacion": "It generates rear downforce, extends the "
+                           "diffuser's effective length and cleans airflow "
+                           "through the lower rear wing.",
+             "fuente": "ftm"},
+            {"afirmacion": "Estimated worth at least half a second per lap, "
+                           "against 7-13 hp lost to partly blocking the "
+                           "exhaust exit.",
+             "fuente": "ftm_crash"},
+            {"afirmacion": "The FIA banned it for 2027 with a new exclusion "
+                           "zone behind the exhaust, Article 2.3.7.",
+             "fuente": "ftm"},
+        ],
+        "diagrama": dict(
+            plantilla="flujo", titulo="A wing fed by the exhaust",
+            etiqueta="Airflow",
+            pie="Our own schematic of the reported layout",
+            forma="ala", notas=[
+                {"en": 0.3, "texto": "Exhaust gas is aimed over a winglet"},
+                {"en": 0.7, "texto": "Rear load, and cleaner air to the wing"}]),
+    },
+    {
         "id": "mclaren",
-        "desde": 153, "hasta": 195,
+        "desde": 216, "hasta": 258,
         "titulo": "McLaren: usable load",
         "narracion": (
             "McLaren did not need a mechanical revolution to be competitive. "
@@ -217,7 +265,7 @@ SEGMENTOS = [
     },
     {
         "id": "suelo",
-        "desde": 195, "hasta": 244,
+        "desde": 258, "hasta": 307,
         "titulo": "The real monster is the floor",
         "narracion": (
             "But the front wing is only the beginning. The real load factory "
@@ -242,7 +290,7 @@ SEGMENTOS = [
     },
     {
         "id": "validacion",
-        "desde": 244, "hasta": 276,
+        "desde": 307, "hasta": 339,
         "titulo": "How the tenths are found",
         "narracion": (
             "Then the part the viewer never sees. An idea starts as "
@@ -271,7 +319,7 @@ SEGMENTOS = [
     },
     {
         "id": "cierre",
-        "desde": 276, "hasta": 303,
+        "desde": 339, "hasta": 366,
         "titulo": "The war is in the air",
         "narracion": (
             "Three cars obeying the same laws. The same air. The same "
