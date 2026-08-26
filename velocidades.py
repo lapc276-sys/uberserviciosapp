@@ -183,6 +183,83 @@ async def muestras(session_key="latest", por="equipo"):
     return meta, series
 
 
+def series_en_vivo(tele, por="equipo", minimo=MINIMO_MUESTRAS):
+    """Las mismas series, pero de la sesión que se está emitiendo AHORA.
+
+    No pide nada a la API: la lectura de la trampa viene en las filas de
+    /laps que el motor de telemetría ya está procesando, así que durante
+    la carrera el reparto se va llenando solo, vuelta a vuelta.
+    """
+    if tele is None or not getattr(tele, "velocidades", None):
+        return []
+    grupos = {}
+    for num, vals in tele.velocidades.items():
+        p = (tele.pilotos or {}).get(num, {})
+        if por == "equipo":
+            clave = _nombre_corto(p.get("equipo") or "")
+        else:
+            clave = p.get("acronimo") or str(num)
+        if not clave:
+            continue
+        g = grupos.setdefault(clave, {"valores": [], "coches": set(),
+                                      "color": "#" + (p.get("color") or "")})
+        g["valores"].extend(vals)
+        g["coches"].add(num)
+    series = []
+    for nombre, g in grupos.items():
+        if len(g["valores"]) < minimo:
+            continue
+        series.append({
+            "nombre": nombre,
+            "valores": g["valores"],
+            "color": g["color"] if diagramas._rgb(g["color"]) else None,
+            "nota": f"{len(g['valores'])} laps" + (
+                f" · {len(g['coches'])} cars" if por == "equipo" else ""),
+        })
+    return series
+
+
+def siluetas(series, puntos=44):
+    """Pasa las series a curvas ya calculadas, listas para la pantalla.
+
+    La cuenta se hace UNA vez aquí y no en el navegador: así el gráfico
+    del directo y el PNG que se publica salen exactamente del mismo
+    cálculo, y la pantalla solo tiene que unir puntos.
+    """
+    limpias = [s for s in series if len(s.get("valores") or []) >= 5]
+    if not limpias:
+        return []
+    ordenadas = []
+    for s in limpias:
+        v = sorted(float(x) for x in s["valores"])
+        ordenadas.append((s, v))
+    anchos = sorted(
+        0.9 * max((diagramas._percentil(v, .75)
+                   - diagramas._percentil(v, .25)) / 1.349, 1e-6)
+        * len(v) ** -0.2 for _, v in ordenadas)
+    banda = anchos[len(anchos) // 2]
+    fuera = []
+    for s, v in ordenadas:
+        lo, hi = v[0], v[-1]
+        if hi - lo <= 0:
+            continue
+        rejilla = [lo + (hi - lo) * k / puntos for k in range(puntos + 1)]
+        dens = diagramas._densidad(v, rejilla, banda)
+        fuera.append({
+            "nombre": s["nombre"],
+            "color": s.get("color") or "#FF2D16",
+            "x": [round(x, 1) for x in rejilla],
+            "d": [round(d, 3) for d in dens],
+            "min": round(lo, 1), "max": round(hi, 1),
+            "q1": round(diagramas._percentil(v, .25), 1),
+            "mediana": round(diagramas._percentil(v, .5), 1),
+            "q3": round(diagramas._percentil(v, .75), 1),
+            "n": len(v), "coches": s.get("nota", ""),
+        })
+    fuera.sort(key=lambda f: f["mediana"], reverse=True)
+    return fuera
+
+
 async def grafico(salida, session_key="latest", por="equipo",
                   tam=diagramas.HORIZ, titulo=None, meta_series=None):
     """Dibuja el reparto y devuelve (ruta, meta, series) — o (None, ...).

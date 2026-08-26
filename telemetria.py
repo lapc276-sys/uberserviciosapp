@@ -435,6 +435,7 @@ class Telemetria:
         self._stints = []         # stints ordenados por vuelta de inicio
         self._vueltas = {}        # numero -> [{"n", "dur", "out"}] cronológico
         self._pit_laps = {}       # numero -> {vueltas en las que entró a boxes}
+        self.velocidades = {}     # numero -> [km/h de la trampa, por vuelta]
         self._pits = []           # [{"numero", "vuelta"}] paradas ya ocurridas
         # timeline: lista de (fecha, tipo, dato) ordenada por fecha
         self._timeline = []
@@ -691,6 +692,20 @@ class Telemetria:
                             "vueltas": n - (s.get("lap_start") or n) + 1,
                             "desde": s.get("lap_start") or n,
                         }
+            # La lectura de la trampa de velocidad viene en la MISMA fila de
+            # /laps que ya estamos procesando: guardarla no cuesta ni una
+            # petición más, y es lo único que hace falta para el reparto de
+            # velocidades punta. Las vueltas de salida de boxes no cuentan
+            # (el coche va lanzándose, no es su punta real).
+            if dato.get("st_speed") is not None and not dato.get(
+                    "is_pit_out_lap"):
+                try:
+                    kmh = float(dato["st_speed"])
+                except (TypeError, ValueError):
+                    kmh = 0.0
+                if 120.0 <= kmh <= 400.0:
+                    self.velocidades.setdefault(
+                        dato["driver_number"], []).append(kmh)
             if dato.get("lap_duration"):
                 self._vueltas.setdefault(dato["driver_number"], []).append({
                     "n": n, "dur": dato["lap_duration"],

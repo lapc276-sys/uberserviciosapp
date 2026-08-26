@@ -696,6 +696,12 @@ class Estado:
         # DIBUJARLO hacen falta los segundos de ANTES, y para entonces ya
         # han pasado. Se guarda poco y se tira solo.
         self.hist_pos: dict = {}
+        # Reparto de velocidad punta por equipo, ya calculado para la
+        # pantalla. Se recalcula cada VELOCIDADES_CADA segundos y no en
+        # cada consulta: la pantalla pregunta una vez por segundo y las
+        # siluetas cuestan lo mismo aunque no haya llegado ni una vuelta.
+        self.velocidades: list = []
+        self.velocidades_ts: float = 0.0
         # El último adelantamiento con su dibujo listo para pantalla.
         self.pase_destacado: dict | None = None
         self.pases_total: int = 0        # incluidos los que no caen en curva
@@ -1714,11 +1720,35 @@ async def noticias():
     })
 
 
+#: Cada cuánto se recalcula el reparto de velocidades para la pantalla.
+#: Una vuelta tarda más de un minuto, así que refrescarlo más a menudo
+#: sería gastar por gusto.
+VELOCIDADES_CADA = 25.0
+
+
+def _velocidades_pantalla(t):
+    """Las siluetas del reparto, recalculadas de vez en cuando."""
+    ahora = time.time()
+    if t is None:
+        estado.velocidades = []
+        return []
+    if ahora - estado.velocidades_ts >= VELOCIDADES_CADA or (
+            not estado.velocidades):
+        estado.velocidades_ts = ahora
+        with contextlib.suppress(Exception):
+            estado.velocidades = velocidades.siluetas(
+                velocidades.series_en_vivo(t))
+    return estado.velocidades
+
+
 @app.get("/apex")
 async def apex():
     """Datos en vivo para la pantalla de transmisión Project Apex."""
     t = estado.tele
     return JSONResponse({
+        # Reparto de velocidad punta por equipo: se va llenando con la
+        # lectura de la trampa de cada vuelta, sin pedir nada extra.
+        "velocidades": _velocidades_pantalla(t),
         "en_vivo": t is not None,
         "gp": (t.sesion.get("country_name", "") if t else ""),
         "circuito": (t.sesion.get("circuit_short_name", "") if t else ""),
@@ -2362,6 +2392,9 @@ async def visor():
   #credito { position: fixed; right: 12px; bottom: 10px; z-index: 2;
              font-size: .62rem; color: var(--dim); opacity: .7;
              letter-spacing: .04em; display: none; }
+  /* Reparto de velocidad punta */
+  #velocidad { width: 100%; height: auto; display: block; }
+  #vel-n { color: var(--dim); letter-spacing: .06em; font-weight: 600; }
   /* Leaderboard */
   #mapa { width: 100%; height: auto; display: block; }
   #board .row { display: flex; align-items: center; gap: 7px;
@@ -2667,6 +2700,10 @@ async def visor():
   <div id="right-col">
     <section class="panel" id="panel-mapa" style="display:none"><h3>Track Map</h3><canvas id="mapa" width="300" height="200"></canvas></section>
     <section class="panel" id="panel-incidentes"><h3>Race Control</h3><div id="incidentes"></div></section>
+    <section class="panel" id="panel-velocidad" style="display:none">
+      <h3>Top Speed Spread <span id="vel-n"></span></h3>
+      <canvas id="velocidad" width="300" height="130"></canvas>
+    </section>
     <section class="panel"><h3>Race Intelligence</h3><div id="intel"></div><div id="pitloss"></div></section>
     <section class="panel" id="panel-curva" style="display:none"><h3>Corner Spotlight</h3><div id="curva"></div></section>
   </div>
@@ -3140,6 +3177,127 @@ function lienzo(cv) {
   const ctx = cv.getContext('2d');
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   return { ctx, w, h };
+}
+
+// ── Reparto de velocidad punta ─────────────────────────────────────────
+// La tabla de máximas premia una vuelta con rebufo y no dice nada más.
+// Esto enseña DÓNDE VIVE cada coche: ancho donde repite esa velocidad,
+// estrecho donde casi no aparece. Un equipo con dos jorobas es un equipo
+// con un coche cazando rebufos y el otro no.
+//
+// Las siluetas vienen ya calculadas del servidor —el mismo cálculo que
+// sale en el PNG que se publica— así que aquí solo se unen puntos y la
+// pantalla no puede contradecir al gráfico del canal.
+// Cinco equipos a la vez y no los diez: caben diez, pero con una letra
+// que en un televisor no se lee — y eso ya lo hemos pagado antes. Van
+// rotando de cinco en cinco, como las cartas de duelo.
+let velPag = 0;
+setInterval(() => { velPag++; }, 15000);
+const VEL_POR_PAGINA = 5;
+
+function pintarVelocidad(d) {
+  const panel = document.getElementById('panel-velocidad');
+  if (!panel) return;
+  const todas = d.velocidades || [];
+  // Con menos de tres equipos no hay reparto que comparar: son las
+  // primeras vueltas y lo poco que hay engaña más que informa.
+  if (!d.en_vivo || todas.length < 3) { panel.style.display = 'none'; return; }
+  panel.style.display = '';
+  const paginas = Math.ceil(todas.length / VEL_POR_PAGINA);
+  const pag = velPag % paginas;
+  const desde = pag * VEL_POR_PAGINA;
+  const filas = todas.slice(desde, desde + VEL_POR_PAGINA);
+  if (!filas.length) { panel.style.display = 'none'; return; }
+  const total = todas.reduce((s, f) => s + (f.n || 0), 0);
+  document.getElementById('vel-n').textContent =
+    '· ' + (desde + 1) + '-' + (desde + filas.length) + ' OF ' + todas.length;
+  const cv = document.getElementById('velocidad');
+  const { ctx, w, h } = lienzo(cv);
+  ctx.clearRect(0, 0, w, h);
+
+  // La columna del nombre se mide, no se fija a ojo: con un ancho fijo
+  // los equipos largos salían como "RED BUL".
+  // Y si el nombre más largo no cabe, baja la letra en vez de cortarlo:
+  // "RACING BULL" no es ningún equipo.
+  const tope = Math.round(w * 0.36);
+  let tNom = 11, anchoNombre = 0;
+  const medirNombres = () => {
+    ctx.font = '700 ' + tNom + 'px system-ui, sans-serif';
+    // Se mide con TODOS los equipos, no solo con los de esta página: si
+    // no, la letra y el ancho de la columna cambiarían en cada rotación.
+    anchoNombre = Math.max(...todas.map(
+      f => ctx.measureText((f.nombre || '').toUpperCase()).width));
+  };
+  medirNombres();
+  while (tNom > 8 && anchoNombre + 6 > tope) { tNom--; medirNombres(); }
+  const izq = Math.min(Math.ceil(anchoNombre) + 6, tope);
+  const der = Math.round(w * 0.13);
+  const arriba = 4, abajo = 16;
+  // El eje NO se reencuadra por página: si cada cinco equipos tuviera su
+  // propia escala, dos siluetas iguales dirían velocidades distintas.
+  const x0v = Math.min(...todas.map(f => f.min));
+  const x1v = Math.max(...todas.map(f => f.max));
+  const margen = (x1v - x0v) * 0.05 || 1;
+  const lo = x0v - margen, hi = x1v + margen;
+  const cx = izq, cw = w - izq - der, ch = h - arriba - abajo;
+  const px = v => cx + (v - lo) / (hi - lo) * cw;
+
+  ctx.font = '600 9px system-ui, sans-serif';
+  ctx.textBaseline = 'top';
+  for (let i = 0; i <= 3; i++) {
+    const v = lo + (hi - lo) * i / 3, gx = px(v);
+    ctx.strokeStyle = '#232936'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(gx, arriba); ctx.lineTo(gx, arriba + ch);
+    ctx.stroke();
+    ctx.fillStyle = '#9AA3B2'; ctx.textAlign = 'center';
+    ctx.fillText(Math.round(v), gx, arriba + ch + 3);
+  }
+  // La firma va en el hueco de debajo de los nombres, que si no queda
+  // vacío. En un panel de la columna no sobra ni una línea de alto.
+  ctx.font = '600 7px system-ui, sans-serif';
+  ctx.textAlign = 'left'; ctx.fillStyle = '#5A6473';
+  // Solo cabe lo que quepa: la firma NUNCA se mete debajo de las cifras
+  // del eje, que son las que hay que poder leer.
+  const firmas = ['KM/H · ' + total + ' LAPS · OUR CHART',
+                  'KM/H · OUR CHART', 'KM/H'];
+  const firma = firmas.find(t => ctx.measureText(t).width <= izq - 5);
+  if (firma) ctx.fillText(firma, 0, arriba + ch + 4);
+
+  const fila = ch / VEL_POR_PAGINA;
+  const medio = Math.min(fila * 0.44, 11);
+  filas.forEach((f, i) => {
+    const cyF = arriba + fila * (i + 0.5);
+    ctx.beginPath();
+    f.x.forEach((x, k) => {
+      const y = cyF - f.d[k] * medio;
+      k ? ctx.lineTo(px(x), y) : ctx.moveTo(px(x), y);
+    });
+    for (let k = f.x.length - 1; k >= 0; k--)
+      ctx.lineTo(px(f.x[k]), cyF + f.d[k] * medio);
+    ctx.closePath();
+    ctx.fillStyle = f.color; ctx.globalAlpha = 0.32; ctx.fill();
+    ctx.globalAlpha = 1; ctx.strokeStyle = f.color; ctx.lineWidth = 1;
+    ctx.stroke();
+    // Barra del 25-75% y marca de la mediana
+    ctx.strokeStyle = f.color; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(px(f.q1), cyF); ctx.lineTo(px(f.q3), cyF);
+    ctx.stroke();
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(px(f.mediana), cyF - medio * 0.8);
+    ctx.lineTo(px(f.mediana), cyF + medio * 0.8);
+    ctx.stroke();
+
+    ctx.font = '700 ' + tNom + 'px system-ui, sans-serif';
+    ctx.textAlign = 'left'; ctx.fillStyle = '#fff'; ctx.textBaseline = 'middle';
+    let nom = (f.nombre || '').toUpperCase();
+    while (nom.length > 3 && ctx.measureText(nom).width > izq - 4)
+      nom = nom.slice(0, -1);
+    ctx.fillText(nom, 0, cyF);
+    ctx.textAlign = 'right'; ctx.fillStyle = f.color;
+    ctx.fillText(Math.round(f.mediana), w, cyF);
+    ctx.textBaseline = 'top';
+  });
 }
 
 // ── El circuito que viene, en la pantalla de espera ────────────────────
@@ -4059,6 +4217,7 @@ async function tick() {
   }
   pintarMapa(d);
   pintarCurva(d);
+  pintarVelocidad(d);
   pintarPodio(d);
   pintarPistaEspera(d);
   // Reservar en la columna derecha el sitio que ocupa el cuadro de
