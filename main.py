@@ -48,6 +48,7 @@ import fuentes
 import portada
 import telegram_bot
 import telemetria
+import velocidades
 import youtube_subir
 import redes_sociales
 import capitulos
@@ -1126,6 +1127,51 @@ async def control_rethumbnail(limite: int = 50):
     return JSONResponse({
         "ok": True, "encontrados": len(videos),
         "estado": "Regenerando miniaturas en segundo plano — mira los logs."})
+
+
+@app.post("/control/velocidades")
+async def control_velocidades(year: int = 0, gp: str = "", tipo: str = "Race",
+                              por: str = "equipo"):
+    """Dibuja el REPARTO de velocidades punta de una sesión: una silueta por
+    equipo con todas las lecturas de la trampa de velocidad.
+
+    Sin parámetros usa la sesión en curso ('latest'). Con year y gp busca esa
+    carrera. Deja el PNG apaisado y el vertical en estatico/, así que se ven
+    en /estatico/velocidades.png y /estatico/velocidades_vertical.png.
+    """
+    if por not in ("equipo", "piloto"):
+        return JSONResponse({"ok": False, "error": "por = equipo | piloto"},
+                            status_code=400)
+    with contextlib.suppress(Exception):
+        os.makedirs("estatico", exist_ok=True)
+    base = os.path.join("estatico", "velocidades")
+    try:
+        if year:
+            ruta, meta, series = await velocidades.grafico_carrera(
+                f"{base}.png", year, gp, tipo, por=por)
+        else:
+            ruta, meta, series = await velocidades.grafico(
+                f"{base}.png", por=por)
+    except Exception as e:
+        log.warning("Reparto de velocidades: %s", e)
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+    if not ruta:
+        return JSONResponse(
+            {"ok": False, "error": "Sin lecturas suficientes para esa sesión "
+             "(¿ya empezó? ¿el año y el GP son correctos?)"}, status_code=404)
+    # El vertical sale de los MISMOS datos: pedirlos otra vez sería una
+    # segunda descarga de la sesión entera para dibujar lo mismo.
+    vert, _, _ = await velocidades.grafico(
+        f"{base}_vertical.png", por=por, tam=diagramas.VERT,
+        meta_series=(meta, series))
+    log.info("📊 Reparto de velocidades dibujado (%d grupos)", len(series))
+    return JSONResponse({
+        "ok": True, "meta": meta, "grupos": len(series),
+        "apaisado": "/estatico/velocidades.png",
+        "vertical": "/estatico/velocidades_vertical.png" if vert else None,
+        "medianas": {s["nombre"]: round(
+            sorted(s["valores"])[len(s["valores"]) // 2], 1) for s in series},
+    })
 
 
 @app.post("/control/calidad/{modo}")

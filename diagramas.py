@@ -165,6 +165,15 @@ def _partir(dib, texto, fnt, ancho_max):
     return lineas
 
 
+def _recortar(dib, texto, fnt, ancho_max, esp=0):
+    """Corta un texto con puntos suspensivos hasta que quepa."""
+    if _ancho(dib, texto, fnt, esp) <= ancho_max:
+        return texto
+    while texto and _ancho(dib, texto + "…", fnt, esp) > ancho_max:
+        texto = texto[:-1]
+    return texto + "…" if texto else ""
+
+
 def _flecha(dib, a, b, color, grosor=6, punta=22):
     """Una flecha de a → b."""
     (x1, y1), (x2, y2) = a, b
@@ -424,6 +433,256 @@ def tendencia(salida, titulo, puntos, eje_x="", eje_y="", marca=None,
     if eje_y:
         _texto(dib, (m, caja_y + caja_h / 2), eje_y.upper(), f_e, TENUE,
                esp=int(esc * .004))
+
+    _pie(img, dib, pie)
+    return _guardar(img, salida)
+
+
+def _rgb(color):
+    """'#RRGGBB' → (r, g, b), o None si no es un color legible."""
+    c = str(color or "").strip().lstrip("#")
+    if len(c) == 3:
+        c = "".join(x * 2 for x in c)
+    if len(c) != 6:
+        return None
+    try:
+        return tuple(int(c[i:i + 2], 16) for i in (0, 2, 4))
+    except ValueError:
+        return None
+
+
+def _mezclar(color, fondo, t):
+    """`color` puesto sobre `fondo` con opacidad `t`.
+
+    Pillow dibuja polígonos sin alfa, así que la transparencia se calcula
+    a mano: es la única forma de que un relleno no tape la rejilla.
+    """
+    a = _rgb(color) or (242, 244, 248)
+    b = _rgb(fondo) or (10, 12, 17)
+    return tuple(int(round(b[i] + (a[i] - b[i]) * t)) for i in range(3))
+
+
+def _percentil(ordenados, p):
+    """Percentil por interpolación lineal sobre una lista YA ordenada."""
+    if not ordenados:
+        return 0.0
+    if len(ordenados) == 1:
+        return float(ordenados[0])
+    i = (len(ordenados) - 1) * p
+    lo = int(math.floor(i))
+    hi = min(lo + 1, len(ordenados) - 1)
+    return ordenados[lo] + (ordenados[hi] - ordenados[lo]) * (i - lo)
+
+
+def _densidad(valores, rejilla, ancho_banda):
+    """Densidad gaussiana de `valores` sobre `rejilla`, con el máximo en 1.
+
+    Un histograma con veinte muestras por equipo sale a escalones y el
+    ojo lee los escalones como si fueran datos. El núcleo gaussiano da la
+    misma información sin inventarse bordes.
+    """
+    if ancho_banda <= 0:
+        ancho_banda = 1e-6
+    fuera = []
+    for x in rejilla:
+        s = 0.0
+        for v in valores:
+            u = (x - v) / ancho_banda
+            if u * u < 50:               # más allá aporta ~0 y cuesta igual
+                s += math.exp(-0.5 * u * u)
+        fuera.append(s)
+    tope = max(fuera) or 1.0
+    return [v / tope for v in fuera]
+
+
+def reparto(salida, titulo, series, eje_x="", unidad="", pie="",
+            etiqueta="Measured", tam=HORIZ, decimales=0):
+    """El REPARTO de una medida, una silueta por grupo.
+
+    `series` = [{"nombre": "McLaren", "valores": [312.4, ...],
+                 "color": "#FF8000", "nota": "58 laps"}]
+
+    Una tabla de máximas dice quién marcó el pico una vez; esto dice
+    dónde vive cada coche vuelta tras vuelta, que es lo que separa un
+    coche rápido de uno que tuvo un rebufo. Cada fila es la densidad de
+    sus muestras: ancha donde se repiten, estrecha donde casi no aparecen.
+
+    Se ordena por mediana de mayor a menor, porque el orden ES parte de
+    la lectura. La marca clara es la mediana y la barra fina el rango
+    entre el 25% y el 75%.
+
+    Devuelve None si no hay al menos un grupo con muestras suficientes:
+    una silueta dibujada con cuatro números es un adorno, no un dato.
+
+    A diferencia de las demás, esta plantilla NO se le ofrece al
+    guionista (`_diagrama_kwargs` no la acepta): las otras admiten que un
+    modelo rellene sus huecos porque son ilustraciones de una idea, pero
+    aquí cada silueta afirma una medición. Los valores tienen que venir
+    de la telemetría, nunca de un texto generado.
+    """
+    limpias = []
+    for s in (series or []):
+        vals = []
+        for v in (s.get("valores") or []):
+            try:
+                f = float(v)
+            except (TypeError, ValueError):
+                continue
+            if f == f and abs(f) != float("inf"):
+                vals.append(f)
+        if len(vals) >= 5:
+            vals.sort()
+            limpias.append({
+                "nombre": str(s.get("nombre", "")),
+                "valores": vals,
+                "color": s.get("color") or ACENTO,
+                "nota": s.get("nota") or "",
+                "mediana": _percentil(vals, 0.5),
+            })
+    if not limpias:
+        return None
+    limpias.sort(key=lambda s: s["mediana"], reverse=True)
+    # Más de doce filas no caben legibles. Se quedan las doce de arriba,
+    # y el pie lo DICE: un gráfico recortado en silencio hace creer que
+    # los que faltan no existen.
+    if len(limpias) > 12:
+        pie = (pie + " · " if pie else "") + \
+            f"Top 12 of {len(limpias)} shown"
+        limpias = limpias[:12]
+
+    img, dib, y, y_fin = _marco(tam, titulo, etiqueta, pie)
+    w, h = img.size
+    esc = _escala(tam)
+    m = int(w * 0.075)
+
+    # El alto de fila manda sobre el tamaño de letra: con diez equipos en
+    # apaisado hay 40 px por fila, y una tipografía pensada para el
+    # vertical se come la fila de al lado.
+    alto_eje = int(esc * (0.075 if eje_x else 0.045))
+    hueco = y_fin - y - alto_eje - int(esc * .045)
+    fila = hueco / max(1, len(limpias))
+    con_nota = fila >= esc * .085 and any(s["nota"] for s in limpias)
+
+    t_n = int(min(esc * 0.030, fila * (0.42 if con_nota else 0.62)))
+    f_n = _fuente(max(11, t_n), True)
+    # Y si el nombre más largo no cabe en su columna, la letra baja hasta
+    # que quepa: un "RED BULL RA…" es peor que dos puntos de tipografía.
+    tope_nombre = w * 0.28
+    while t_n > 12 and max(_ancho(dib, s["nombre"].upper(), f_n,
+                                  int(esc * .003))
+                           for s in limpias) > tope_nombre:
+        t_n -= 1
+        f_n = _fuente(t_n, True)
+    f_no = _fuente(max(9, int(t_n * 0.72)), False)
+    f_v = _fuente(max(11, t_n), True)
+    f_e = _fuente(int(esc * 0.023), True)
+
+    fmt = "{:." + str(max(0, int(decimales))) + "f}"
+    ancho_nombre = max(
+        max(_ancho(dib, s["nombre"].upper(), f_n, int(esc * .003))
+            for s in limpias),
+        max((dib.textlength(s["nota"], font=f_no) for s in limpias
+             if s["nota"]), default=0) if con_nota else 0,
+    )
+    # +2 de redondeo: sin ellos el nombre más largo —que es justo el que
+    # fija el ancho— se recortaba por un píxel.
+    gut_izq = int(math.ceil(min(ancho_nombre, w * 0.28))) + int(esc * .03) + 2
+    gut_der = int(max(dib.textlength(fmt.format(s["mediana"]), font=f_v)
+                      for s in limpias)) + int(esc * .03)
+
+    caja_x = m + gut_izq
+    caja_w = w - caja_x - m - gut_der
+    caja_y = y
+    caja_h = hueco
+    if caja_w < esc * .2 or caja_h < esc * .12:
+        return None
+
+    todos = [v for s in limpias for v in s["valores"]]
+    x0, x1 = min(todos), max(todos)
+    margen = (x1 - x0) * 0.06 or 1.0
+    x0 -= margen
+    x1 += margen
+    rx = (x1 - x0) or 1.0
+
+    def px(v):
+        return caja_x + (v - x0) / rx * caja_w
+
+    # Rejilla vertical y sus cifras
+    pasos = 5
+    for i in range(pasos + 1):
+        v = x0 + rx * i / pasos
+        gx = px(v)
+        dib.line([(gx, caja_y), (gx, caja_y + caja_h)],
+                 fill=LINEA if i else TENUE, width=1)
+        _texto(dib, (gx, caja_y + caja_h + int(esc * .012)),
+               fmt.format(v), f_e, TENUE, centro=True)
+    dib.line([(caja_x, caja_y + caja_h), (caja_x + caja_w, caja_y + caja_h)],
+             fill=TENUE, width=2)
+
+    medio = min(fila * 0.44, esc * 0.075)
+    # Una banda común para todas: con una por equipo, el que menos varía
+    # saldría igual de ancho que el que más y la comparación se perdería.
+    # Se toma la mediana de los anchos de Silverman —no el mayor— porque
+    # con el mayor un solo grupo irregular emborrona a todos los demás.
+    anchos = sorted(
+        0.9 * max((_percentil(s["valores"], .75)
+                   - _percentil(s["valores"], .25)) / 1.349, 1e-6)
+        * len(s["valores"]) ** -0.2 for s in limpias)
+    banda = max(anchos[len(anchos) // 2], rx * 0.006)
+
+    for i, s in enumerate(limpias):
+        cy = caja_y + fila * (i + 0.5)
+        # La silueta empieza en la muestra más lenta y acaba en la más
+        # rápida. La cola de la gaussiana se prolonga más allá de lo que
+        # nadie marcó, y dibujarla sería enseñar velocidades que no
+        # existieron.
+        vmin, vmax = s["valores"][0], s["valores"][-1]
+        if vmax - vmin < rx * 1e-4:
+            continue
+        n_r = 120
+        rejilla = [vmin + (vmax - vmin) * k / n_r for k in range(n_r + 1)]
+        dens = _densidad(s["valores"], rejilla, banda)
+        arriba, abajo = [], []
+        for x, d in zip(rejilla, dens):
+            arriba.append((px(x), cy - d * medio))
+            abajo.append((px(x), cy + d * medio))
+        if len(arriba) < 3:
+            continue
+        dib.polygon(arriba + abajo[::-1],
+                    fill=_mezclar(s["color"], FONDO, 0.32),
+                    outline=s["color"])
+
+        q1, q3 = _percentil(s["valores"], .25), _percentil(s["valores"], .75)
+        gr = max(2, int(esc * .005))
+        dib.line([(px(q1), cy), (px(q3), cy)],
+                 fill=_mezclar(s["color"], FONDO, 0.75), width=gr)
+        # La marca de la mediana crece con la silueta: una raya de alto
+        # fijo asoma por arriba y por abajo justo en los repartos anchos,
+        # que son los que hay que mirar.
+        k = min(range(len(rejilla)),
+                key=lambda j: abs(rejilla[j] - s["mediana"]))
+        alto_m = medio * max(0.55, dens[k]) * 1.06
+        mx = px(s["mediana"])
+        dib.line([(mx, cy - alto_m), (mx, cy + alto_m)],
+                 fill=TINTA, width=max(2, int(esc * .004)))
+
+        ancho_txt = gut_izq - int(esc * .03)
+        ty = cy - (t_n * 1.05 if con_nota and s["nota"] else t_n * 0.62)
+        _texto(dib, (m, ty),
+               _recortar(dib, s["nombre"].upper(), f_n, ancho_txt,
+                         int(esc * .003)),
+               f_n, TINTA, esp=int(esc * .003))
+        if con_nota and s["nota"]:
+            dib.text((m, ty + t_n * 1.22),
+                     _recortar(dib, s["nota"], f_no, ancho_txt), font=f_no,
+                     fill=TENUE)
+        _texto(dib, (w - m, cy - t_n * 0.62), fmt.format(s["mediana"]),
+               f_v, s["color"], derecha=True)
+
+    if eje_x:
+        etiq = eje_x.upper() + (f" ({unidad})" if unidad else "")
+        _texto(dib, (caja_x + caja_w / 2, caja_y + caja_h + int(esc * .048)),
+               etiq, f_e, APAGADO, esp=int(esc * .004), centro=True)
 
     _pie(img, dib, pie)
     return _guardar(img, salida)
@@ -736,6 +995,7 @@ def esquema(salida, titulo, piezas, flujo_lineas=(), notas=(), pie="",
 PLANTILLAS = {
     "comparar": comparar,
     "tendencia": tendencia,
+    "reparto": reparto,
     "flujo": flujo,
     "fases": fases,
     "esquema": esquema,
