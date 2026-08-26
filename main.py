@@ -2634,6 +2634,28 @@ async def visor():
                        font-size: .6rem; }
   .carta.pase .par em { font-style: normal; color: var(--dim);
                         font-size: .6rem; letter-spacing: .08em; }
+  /* Versión pequeña: vive bajo el leaderboard, en una columna de 230 px.
+     Ahí no caben dos columnas, así que todo va apilado y la letra baja.
+     Tiene su propio sitio a propósito: así el adelantamiento ya no compite
+     por el rótulo del centro con los duelos, y los dos pueden estar en
+     pantalla a la vez. */
+  #pasebox { margin-top: 12px; }
+  #pasebox:empty { display: none; }
+  .carta.pase.chica { border-top: 1px solid var(--line); padding-top: 11px; }
+  .carta.pase.chica .cab { flex-wrap: wrap; gap: 3px 8px; margin-bottom: 8px; }
+  .carta.pase.chica .cab .et,
+  .carta.pase.chica .cab .pn { font-size: .6rem; letter-spacing: .14em; }
+  .carta.pase.chica .cuerpo { display: block; }
+  .carta.pase.chica .quienes { margin-top: 7px; }
+  .carta.pase.chica .fila { padding: 2px 0; gap: 6px; }
+  .carta.pase.chica .fila i { width: 9px; height: 9px; }
+  .carta.pase.chica .fila b { font-size: .84rem; }
+  .carta.pase.chica .fila span { font-size: .58rem; letter-spacing: .1em; }
+  .carta.pase.chica .nota { display: none; }
+  .carta.pase.chica .frenada { margin-top: 9px; padding-top: 8px; }
+  .carta.pase.chica .cifras { gap: 3px 10px; margin-top: 6px; }
+  .carta.pase.chica .par b { font-size: .78rem; }
+  .carta.pase.chica .par i { font-size: .54rem; letter-spacing: .12em; }
   /* Los dos coches, con el hueco en medio */
   .vs { display: grid; grid-template-columns: 1fr auto 1fr; gap: 8px;
         align-items: center; }
@@ -2740,7 +2762,8 @@ async def visor():
 </div>
 <audio id="musica" loop></audio>
 <main>
-  <section class="panel" id="panel-board"><h3 id="board-title">Leaderboard</h3><div id="board"></div></section>
+  <section class="panel" id="panel-board"><h3 id="board-title">Leaderboard</h3><div id="board"></div>
+    <div id="pasebox"></div></section>
   <section id="centro">
     <div id="framebox"><img id="frame" alt=""></div>
     <div id="mapabox">
@@ -2887,10 +2910,10 @@ function pintarRotulo(d) {
   // clave seguía siendo la misma, así que la tarjeta no se volvía a montar
   // y se quedaba clavada la anterior — ALB vs ALO en pantalla con esa
   // pelea ya deshecha hacía rato.
-  // Un adelantamiento recién ocurrido MANDA sobre todo lo demás: es lo
-  // único de esta lista que acaba de pasar. Se pone el primero y se
-  // reinicia el turno para que salga ya, no cuando toque.
-  if (d.pase) cartas.push(['pase:' + d.pase.ts, () => cartaPase(d.pase)]);
+  // El adelantamiento YA NO entra aquí: tiene su propio sitio bajo el
+  // leaderboard (pintarPase). Antes se colaba el primero en esta
+  // rotación y echaba al duelo que estuviera puesto; ahora los dos caben
+  // en pantalla a la vez, cada uno en su columna.
   for (const dl of duelos) {
     if (dl && dl.score >= 55)
       cartas.push(['duelo:' + dl.entre, () => cartaDuelo(dl)]);
@@ -2905,12 +2928,7 @@ function pintarRotulo(d) {
   // la lista (la pelea se deshizo) se pasa a la siguiente en el acto en vez
   // de seguir enseñando algo que ya no está pasando.
   let i = cartas.findIndex(c => c[0] === rotClave);
-  // Si acaba de entrar un adelantamiento, se salta el turno de lo que
-  // hubiera puesto: un pase que se enseña trece segundos tarde ya no lo
-  // está viendo nadie.
-  const iPase = cartas.findIndex(c => c[0].startsWith('pase:'));
-  if (iPase >= 0 && !rotClave.startsWith('pase:')) { i = iPase; rotTs = ahora; }
-  else if (i < 0) { i = rotIdx % cartas.length; rotTs = ahora; }
+  if (i < 0) { i = rotIdx % cartas.length; rotTs = ahora; }
   else if (ahora - rotTs > ROT_SEGUNDOS) {
     i = (i + 1) % cartas.length; rotTs = ahora;
   }
@@ -2928,13 +2946,33 @@ function pintarRotulo(d) {
   caja.classList.add('on');
 }
 
+// ── El adelantamiento, en su hueco bajo el leaderboard ─────────────────
+// La misma tarjeta, pequeña y apilada. Se monta una sola vez por pase:
+// volver a montarla en cada vuelta del reloj borraría el lienzo y el
+// dibujo parpadearía cada dos segundos.
+let paseClave = '';
+function pintarPase(d) {
+  const caja = document.getElementById('pasebox');
+  if (!caja) return;
+  const p = d.pase;
+  if (!p) {
+    if (paseClave) { caja.innerHTML = ''; paseClave = ''; }
+    return;
+  }
+  const clave = 'pase:' + p.ts;
+  if (clave === paseClave) return;
+  paseClave = clave;
+  caja.innerHTML = '';
+  caja.appendChild(cartaPase(p, true));
+}
+
 // ── Tarjeta: el adelantamiento, dibujado ───────────────────────────────
 // Los dos recorridos REALES de los dos coches en los segundos alrededor
 // del pase, sobre el trozo de circuito donde ocurrió. No es una
 // reconstrucción ni una ilustración: son las posiciones que nos llegaron.
-function cartaPase(p) {
+function cartaPase(p, chica) {
   const el = document.createElement('div');
-  el.className = 'carta pase';
+  el.className = 'carta pase' + (chica ? ' chica' : '');
   const cq = p.col_quien ? '#' + p.col_quien : '#FF2D16';
   const ca = p.col_a_quien ? '#' + p.col_a_quien : '#8892A3';
   const donde = p.curva ? 'INTO TURN ' + p.curva : 'ON THE STRAIGHT';
@@ -2964,7 +3002,10 @@ function cartaPase(p) {
     + '<span class="pn">LAP ' + esc(p.vuelta) + ' · ' + esc(donde) + '</span>'
     + '</div>'
     + '<div class="cuerpo">'
-    + '<canvas class="lienzo" width="470" height="230"></canvas>'
+    // En pequeño el mapa se hace más cuadrado: en una columna estrecha,
+    // un lienzo apaisado deja el pase reducido a una raya.
+    + (chica ? '<canvas class="lienzo" width="400" height="250"></canvas>'
+             : '<canvas class="lienzo" width="470" height="230"></canvas>')
     + '<div class="quienes">'
     + '<div class="fila"><i style="background:' + cq + '"></i>'
     + '<b>' + esc(p.quien) + '</b><span>passed</span></div>'
@@ -2974,7 +3015,8 @@ function cartaPase(p) {
     + 'the seconds either side of the pass</div>'
     + '</div>'
     + (tel ? '<div class="frenada">'
-        + '<canvas class="vel" width="700" height="104"></canvas>'
+        + (chica ? '<canvas class="vel" width="400" height="130"></canvas>'
+                 : '<canvas class="vel" width="700" height="104"></canvas>')
         + '<div class="cifras">' + cifras + '</div></div>' : '')
     + '</div>';
   const cv = el.querySelector('canvas');
@@ -2997,7 +3039,11 @@ function cartaPase(p) {
     // Un respiro alrededor para que las líneas no toquen el borde
     const mgX = Math.max((mxX - mnX) * 0.16, 1), mgY = Math.max((mxY - mnY) * 0.16, 1);
     mnX -= mgX; mxX += mgX; mnY -= mgY; mxY += mgY;
-    const pad = 18;
+    // Todo lo que ocupa —margen, ancho del asfalto, grosor de las
+    // estelas— se mide contra el lienzo. Con medidas fijas, la tarjeta
+    // pequeña salía con una cinta de asfalto que se comía el cuadro.
+    const k = Math.max(0.5, Math.min(1, w / 470));
+    const pad = Math.round(18 * k);
     const s = Math.min((w - 2 * pad) / Math.max(1, mxX - mnX),
                        (h - 2 * pad) / Math.max(1, mxY - mnY));
     const ox = (w - (mxX - mnX) * s) / 2, oy = (h - (mxY - mnY) * s) / 2;
@@ -3012,7 +3058,7 @@ function cartaPase(p) {
       p.trozo.forEach(([x, y], i) =>
         i ? ctx.lineTo(X(x), Y(y)) : ctx.moveTo(X(x), Y(y)));
       ctx.strokeStyle = 'rgba(150,160,180,.18)';
-      ctx.lineWidth = Math.max(26, h * 0.22); ctx.stroke();
+      ctx.lineWidth = Math.max(12, Math.min(w, h) * 0.20); ctx.stroke();
       ctx.restore();
     }
     // Y encima cada coche. El que adelanta va más grueso y por delante.
@@ -3038,8 +3084,8 @@ function cartaPase(p) {
       ctx.fillStyle = color; ctx.fill();
       ctx.strokeStyle = 'rgba(8,10,16,.85)'; ctx.lineWidth = 1.5; ctx.stroke();
     };
-    linea(p.ruta_a_quien, ca, 3);
-    linea(p.ruta_quien, cq, 4.5);
+    linea(p.ruta_a_quien, ca, Math.max(2, 3 * k));
+    linea(p.ruta_quien, cq, Math.max(3, 4.5 * k));
   });
   // ── La frenada: velocidad de los dos coches en esos segundos ────────
   // Lo que el mapa no puede enseñar. El tramo en el que el coche va
@@ -3061,7 +3107,14 @@ function cartaPase(p) {
     // cifras de los extremos: una escala recortada sin sus números sí
     // engañaría.
     const lo = Math.max(0, v0 - (v1 - v0) * 0.18), hi = v1 + (v1 - v0) * 0.08;
-    const pad = 42, base = h - 15;
+    // El hueco de la izquierda es para las dos cifras del eje, así que se
+    // mide con ellas y no con un número fijo: en la tarjeta pequeña, 42
+    // píxeles serían una quinta parte del ancho.
+    ctx.font = '600 9px system-ui, sans-serif';
+    const pad = Math.ceil(Math.max(ctx.measureText(Math.round(v1) + '').width,
+                                   ctx.measureText(Math.round(v0) + '').width))
+      + 10;
+    const base = h - 15;
     const X = t => pad + (t - t0) / Math.max(0.1, t1 - t0) * (w - pad - 12);
     const Y = v => base - (v - lo) / Math.max(1, hi - lo) * (base - 8);
     // El instante en el que cambió el orden
@@ -3095,10 +3148,15 @@ function cartaPase(p) {
     ctx.font = '600 9px system-ui, sans-serif';
     ctx.fillStyle = '#5A6473'; ctx.textBaseline = 'top';
     ctx.textAlign = 'left';
-    ctx.fillText('THICK = ON THE BRAKES', pad, base + 3);
-    ctx.textAlign = 'right';
-    ctx.fillText('KM/H · ' + Math.round(t1 - t0) + 's OF TELEMETRY',
-                 w - 12, base + 3);
+    // En estrecho las dos leyendas se pisarían: se queda la que explica
+    // el dibujo y se va la que solo dice cuánto dura la ventana.
+    ctx.fillText(w < 340 ? 'THICK = BRAKING' : 'THICK = ON THE BRAKES',
+                 pad, base + 3);
+    if (w >= 340) {
+      ctx.textAlign = 'right';
+      ctx.fillText('KM/H · ' + Math.round(t1 - t0) + 's OF TELEMETRY',
+                   w - 12, base + 3);
+    }
   });
   return el;
 }
@@ -4378,6 +4436,7 @@ async function tick() {
   // rótulo de una retransmisión. En la columna lateral no cabía: 256 px
   // recortaban los nombres y los tiempos.
   pintarRotulo(d);
+  pintarPase(d);
   // Coste de parada medido de las paradas reales de ESTA carrera
   const pitloss = document.getElementById('pitloss');
   if (d.pit) {
