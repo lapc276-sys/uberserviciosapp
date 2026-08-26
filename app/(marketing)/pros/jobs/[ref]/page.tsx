@@ -6,6 +6,8 @@ import { MapPin, Clock, Home, Bath, ArrowLeft } from 'lucide-react';
 import { buildMetadata } from '@/lib/seo';
 import { PRO_SESSION_COOKIE, verifyProSession } from '@/lib/pro-auth';
 import { getBookingByRef, pendingOfferProIds } from '@/lib/data';
+import { formatDuration } from '@/lib/vision/estimate';
+import { MINUTES_PER_PRO } from '@/lib/vision/model';
 import { formatCurrency } from '@/lib/utils';
 import { JobOfferActions } from '@/components/pros/JobOfferActions';
 
@@ -35,6 +37,13 @@ export default async function JobOfferPage({ params }: { params: Promise<{ ref: 
   if (!isMine && !hasOffer && !claimedByOther) notFound();
 
   const payout = booking.quoteLow ? Math.round(booking.quoteLow * 0.75) : null;
+  const hourlyRate =
+    payout !== null && booking.estimatedMinutes && booking.estimatedMinutes > 0
+      ? Math.round(payout / (booking.estimatedMinutes / 60))
+      : null;
+  // Labour minutes are not one person's shift. Saying "9h of work" to a single
+  // cleaner without this would be a surprise they discover on arrival.
+  const crew = booking.estimatedMinutes ? Math.max(1, Math.ceil(booking.estimatedMinutes / MINUTES_PER_PRO)) : 1;
 
   return (
     <section className="border-b">
@@ -65,8 +74,26 @@ export default async function JobOfferPage({ params }: { params: Promise<{ ref: 
                 <p className="mt-0.5 text-3xl font-semibold text-brand-900 dark:text-brand-100">
                   {formatCurrency(payout)}
                 </p>
+                {/* The hourly figure, not just the total. A pro decides on the
+                    rate — the same payout is a good afternoon or a bad day
+                    depending entirely on the hours attached to it. */}
+                {hourlyRate !== null ? (
+                  <p className="mt-1 text-sm font-medium text-brand-800 dark:text-brand-200">
+                    {formatDuration(booking.estimatedMinutes!)} of work · ~{formatCurrency(hourlyRate)}/hour
+                    {crew > 1 && (
+                      <span className="font-normal">
+                        {' '}
+                        · {crew}-person job, about {formatDuration(Math.round(booking.estimatedMinutes! / crew))} each
+                      </span>
+                    )}
+                  </p>
+                ) : (
+                  <p className="mt-1 text-sm text-brand-700/80 dark:text-brand-300/80">
+                    Duration not estimated for this job.
+                  </p>
+                )}
                 <p className="mt-1 text-xs text-brand-700/80 dark:text-brand-300/80">
-                  Paid to your account after the job is completed.
+                  Estimated. Paid to your account after the job is completed.
                 </p>
               </div>
             )}

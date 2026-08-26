@@ -56,6 +56,8 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ ref: s
       time: booking.time,
       city: booking.city,
       address: booking.address,
+      estimatedMinutes: booking.estimatedMinutes,
+      quoteLow: booking.quoteLow,
     };
 
     if (parsed.data.action === 'force-assign') {

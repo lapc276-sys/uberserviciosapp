@@ -141,22 +141,27 @@ model JobOffer {
 }
 
 model Booking {
-  id          String        @id @default(cuid())
-  ref         String        @unique // human-friendly, e.g. HMG-8F2A
-  vertical    String        @default("cleaning")
-  serviceSlug String
-  serviceName String
-  bedrooms    Int           @default(0)
-  bathrooms   Int           @default(0)
-  sqft        Int           @default(0)
-  frequency   Frequency     @default(ONE_TIME)
-  date        String // ISO date (YYYY-MM-DD)
-  time        String
-  quoteLow    Int?
-  quoteHigh   Int?
-  status      BookingStatus @default(SCHEDULED)
-  notes       String?
-  createdAt   DateTime      @default(now())
+  id               String        @id @default(cuid())
+  ref              String        @unique // human-friendly, e.g. HMG-8F2A
+  vertical         String        @default("cleaning")
+  serviceSlug      String
+  serviceName      String
+  bedrooms         Int           @default(0)
+  bathrooms        Int           @default(0)
+  sqft             Int           @default(0)
+  frequency        Frequency     @default(ONE_TIME)
+  date             String // ISO date (YYYY-MM-DD)
+  time             String
+  quoteLow         Int?
+  quoteHigh        Int?
+  /**
+   * Labour minutes the quote was built from. Shown to the pro before they
+   * accept: a payout figure without a duration is not a decidable offer.
+   */
+  estimatedMinutes Int?
+  status           BookingStatus @default(SCHEDULED)
+  notes            String?
+  createdAt        DateTime      @default(now())
 
   /**
    * Minutes the pro actually worked. Ground truth for calibrating the AI
@@ -336,6 +341,7 @@ model TrainingSample {
    * what lets the time model explain variance that pure vision never will.
    */
   /**
+   * /**
    * /**
    * /**
    * /** 1 = first job of that worker's day, 2 = second, etc.

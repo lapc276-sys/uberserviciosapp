@@ -99,6 +99,8 @@ async function offerToPros(p: BookingPayload) {
     time: p.time,
     city: p.city,
     address: p.address,
+    estimatedMinutes: p.quote?.estimatedMinutes ?? null,
+    quoteLow: p.quote?.low ?? null,
   });
   log(
     'dispatch',

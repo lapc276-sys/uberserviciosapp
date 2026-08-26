@@ -24,6 +24,8 @@ export interface BookingRecord {
   time: string;
   quoteLow: number | null;
   quoteHigh: number | null;
+  /** Labour minutes behind the quote. Drives what the pro is shown. */
+  estimatedMinutes: number | null;
   status: BookingStatus;
   notes?: string | null;
   customerName: string;
@@ -91,6 +93,7 @@ export interface NewBookingInput {
   date: string;
   time: string;
   quoteLow?: number | null;
+  estimatedMinutes?: number | null;
   quoteHigh?: number | null;
   notes?: string;
   name: string;
@@ -155,6 +158,7 @@ export async function createBooking(input: NewBookingInput): Promise<BookingReco
     date: input.date,
     time: input.time,
     quoteLow: input.quoteLow ?? null,
+    estimatedMinutes: input.estimatedMinutes ?? null,
     quoteHigh: input.quoteHigh ?? null,
     status: 'SCHEDULED',
     notes: input.notes ?? null,
@@ -210,6 +214,7 @@ export async function createBooking(input: NewBookingInput): Promise<BookingReco
       date: input.date,
       time: input.time,
       quoteLow: input.quoteLow ?? null,
+      estimatedMinutes: input.estimatedMinutes ?? null,
       quoteHigh: input.quoteHigh ?? null,
       notes: input.notes,
       promoCode: input.promoCode,
@@ -976,6 +981,7 @@ function mapRow(b: any): BookingRecord {
     time: b.time,
     quoteLow: b.quoteLow,
     quoteHigh: b.quoteHigh,
+    estimatedMinutes: b.estimatedMinutes ?? null,
     status: b.status,
     notes: b.notes,
     customerName: b.customer?.name ?? '—',

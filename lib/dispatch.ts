@@ -3,6 +3,7 @@ import { sendSms } from './sms';
 import { site } from './config/site';
 import { getService } from './config/services';
 import { getCityByName } from './config/cities';
+import { PRO_PAYOUT_SHARE } from './vision/pricing';
 
 /**
  * Marketplace dispatch.
@@ -23,6 +24,39 @@ export interface DispatchInput {
   time: string;
   city: string;
   address: string;
+  /** Labour minutes behind the quote, so the offer can state a duration. */
+  estimatedMinutes?: number | null;
+  /** Pre-tax low end, used to derive what the pro would earn. */
+  quoteLow?: number | null;
+}
+
+/**
+ * The two numbers a pro actually decides on: how long, and how much.
+ *
+ * Deliberately expressed as an hourly figure as well as a total. A cleaner
+ * comparing offers between jobs is comparing rates, not totals — $103 is a
+ * good afternoon or a bad day depending entirely on the hours attached to it,
+ * and omitting the duration is what makes an offer feel like a trap.
+ */
+function describeTerms(estimatedMinutes?: number | null, quoteLow?: number | null): string {
+  const parts: string[] = [];
+
+  if (estimatedMinutes && estimatedMinutes > 0) {
+    const h = Math.floor(estimatedMinutes / 60);
+    const m = estimatedMinutes % 60;
+    parts.push(` ~${h > 0 ? `${h}h${m > 0 ? ` ${m}m` : ''}` : `${m}m`}`);
+  }
+
+  if (quoteLow && quoteLow > 0) {
+    const pay = Math.round(quoteLow * PRO_PAYOUT_SHARE);
+    const rate =
+      estimatedMinutes && estimatedMinutes > 0
+        ? ` (~$${Math.round(pay / (estimatedMinutes / 60))}/h)`
+        : '';
+    parts.push(` You earn ~$${pay}${rate}`);
+  }
+
+  return parts.join(' ·');
 }
 
 /** How many pros see a new job. Small enough to feel exclusive, big enough to fill. */
@@ -52,13 +86,17 @@ export async function offerJob(input: DispatchInput): Promise<DispatchResult> {
 
   const service = getService(input.serviceSlug);
   const claimUrl = `${site.url}/pros/jobs/${input.ref}`;
+  const offerTerms = describeTerms(input.estimatedMinutes, input.quoteLow);
   await Promise.allSettled(
     shortlist
       .filter((p) => p.phone)
       .map((p) =>
         sendSms(
           p.phone!,
-          `${site.name}: New job available — ${service?.shortName ?? 'Cleaning'} on ${input.date} at ${input.time}, ${input.city}. First to accept gets it: ${claimUrl}`,
+          // Duration and pay belong in the text itself. A pro reading this
+          // between jobs decides on their phone in seconds, and "a cleaning on
+          // Tuesday" is not a decision — the hours and the money are.
+          `${site.name}: New job — ${service?.shortName ?? 'Cleaning'}, ${input.date} ${input.time}, ${input.city}.${offerTerms}. First to accept gets it: ${claimUrl}`,
         ),
       ),
   );

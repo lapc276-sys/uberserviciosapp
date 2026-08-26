@@ -93,6 +93,7 @@ export async function POST(req: Request) {
       time: data.time,
       quoteLow: quote?.low ?? null,
       quoteHigh: quote?.high ?? null,
+      estimatedMinutes: quote?.estimatedMinutes ?? null,
       notes: data.notes,
       name: data.name,
       email: data.email,

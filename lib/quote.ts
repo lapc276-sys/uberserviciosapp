@@ -1,5 +1,9 @@
 import { getService } from './config/services';
 import { getCityByName, type SalesTax } from './config/cities';
+// The same rate the vision path prices with, so both channels agree on what
+// an hour of labour is worth and a duration can be recovered from a price.
+import { HOURLY_RATE_USD } from './vision/pricing';
+import { MINUTES_PER_PRO } from './vision/model';
 
 export interface QuoteInput {
   serviceSlug: string;
@@ -22,7 +26,27 @@ export interface QuoteResult {
   totalLow: number;
   totalHigh: number;
   taxNote?: string;
+  /** Human range from the catalogue, e.g. "3–5 hrs". Same for every property. */
   estimatedHours: string;
+  /**
+   * Labor minutes this specific job implies.
+   *
+   * Derived from the price rather than read from the catalogue, because the
+   * catalogue string is per service: a one-bed flat and a five-bed house both
+   * say "3–5 hrs". The price already scales with bedrooms, bathrooms and area,
+   * so dividing it by the hourly rate recovers a duration that scales too.
+   *
+   * Computed before the frequency discount on purpose — a weekly customer pays
+   * 20% less, but the cleaner still works the same hours, and this number is
+   * what tells them whether the job is worth taking.
+   */
+  estimatedMinutes: number;
+  /**
+   * People the job warrants. `estimatedMinutes` is labour time, not wall-clock:
+   * a 9-hour estimate is three people for three hours, and showing it to one
+   * cleaner as their day would be a lie they only discover on arrival.
+   */
+  recommendedPros: number;
   frequencyDiscountPct: number;
   currency: 'USD';
 }
@@ -57,10 +81,14 @@ export function calculateQuote(input: QuoteInput): QuoteResult | null {
   const bathrooms = Math.max(0, Math.min(input.bathrooms || 0, 10));
   const sqft = Math.max(0, Math.min(input.sqft || 0, 20000));
 
-  let point = base + bedrooms * perBedroom + bathrooms * perBathroom + (sqft / 1000) * perSqftThousand;
+  const grossPoint = base + bedrooms * perBedroom + bathrooms * perBathroom + (sqft / 1000) * perSqftThousand;
 
   const discount = FREQUENCY_DISCOUNT[input.frequency ?? 'one_time'];
-  point = point * (1 - discount);
+  const point = grossPoint * (1 - discount);
+
+  // Rounded to five minutes: the inputs are a questionnaire, and quoting
+  // "137 minutes" would imply a precision this path does not have.
+  const estimatedMinutes = Math.max(60, Math.round((grossPoint / HOURLY_RATE_USD) * 60 / 5) * 5);
 
   const low = Math.round(point * 0.9);
   const high = Math.round(point * 1.15);
@@ -79,6 +107,8 @@ export function calculateQuote(input: QuoteInput): QuoteResult | null {
     totalHigh: Math.round(high * (1 + taxRate)),
     taxNote: taxRate > 0 ? cityTax?.note : undefined,
     estimatedHours: service.pricing.estimatedHours,
+    estimatedMinutes,
+    recommendedPros: Math.max(1, Math.ceil(estimatedMinutes / MINUTES_PER_PRO)),
     frequencyDiscountPct: discount * 100,
     currency: 'USD',
   };

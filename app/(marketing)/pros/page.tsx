@@ -7,6 +7,7 @@ import { buildMetadata } from '@/lib/seo';
 import { PRO_SESSION_COOKIE, verifyProSession } from '@/lib/pro-auth';
 import { bookingsForPro, openOffersForPro, getProById } from '@/lib/data';
 import { earningsForPro } from '@/lib/payouts';
+import { formatDuration } from '@/lib/vision/estimate';
 import { formatCurrency } from '@/lib/utils';
 import { ProSignOut } from '@/components/pros/ProSignOut';
 
@@ -93,6 +94,12 @@ export default async function ProDashboard() {
                   {o.quoteLow && (
                     <p className="mt-3 font-semibold text-brand-700 dark:text-brand-300">
                       You earn ~{formatCurrency(Math.round(o.quoteLow * 0.75))}
+                      {o.estimatedMinutes ? (
+                        <span className="ml-1.5 font-normal text-slate-500 dark:text-slate-400">
+                          · {formatDuration(o.estimatedMinutes)} · ~
+                          {formatCurrency(Math.round((o.quoteLow * 0.75) / (o.estimatedMinutes / 60)))}/h
+                        </span>
+                      ) : null}
                     </p>
                   )}
                 </Link>
