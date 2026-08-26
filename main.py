@@ -1180,6 +1180,24 @@ async def control_velocidades(year: int = 0, gp: str = "", tipo: str = "Race",
     })
 
 
+@app.post("/control/short/velocidades")
+async def control_short_velocidades():
+    """Crea AHORA el short del reparto de velocidad punta con las lecturas
+    de la sesión al aire. Se sube en el próximo ciclo.
+
+    Solo funciona con la telemetría viva: las lecturas de la trampa se van
+    con ella cuando la sesión se descarga."""
+    sid = _generar_short_velocidades()
+    if not sid:
+        return JSONResponse(
+            {"ok": False, "error": "Sin lecturas suficientes: hace falta una "
+             "sesión en marcha y al menos seis equipos con vueltas "
+             "cronometradas."}, status_code=503)
+    return JSONResponse({"ok": True, "short": sid,
+                         "estado": "Short creado; se subirá en el próximo "
+                         "ciclo de subida."})
+
+
 @app.post("/control/calidad/{modo}")
 async def control_calidad(modo: str):
     """Control de gasto sin Secrets: 'auto' (caro solo en carrera), 'max'
@@ -9114,6 +9132,120 @@ async def _generar_short_comparacion(sid):
     return True
 
 
+def _generar_short_velocidades(sesion=None, sid=None):
+    """Short del REPARTO de velocidad punta de la sesión recién terminada.
+
+    Aquí no escribe ningún modelo: los nombres, las medianas y el margen
+    entre el primero y el último salen de las lecturas de la trampa que
+    se han ido guardando vuelta a vuelta. Lo único que no es una cifra
+    medida es la frase que explica QUÉ significa un reparto ancho, y está
+    dicha en general, sin atribuirle una intención a nadie.
+
+    Se llama al cerrar la sesión, con la telemetría todavía viva: en
+    cuanto se descarga, estas lecturas ya no existen.
+    """
+    t = estado.tele
+    series = velocidades.series_en_vivo(t) if t else []
+    # Media parrilla o nada: con cuatro equipos esto no es "la parrilla",
+    # es un puñado de coches y el titular sería falso.
+    if len(series) < 6:
+        return None
+    sid = sid or dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d_%H%M%S")
+    circuito = ((sesion or {}).get("circuito")
+                or (t.sesion.get("circuit_short_name") if t else "") or "")
+    nombre_sesion = ((sesion or {}).get("sesion")
+                     or (t.sesion.get("session_name") if t else "") or "Race")
+
+    orden = sorted(series, key=lambda s: diagramas._percentil(
+        sorted(s["valores"]), 0.5), reverse=True)
+    def _med(s):
+        return diagramas._percentil(sorted(s["valores"]), 0.5)
+    def _ancho(s):
+        v = sorted(s["valores"])
+        return diagramas._percentil(v, .9) - diagramas._percentil(v, .1)
+    rapido, lento = orden[0], orden[-1]
+    disperso = max(series, key=_ancho)
+    margen = _med(rapido) - _med(lento)
+    total = sum(len(s["valores"]) for s in series)
+
+    png = os.path.join("shorts", f"g_velocidad_{sid}.png")
+    with contextlib.suppress(Exception):
+        os.makedirs("shorts", exist_ok=True)
+    ruta = diagramas.reparto(
+        png, "Top speed spread", series, eje_x="Speed trap", unidad="km/h",
+        pie=f"Our own chart · {total} speed-trap readings · Data: OpenF1",
+        etiqueta=" · ".join(x for x in (circuito, nombre_sesion) if x).upper()
+        or "MEASURED", tam=diagramas.VERT, decimales=0)
+    if not ruta:
+        return None
+    # Una segunda lámina, la misma medida por PILOTO: da un corte a mitad
+    # del short (treinta segundos sobre una sola imagen fija se hacen
+    # eternos) y enseña de dónde sale el abanico del equipo — de sus dos
+    # coches.
+    imagenes = [ruta]
+    with contextlib.suppress(Exception):
+        por_piloto = velocidades.series_en_vivo(t, por="piloto")
+        if len(por_piloto) >= 8:
+            png2 = os.path.join("shorts", f"g_velocidad_{sid}_pil.png")
+            r2 = diagramas.reparto(
+                png2, "Car by car", por_piloto, eje_x="Speed trap",
+                unidad="km/h", pie="Our own chart · Data: OpenF1",
+                etiqueta="SPEED TRAP", tam=diagramas.VERT, decimales=0)
+            if r2:
+                imagenes.append(r2)
+
+    donde = f" at {circuito}" if circuito else ""
+    if IDIOMA == "es":
+        guion = (
+            f"Velocidad punta{donde}, medida en la trampa de velocidad en "
+            f"cada vuelta de carrera. "
+            f"{rapido['nombre']} fue el más rápido: mediana de "
+            f"{_med(rapido):.0f} por hora. {lento['nombre']}, el más lento, "
+            f"con {_med(lento):.0f}. Toda la parrilla cabe en "
+            f"{margen:.0f} kilómetros por hora. "
+            f"Pero mira a {disperso['nombre']}: sus lecturas se reparten a lo "
+            f"largo de {_ancho(disperso):.0f} kilómetros por hora, el abanico "
+            f"más ancho de todos. Un abanico ancho no es un coche rápido — "
+            f"suele ser un coche que a veces va en aire limpio y a veces "
+            f"pegado a otro.")
+        titulo = (f"¿Quién era de verdad el más rápido en recta"
+                  f"{' en ' + circuito if circuito else ''}?")
+    else:
+        guion = (
+            f"Top speed{donde}, measured at the speed trap on every racing "
+            f"lap. "
+            f"{rapido['nombre']} ran the highest: a median of "
+            f"{_med(rapido):.0f} kilometres an hour. {lento['nombre']} the "
+            f"lowest, at {_med(lento):.0f}. The whole grid fits inside "
+            f"{margen:.0f} kilometres an hour. "
+            f"But look at {disperso['nombre']}: their readings spread across "
+            f"{_ancho(disperso):.0f} kilometres an hour, the widest of "
+            f"anyone. A wide spread is not a fast car — it is usually a car "
+            f"that sometimes runs in clear air and sometimes right behind "
+            f"someone else.")
+        titulo = ("Who was really quickest in a straight line"
+                  + (f" at {circuito}?" if circuito else "?"))
+    guion_final = f"{guion} {_cta_hablada()}"
+    datos = {
+        "id": sid,
+        "timestamp": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "tipo": "velocidades",
+        "guion": guion_final,
+        # La misma cuenta que el resto de shorts, para que el montaje
+        # dure lo que dura la voz y no lo que a mí me parezca.
+        "duracion_segundos": max(20, min(55,
+                                         len(guion_final.split()) * 3)),
+        "fotos": imagenes,
+        "titulo": titulo,
+        "sin_overlay": True,      # el gráfico ya trae todo su texto
+    }
+    _guardar_short(sid, datos)
+    log.info("📊 Short de velocidades creado: %s %.0f — %s %.0f (%d lecturas)",
+             rapido["nombre"], _med(rapido), lento["nombre"], _med(lento),
+             total)
+    return sid
+
+
 # CTA hablado de cierre: se añade al final del guion de cada short para pedir
 # la suscripción (el mayor conversor vistas→subs en Shorts). Se rota para que
 # no suene repetitivo. En el idioma del canal (IDIOMA).
@@ -12826,6 +12958,13 @@ async def bucle_programacion():
                     # porque esto interesa de TODAS las sesiones (los libres
                     # también dan degradación), no solo de las que van al aire.
                     _guardar_datos_carrera(s)
+                    # Y el short del reparto de velocidad punta, que solo
+                    # se puede hacer AHORA: las lecturas de la trampa
+                    # viven en la telemetría y se van con ella.
+                    with contextlib.suppress(Exception):
+                        _generar_short_velocidades(
+                            {"circuito": s.get("circuito"),
+                             "sesion": s.get("sesion")})
         else:
             # Se acabó la cortesía del post-show: el podio se retira. Si no,
             # se quedaba encima de los documentales que vienen después.
