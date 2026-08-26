@@ -705,6 +705,11 @@ class Estado:
         # El último adelantamiento con su dibujo listo para pantalla.
         self.pase_destacado: dict | None = None
         self.pases_total: int = 0        # incluidos los que no caen en curva
+        # Para saber si el cuadro de adelantamiento está funcionando sin
+        # tener que mirarlo justo cuando sale: cuántos cambios de puesto
+        # se descartaron por no ir juntos y cuántos llegaron a pantalla.
+        self.pases_descartados: int = 0
+        self.pases_con_cuadro: int = 0
         self.modo_calidad: str = "auto"    # auto | max | ahorro (botón del panel)
         self.off_air_manual: bool = False  # botón OFF AIR: silencio total, sin gasto
         self.segmento_id: int = 0      # id del último segmento con audio
@@ -828,6 +833,11 @@ async def control_estado():
         "off_air": estado.off_air_manual,
         "en_vivo": estado.tele is not None,
         "api_sin_creditos": estado.api_sin_creditos,
+        # Los adelantamientos, para poder mirar si el cuadro va sin tener
+        # que estar delante justo cuando sale uno.
+        "pases": {"contados": estado.pases_total,
+                  "con_cuadro": estado.pases_con_cuadro,
+                  "descartados": estado.pases_descartados},
         "chat": {"configurado": bool(YOUTUBE_API_KEY),
                  "video": estado.chat_video,
                  "estado": estado.chat_estado,
@@ -1674,6 +1684,13 @@ function pintar(d){
     (d.modelo_ahora ? ' <span style="color:var(--dim)">(' +
       d.modelo_ahora + ')</span>' : '');
   if (d.parrilla_auto) html += '<br>Parrilla automática: <b>ON</b>';
+  // Adelantamientos: contados / con cuadro en pantalla / descartados por
+  // no ir juntos. Si "contados" sube y "con cuadro" no, el problema está
+  // en el rastro; si lo que sube es "descartados", en el umbral.
+  const ps = d.pases;
+  if (d.en_vivo && ps) html += '<br>Adelantamientos: <b>' + ps.contados +
+    '</b> contados · <b>' + ps.con_cuadro + '</b> con cuadro' +
+    (ps.descartados ? ' · ' + ps.descartados + ' descartados' : '');
   if (d.proxima_sesion) {
     const s = d.proxima_sesion;
     html += '<br>Próxima sesión: <b>' + s.sesion + ' — ' + s.pais +
@@ -2601,6 +2618,22 @@ async def visor():
                            letter-spacing: .12em; }
   .carta.pase .nota { color: var(--dim); font-size: .62rem; margin-top: 7px;
                       line-height: 1.4; }
+  /* La frenada, debajo y a todo el ancho de la tarjeta */
+  .carta.pase .frenada { grid-column: 1 / -1; margin-top: 10px;
+                         border-top: 1px solid var(--line); padding-top: 9px; }
+  .carta.pase .vel { width: 100%; height: auto; display: block;
+                     background: rgba(8,10,16,.5); border-radius: 8px; }
+  .carta.pase .cifras { display: flex; flex-wrap: wrap; gap: 8px 20px;
+                        margin-top: 8px; }
+  .carta.pase .par { display: flex; align-items: baseline; gap: 6px;
+                     font-variant-numeric: tabular-nums; }
+  .carta.pase .par i { font-style: normal; font-size: .6rem;
+                       letter-spacing: .16em; color: var(--dim); }
+  .carta.pase .par b { font-size: .95rem; font-weight: 800; }
+  .carta.pase .par u { text-decoration: none; color: var(--dim);
+                       font-size: .6rem; }
+  .carta.pase .par em { font-style: normal; color: var(--dim);
+                        font-size: .6rem; letter-spacing: .08em; }
   /* Los dos coches, con el hueco en medio */
   .vs { display: grid; grid-template-columns: 1fr auto 1fr; gap: 8px;
         align-items: center; }
@@ -2905,6 +2938,27 @@ function cartaPase(p) {
   const cq = p.col_quien ? '#' + p.col_quien : '#FF2D16';
   const ca = p.col_a_quien ? '#' + p.col_a_quien : '#8892A3';
   const donde = p.curva ? 'INTO TURN ' + p.curva : 'ON THE STRAIGHT';
+  // La frenada solo sale si LOS DOS coches mandaron telemetría en esos
+  // segundos. Con uno solo no hay comparación, y media comparación en
+  // pantalla se lee como una comparación entera.
+  const tel = (p.tel_quien && p.tel_a_quien) ? [p.tel_quien, p.tel_a_quien]
+    : null;
+  let cifras = '';
+  if (tel) {
+    const [A, B] = tel;
+    const par = (et, a, b, uni) => (a == null || b == null) ? ''
+      : '<span class="par"><i>' + et + '</i>'
+        + '<b style="color:' + cq + '">' + a + '</b>'
+        + '<u>vs</u>'
+        + '<b style="color:' + ca + '">' + b + '</b>'
+        + (uni ? '<em>' + uni + '</em>' : '') + '</span>';
+    cifras = par('TOP', A.punta, B.punta, 'km/h')
+      + par('APEX', A.apex, B.apex, 'km/h')
+      // "Frenando" es el tiempo hasta su propio punto lento, no una hora
+      // del reloj: el de atrás llega más tarde a la curva por ir detrás.
+      + par('BRAKING', A.frenada != null ? A.frenada.toFixed(1) : null,
+            B.frenada != null ? B.frenada.toFixed(1) : null, 's');
+  }
   el.innerHTML =
     '<div class="cab"><span class="et">OVERTAKE</span>'
     + '<span class="pn">LAP ' + esc(p.vuelta) + ' · ' + esc(donde) + '</span>'
@@ -2918,7 +2972,11 @@ function cartaPase(p) {
     + '<b>' + esc(p.a_quien) + '</b></div>'
     + '<div class="nota">Both lines are the cars\\' own GPS, '
     + 'the seconds either side of the pass</div>'
-    + '</div></div>';
+    + '</div>'
+    + (tel ? '<div class="frenada">'
+        + '<canvas class="vel" width="700" height="104"></canvas>'
+        + '<div class="cifras">' + cifras + '</div></div>' : '')
+    + '</div>';
   const cv = el.querySelector('canvas');
   // El lienzo se dibuja cuando ya está en el documento y tiene medidas.
   requestAnimationFrame(() => {
@@ -2982,6 +3040,65 @@ function cartaPase(p) {
     };
     linea(p.ruta_a_quien, ca, 3);
     linea(p.ruta_quien, cq, 4.5);
+  });
+  // ── La frenada: velocidad de los dos coches en esos segundos ────────
+  // Lo que el mapa no puede enseñar. El tramo en el que el coche va
+  // FRENANDO se pinta grueso: ahí se ve de un vistazo quién frenó antes,
+  // cuánto tiempo y con cuánta velocidad salió.
+  const cvv = el.querySelector('canvas.vel');
+  if (tel && cvv) requestAnimationFrame(() => {
+    const { ctx, w, h } = lienzo(cvv);
+    ctx.clearRect(0, 0, w, h);
+    const todas = tel[0].curva.concat(tel[1].curva);
+    if (todas.length < 4) return;
+    const t0 = Math.min(...todas.map(m => m[0]));
+    const t1 = Math.max(...todas.map(m => m[0]));
+    const v1 = Math.max(...todas.map(m => m[1]));
+    const v0 = Math.min(...todas.map(m => m[1]));
+    // El eje NO arranca en cero: entre 120 y 320 por hora, la mitad de
+    // abajo del cuadro sería negro y la curva de la frenada —que es lo
+    // que hay que ver— quedaría aplastada. Por eso van escritas las dos
+    // cifras de los extremos: una escala recortada sin sus números sí
+    // engañaría.
+    const lo = Math.max(0, v0 - (v1 - v0) * 0.18), hi = v1 + (v1 - v0) * 0.08;
+    const pad = 42, base = h - 15;
+    const X = t => pad + (t - t0) / Math.max(0.1, t1 - t0) * (w - pad - 12);
+    const Y = v => base - (v - lo) / Math.max(1, hi - lo) * (base - 8);
+    // El instante en el que cambió el orden
+    ctx.strokeStyle = 'rgba(225,6,0,.55)'; ctx.lineWidth = 1;
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath(); ctx.moveTo(X(0), 6); ctx.lineTo(X(0), base);
+    ctx.stroke(); ctx.setLineDash([]);
+    ctx.strokeStyle = 'rgba(150,160,180,.30)';
+    ctx.beginPath(); ctx.moveTo(pad, base); ctx.lineTo(w - 12, base);
+    ctx.stroke();
+    // Las dos cifras del eje, para que la escala recortada se lea
+    ctx.font = '600 9px system-ui, sans-serif';
+    ctx.fillStyle = '#5A6473'; ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(Math.round(v1), pad - 6, Y(v1));
+    ctx.fillText(Math.round(v0), pad - 6, Y(v0));
+    ctx.textBaseline = 'top';
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    [[tel[1], ca], [tel[0], cq]].forEach(([T, color]) => {
+      ctx.strokeStyle = color;
+      for (let i = 1; i < T.curva.length; i++) {
+        const a = T.curva[i - 1], b = T.curva[i];
+        ctx.lineWidth = (a[2] || b[2]) ? 4.5 : 1.8;
+        ctx.globalAlpha = (a[2] || b[2]) ? 1 : 0.72;
+        ctx.beginPath();
+        ctx.moveTo(X(a[0]), Y(a[1])); ctx.lineTo(X(b[0]), Y(b[1]));
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+    });
+    ctx.font = '600 9px system-ui, sans-serif';
+    ctx.fillStyle = '#5A6473'; ctx.textBaseline = 'top';
+    ctx.textAlign = 'left';
+    ctx.fillText('THICK = ON THE BRAKES', pad, base + 3);
+    ctx.textAlign = 'right';
+    ctx.fillText('KM/H · ' + Math.round(t1 - t0) + 's OF TELEMETRY',
+                 w - 12, base + 3);
   });
   return el;
 }
@@ -7310,7 +7427,31 @@ def zona_del_punto(x, y, curvas, radio=None):
 _SESIONES_PASES = ("Race", "Sprint")
 
 
-def pases_entre(previas, actuales, lugares, cerca):
+def _mas_cerca_que(n, m, lugares, historia, cerca):
+    """¿Estuvieron esos dos coches juntos en pista hace poco?
+
+    Mirar solo dónde están AHORA no vale: el cambio de posición nos llega
+    unos segundos después del adelantamiento de verdad, y en esos
+    segundos el que ha pasado ya se ha ido. A 250 por hora, un segundo
+    son setenta metros. Así que se mira la distancia MÍNIMA de los
+    últimos segundos, que es el momento en el que iban rueda a rueda.
+
+    `historia` es [ {numero: (x, y)} ] de las últimas lecturas.
+    """
+    minima = None
+    for foto in list(historia) + [lugares]:
+        a, b = foto.get(n), foto.get(m)
+        if not a or not b:
+            continue
+        d = math.dist(a, b)
+        if minima is None or d < minima:
+            minima = d
+    if minima is None:
+        return False, None
+    return minima <= cerca, minima
+
+
+def pases_entre(previas, actuales, lugares, cerca, historia=()):
     """Adelantamientos REALES entre dos fotos de la clasificación.
 
     Un cambio de posición no es siempre un adelantamiento: cuando alguien
@@ -7335,7 +7476,18 @@ def pases_entre(previas, actuales, lugares, cerca):
             a, b = lugares.get(n), lugares.get(m)
             if not a or not b:
                 continue                  # sin posición en pista, no contamos
-            if math.dist(a, b) > cerca:
+            juntos, dist = _mas_cerca_que(n, m, lugares, historia, cerca)
+            if not juntos:
+                # Se descarta, pero se DICE por qué, y las primeras veces
+                # en voz alta: si un día no sale ni un adelantamiento en
+                # toda la carrera, esta línea es la que distingue "no los
+                # hubo" de "el umbral se quedó corto".
+                estado.pases_descartados += 1
+                if estado.pases_descartados <= 5:
+                    log.info("🏎️  Cambio de puesto descartado: %s/%s se "
+                             "quedaron a %.0f (umbral %.0f). Si esto se "
+                             "repite toda la carrera, el umbral es el "
+                             "problema.", n, m, dist if dist else -1, cerca)
                 continue                  # lejos: fue boxes o abandono
             salida.append((n, m, a[0], a[1]))
     return salida
@@ -10796,6 +10948,7 @@ async def bucle_mapa():
     prox_intento_previa = 0.0
     pase_pend = None             # pase detectado, esperando su "después"
     pos_previas = None           # foto anterior de la clasificación
+    hist_lugares = []            # últimas fotos de dónde va cada coche
     tele_pases = None            # de qué sesión son los pases que llevamos
     while True:
         await asyncio.sleep(2)
@@ -10815,6 +10968,8 @@ async def bucle_mapa():
             # esta carrera" con los de la carrera anterior es mentir.
             if estado.pases or estado.pases_total:
                 estado.pases, estado.pases_total = {}, 0
+                estado.pases_descartados = 0
+                estado.pases_con_cuadro = 0
             tele_trazada = None
             previo_probado = None   # la próxima sesión merece su intento
             pos_previas = None
@@ -10949,21 +11104,33 @@ async def bucle_mapa():
         # contado en NUESTROS datos, carrera tras carrera.
         if t is not tele_pases:
             estado.pases, estado.pases_total = {}, 0
+            estado.pases_descartados = 0
+            estado.pases_con_cuadro = 0
             pos_previas, tele_pases = None, t
-        if (pos and estado.curvas and t.vuelta >= 1
+        # Antes esto pedía además que hubiera CURVAS detectadas, y sin
+        # trazado guardado de ese circuito no se contaba ni un
+        # adelantamiento en toda la carrera. Las curvas solo hacen falta
+        # para decir en cuál fue: sin ellas el pase existe igual, y el
+        # cuadro sale con "ON THE STRAIGHT" en vez del número.
+        if (pos and t.vuelta >= 1
                 and t.sesion.get("session_name") in _SESIONES_PASES):
             actuales = dict(t.posiciones)
             lugares = {n: (p["x"], p["y"]) for n, p in pos.items()}
             if pos_previas:
                 # "Juntos en pista" medido contra el tamaño real del
-                # circuito, que en OpenF1 viene en unidades propias
-                xs = [c["x"] for c in estado.curvas]
-                ys = [c["y"] for c in estado.curvas]
+                # circuito, que en OpenF1 viene en unidades propias. Se
+                # mide con lo mejor que haya: las curvas, el trazado, o
+                # —si no hay mapa— lo que ocupan los coches en pista.
+                ref = estado.curvas or estado.mapa_trazado or list(pos.values())
+                xs = [c["x"] for c in ref]
+                ys = [c["y"] for c in ref]
                 diag = math.hypot(max(xs) - min(xs), max(ys) - min(ys)) or 1.0
                 for quien, a_quien, px, py in pases_entre(
-                        pos_previas, actuales, lugares, diag * 0.05):
+                        pos_previas, actuales, lugares, diag * 0.05,
+                        hist_lugares):
                     estado.pases_total += 1
-                    z = zona_del_punto(px, py, estado.curvas)
+                    z = (zona_del_punto(px, py, estado.curvas)
+                         if estado.curvas else None)
                     if z is not None:
                         estado.pases[z] = estado.pases.get(z, 0) + 1
                     log.info("🏎️  Pase: %s a %s%s", t._nombre(quien),
@@ -10996,23 +11163,124 @@ async def bucle_mapa():
                             "col_a_quien": t.pilotos.get(a_quien, {}).get(
                                 "color", ""),
                             "curva": z, "vuelta": t.vuelta,
+                            # El reloj del REPLAY, que es el que sirve para
+                            # pedirle a la API la telemetría de ese momento.
+                            "reloj": t.reloj(),
                             "ts": time.time(), "listo": time.time() + 6}
+            hist_lugares = (hist_lugares + [lugares])[-4:]
             pos_previas = actuales
         # ── Publicar el pase apuntado, ya con su "después" ────────────
         if pase_pend and time.time() >= pase_pend["listo"]:
+            # La frenada de los dos coches, pedida SOLO para esos segundos.
+            # Es lo que convierte el cuadro en una explicación: quién frenó
+            # más tarde y quién salió con más velocidad.
+            with contextlib.suppress(Exception):
+                await _telemetria_del_pase(t, pase_pend)
             carta = _carta_pase(pase_pend)
             if carta:
                 estado.pase_destacado = carta
-                log.info("🎬 Adelantamiento en pantalla: %s a %s%s",
+                estado.pases_con_cuadro += 1
+                log.info("🎬 Adelantamiento en pantalla: %s a %s%s%s",
                          carta["quien"], carta["a_quien"],
                          f" (curva {carta['curva']})" if carta["curva"]
-                         else "")
+                         else "",
+                         " con frenada" if carta.get("tel_quien") else
+                         " sin telemetría")
+            else:
+                log.info("🎬 Adelantamiento sin cuadro: no había rastro "
+                         "suficiente de los dos coches")
             pase_pend = None
 
 
 #: Cuánto dura en pantalla un adelantamiento antes de dejar sitio a otra
 #: cosa. Un pase deja de ser noticia enseguida.
 PASE_VIDA = 40
+
+#: Ventana de telemetría alrededor de un adelantamiento: unos segundos
+#: antes (la recta y la frenada) y unos pocos después (la salida).
+#:
+#: La salida es corta a propósito. Con cinco segundos, un coche saliendo
+#: de una curva lenta vuelve a acelerar tanto que el pico de la ventana
+#: pasa a estar al FINAL, y entonces el cuadro se escala por una
+#: velocidad que no tiene nada que ver con la frenada: la curva —que es
+#: lo que hay que ver— queda aplastada abajo. Dos segundos y medio
+#: bastan para ver quién salió mejor.
+PASE_ANTES, PASE_DESPUES = 8.0, 2.5
+
+
+def _resumen_frenada(muestras, t0):
+    """De las muestras de un coche saca lo que se cuenta de una frenada.
+
+    Devuelve {"curva": [[segundo, km/h, frenando], ...], "punta",
+    "apex", "freno"}: la velocidad máxima antes de frenar, la mínima de
+    paso por curva, y en qué segundo pisó el freno. `freno` es None si
+    en esa ventana no frenó — en una recta pasa, y decir que frenó
+    cuando no lo hizo sería inventarse la mitad del cuadro.
+    """
+    if len(muestras) < 4:
+        return None
+    curva = [[round((m["t"] - t0).total_seconds(), 2), round(m["v"]),
+              1 if m["freno"] else 0] for m in muestras]
+    vels = [m["v"] for m in muestras]
+    seg = lambda i: round((muestras[i]["t"] - t0).total_seconds(), 2)
+
+    # El orden de la lectura es el orden de los hechos: primero se busca
+    # el punto LENTO (el paso por curva), luego el pico que hubo ANTES
+    # —esa es la velocidad de llegada— y entre los dos, el frenazo.
+    #
+    # Buscar primero el pico no sirve: si el coche sale de la curva y
+    # acelera durante cinco segundos, el máximo de la ventana cae al
+    # final y detrás no queda ni curva ni frenada que medir.
+    i_apex = min(range(len(vels)), key=lambda i: vels[i])
+    borde = max(1, int(len(vels) * 0.15))
+    if i_apex < borde or i_apex > len(vels) - 2:
+        # El punto lento está en el borde de la ventana: aquí no hay una
+        # curva entera, es una recta o el trozo pillado a medias.
+        return {"curva": curva, "punta": round(max(vels)), "apex": None,
+                "freno": None, "apex_t": None, "frenada": None}
+    i_punta = max(range(i_apex + 1), key=lambda i: vels[i])
+    freno = None
+    for i in range(i_punta, i_apex + 1):
+        if muestras[i]["freno"]:
+            freno = seg(i)
+            break
+    apex_t = seg(i_apex)
+    # Cuánto tiempo estuvo frenando hasta el punto lento de la curva.
+    #
+    # Esta es la comparación que SÍ se puede hacer entre dos coches. La
+    # que pide el cuerpo —"frenó más tarde"— compararía relojes, y el de
+    # atrás llega a la curva más tarde por ir detrás, no por frenar
+    # después: saldría siempre lo mismo y no significaría nada. El tiempo
+    # que cada uno pasa frenando ANTES DE SU PROPIO apex no depende de
+    # dónde iba.
+    frenada = (round(apex_t - freno, 2)
+               if (freno is not None and apex_t is not None
+                   and apex_t > freno) else None)
+    return {"curva": curva,
+            # La punta es la de LLEGADA a la curva, no la de la ventana
+            # entera: lo que se compara es cómo llegaron los dos, no
+            # cuánto corrieron después.
+            "punta": round(vels[i_punta]), "apex": round(vels[i_apex]),
+            "freno": freno, "apex_t": apex_t, "frenada": frenada}
+
+
+async def _telemetria_del_pase(t, p):
+    """Pide la velocidad y el freno de los dos coches alrededor del pase.
+
+    Son dos peticiones de una docena de segundos cada una. Si la API no
+    responde, el cuadro sale igual con los dos recorridos y sin la
+    frenada: media tarjeta es mejor que ninguna.
+    """
+    reloj = p.get("reloj")
+    if not reloj:
+        return
+    desde = reloj - dt.timedelta(seconds=PASE_ANTES)
+    hasta = reloj + dt.timedelta(seconds=PASE_DESPUES)
+    a = await t.datos_coche(p["quien"], desde, hasta)
+    b = await t.datos_coche(p["a_quien"], desde, hasta)
+    ra, rb = _resumen_frenada(a, reloj), _resumen_frenada(b, reloj)
+    if ra and rb:
+        p["tel_quien"], p["tel_a_quien"] = ra, rb
 
 
 def _carta_pase(p):
@@ -11047,6 +11315,9 @@ def _carta_pase(p):
         # El trozo puede salir vacío (sin trazado cargado): la tarjeta se
         # dibuja igual, solo que sin la cinta de asfalto de fondo.
         "trozo": trozo,
+        # Y la frenada, si la API la dio. Puede faltar: la tarjeta lo sabe.
+        "tel_quien": p.get("tel_quien"),
+        "tel_a_quien": p.get("tel_a_quien"),
     }
 
 

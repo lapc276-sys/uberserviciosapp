@@ -616,6 +616,45 @@ class Telemetria:
             return self.fecha_actual
         return est
 
+    async def datos_coche(self, numero, desde, hasta):
+        """Lo que manda el coche entre dos instantes: velocidad, freno y
+        acelerador. Devuelve [{"t": datetime, "v": km/h, "freno": bool,
+        "gas": 0-100, "drs": n}] ordenado, o [] si no hay.
+
+        Se pide SOLO alrededor de un momento concreto (un adelantamiento):
+        /car_data va a 3,7 muestras por segundo y por coche, así que
+        traerse una carrera entera serían cientos de miles de filas para
+        usar cuarenta.
+        """
+        sk = self.sesion.get("session_key")
+        if not (sk and desde and hasta):
+            return []
+        fuera = []
+        try:
+            async with httpx.AsyncClient() as client:
+                url = (f"{BASE}/car_data?session_key={sk}"
+                       f"&driver_number={numero}"
+                       f"&date>{desde.isoformat()}&date<{hasta.isoformat()}")
+                r = await client.get(url, timeout=20,
+                                     headers=await _auth_headers(client))
+                r.raise_for_status()
+                for d in r.json():
+                    if d.get("date") is None or d.get("speed") is None:
+                        continue
+                    fuera.append({
+                        "t": _fecha(d["date"]),
+                        "v": float(d["speed"]),
+                        # brake viene 0 o 100; alguna vez llega como bool
+                        "freno": bool(d.get("brake")),
+                        "gas": float(d.get("throttle") or 0),
+                        "drs": d.get("drs"),
+                    })
+        except Exception as e:
+            log.info("Telemetría del coche %s sin datos (%s)", numero, e)
+            return []
+        fuera.sort(key=lambda d: d["t"])
+        return fuera
+
     async def posiciones_pista(self):
         """Última posición (x, y) de cada coche alrededor del reloj del
         replay — para pintar el mapa del circuito. {} si no hay datos."""
