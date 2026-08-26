@@ -1798,6 +1798,11 @@ async def apex():
         # sigue enseñando solo las tres primeras, que es lo que le cabe.
         "duelos": (t.battle_scores()[:5]
                    if t and time.time() - estado.mapa_ts < 30 else []),
+        # Quién lleva vueltas pegado sin poder pasar, con lo medido de
+        # por qué. Misma caducidad que los duelos: con la sesión parada,
+        # los huecos que quedan son la clasificación final.
+        "atascos": (t.atascos()[:3]
+                    if t and time.time() - estado.mapa_ts < 30 else []),
         "pit": t.perdida_pit() if t else None,
         "degradacion": _degradacion_pista(t),
         "alertas": t.alertas() if t else [],
@@ -2470,8 +2475,14 @@ async def visor():
   #framebox { display: none; }
   #framebox img { width: 100%; border-radius: 12px; display: block; }
   /* Mapa grande del circuito (protagonista cuando no hay video) */
+  /* El mapa tiene un tamaño MÁXIMO y se centra. Antes ocupaba todo el
+     ancho de la columna y, con esa proporción, crecía hacia abajo hasta
+     meterse debajo del rótulo de los duelos: el cuadro tapaba el trozo
+     de pista donde estaban los coches. El tope lo calcula la pantalla en
+     cada vuelta (encuadrarMapa) según dónde empieza el rótulo. */
   #mapabox { display: none; position: relative; border-radius: 16px;
              border: 1px solid var(--line); padding: 8px;
+             max-width: 1180px; margin-left: auto; margin-right: auto;
              background: radial-gradient(ellipse at 50% 40%,
                          #131926 0%, #0B0D12 75%); }
   #mapabox #mapa-grande { width: 100%; height: auto; display: block; }
@@ -2598,6 +2609,33 @@ async def visor():
                                 color: var(--dim); }
   .duelo.hero .estr { font-size: .76rem; margin-top: 8px; }
   .duelo.hero .razon { font-size: .7rem; margin-top: 4px; }
+  /* Atascado detrás: una fila por cada cosa que se puede medir */
+  .carta.atasco .acab { display: flex; align-items: baseline; gap: 10px;
+                        margin-bottom: 11px; }
+  .carta.atasco .acab b { font-size: 1.5rem; font-weight: 800;
+                          letter-spacing: .02em; }
+  .carta.atasco .acab span { color: var(--dim); font-size: .72rem;
+                             letter-spacing: .12em; text-transform: uppercase; }
+  .carta.atasco .agrid { display: flex; flex-direction: column; gap: 7px; }
+  .carta.atasco .afila { display: flex; align-items: center; gap: 8px;
+                         font-variant-numeric: tabular-nums; }
+  .carta.atasco .afila .et { color: var(--dim); font-size: .58rem;
+                             letter-spacing: .16em; width: 86px; flex: none; }
+  .carta.atasco .afila b { font-size: 1rem; font-weight: 800; }
+  .carta.atasco .afila u { text-decoration: none; color: var(--dim);
+                           font-size: .6rem; }
+  .carta.atasco .afila em { font-style: normal; color: var(--dim);
+                            font-size: .6rem; letter-spacing: .08em; }
+  .carta.atasco .ed { color: var(--dim); font-size: .68rem; }
+  .carta.atasco .sx { font-size: .84rem; font-weight: 800;
+                      padding: 1px 7px; border-radius: 5px;
+                      background: rgba(255,255,255,.05); }
+  .carta.atasco .dl { font-size: .8rem; font-weight: 800; margin-left: 2px; }
+  /* --up / --down, que son las que tiene definidas ESTA pantalla. Con
+     var(--on) el número salía en blanco: esa variable es del panel de
+     control, no de la emisión. */
+  .carta.atasco .bien { color: var(--up); }
+  .carta.atasco .mal { color: var(--down); }
   /* Tarjeta del adelantamiento: el dibujo manda, el texto acompaña */
   .carta.pase .cab { display: flex; align-items: center; gap: 9px;
                      margin-bottom: 9px; }
@@ -2918,6 +2956,12 @@ function pintarRotulo(d) {
     if (dl && dl.score >= 55)
       cartas.push(['duelo:' + dl.entre, () => cartaDuelo(dl)]);
   }
+  // Los atascos van DESPUÉS de los duelos: un duelo es lo que está
+  // pasando ahora, un atasco es lo que lleva pasando seis vueltas.
+  for (const a of (d.atascos || []).slice(0, 2)) {
+    cartas.push(['atasco:' + a.detras.acr + a.delante.acr,
+                 () => cartaAtasco(a, d.pases)]);
+  }
   if (deg.length >= 3) cartas.push(['deg', () => cartaDegradacion(deg)]);
   if (d.pit) cartas.push(['pit', () => cartaPit(d.pit, deg)]);
   if (!cartas.length) { caja.classList.remove('on'); rotClave = ''; return; }
@@ -2944,6 +2988,30 @@ function pintarRotulo(d) {
     caja.firstChild._actualizar(d);
   }
   caja.classList.add('on');
+}
+
+// ── El tamaño del mapa ─────────────────────────────────────────────────
+// El mapa se dibuja con la proporción del lienzo (980x600), así que al
+// darle todo el ancho de la columna crecía hacia abajo hasta meterse
+// debajo del rótulo. Aquí se le pone el techo: lo ANCHO que puede ser
+// sale de lo ALTO que le queda libre hasta donde empieza el rótulo.
+// Se recalcula en cada vuelta porque el rótulo cambia de alto según la
+// tarjeta que tenga puesta.
+const MAPA_PROPORCION = 980 / 600;
+function encuadrarMapa() {
+  const box = document.getElementById('mapabox');
+  if (!box || getComputedStyle(box).display === 'none') return;
+  const bb = document.getElementById('battlebar');
+  const arriba = box.getBoundingClientRect().top;
+  const puesto = bb && bb.classList.contains('on')
+    && getComputedStyle(bb).display !== 'none';
+  // Con rótulo, hasta 14 px por encima de él; sin rótulo, hasta el
+  // ticker de noticias.
+  const tope = puesto ? bb.getBoundingClientRect().top - 14
+                      : window.innerHeight - 66;
+  const alto = Math.max(220, tope - arriba);
+  const ancho = Math.min(1180, Math.round(alto * MAPA_PROPORCION));
+  if (box.style.maxWidth !== ancho + 'px') box.style.maxWidth = ancho + 'px';
 }
 
 // ── El adelantamiento, en su hueco bajo el leaderboard ─────────────────
@@ -3196,6 +3264,85 @@ function cartaDegradacion(deg) {
   };
   pinta(deg);
   el._actualizar = (d) => { if ((d.degradacion || []).length >= 3) pinta(d.degradacion); };
+  return el;
+}
+
+// ── Tarjeta: lleva vueltas ahí detrás y no pasa ────────────────────────
+// La pregunta que se hace todo el que mira ("¿por qué no lo pasa?")
+// contestada con lo que se puede MEDIR: dónde gana y dónde pierde por
+// sectores, cuánto le saca o le falta en la trampa de velocidad, con qué
+// neumático va cada uno, y en qué curva se han dado los adelantamientos
+// de esta carrera. Ni una cifra estimada.
+function cartaAtasco(a, pases) {
+  const el = document.createElement('div');
+  el.className = 'carta atasco';
+  const pinta = (a, pases) => {
+    const A = a.detras, B = a.delante;
+    const cA = '#' + (A.color || 'F5F7FA'), cB = '#' + (B.color || 'F5F7FA');
+    const sec = s => (s.delta <= 0 ? '−' : '+') + Math.abs(s.delta).toFixed(2);
+    let filas = '';
+    if (a.trampa) {
+      const d = a.trampa.delta;
+      filas += '<div class="afila"><span class="et">SPEED TRAP</span>'
+        + '<b style="color:' + cA + '">' + a.trampa.detras + '</b>'
+        + '<u>vs</u><b style="color:' + cB + '">' + a.trampa.delante + '</b>'
+        + '<em>km/h</em>'
+        + '<span class="dl ' + (d >= 0 ? 'bien' : 'mal') + '">'
+        + (d >= 0 ? '+' : '') + d + '</span></div>';
+    }
+    if (a.gana && a.pierde && a.gana.n !== a.pierde.n) {
+      filas += '<div class="afila"><span class="et">SECTORS</span>'
+        + '<span class="sx bien">S' + a.gana.n + ' ' + sec(a.gana) + '</span>'
+        + '<span class="sx mal">S' + a.pierde.n + ' ' + sec(a.pierde)
+        + '</span><em>s per lap</em></div>';
+    }
+    const na = a.neumaticos.detras, nb = a.neumaticos.delante;
+    if (na.c || nb.c) {
+      filas += '<div class="afila"><span class="et">TYRES</span>'
+        + neuChip(na.c) + '<span class="ed">' + na.v + 'L</span>'
+        + '<u>vs</u>' + neuChip(nb.c) + '<span class="ed">' + nb.v + 'L</span>'
+        + '</div>';
+    }
+    // Dónde se adelanta AQUÍ, contado por nosotros esta misma carrera.
+    let donde = '';
+    const ps = Object.entries(pases || {})
+      .map(([k, v]) => [Number(k), v]).filter(x => x[0] && x[1] > 0)
+      .sort((x, y) => y[1] - x[1]);
+    if (ps.length) {
+      const total = ps.reduce((s, x) => s + x[1], 0);
+      donde = ps[0][1] + ' of ' + total + ' passes in this race have been '
+        + 'into Turn ' + ps[0][0] + '.';
+    }
+    // La lectura, armada con los mismos números que están arriba.
+    let lectura = '';
+    const dt = a.trampa ? a.trampa.delta : null;
+    if (dt !== null && dt >= 2 && a.pierde && a.pierde.delta > 0.05) {
+      lectura = 'Quicker down the straight but giving it back in sector '
+        + a.pierde.n + '. The time is going in the corners, not on the '
+        + 'straight.';
+    } else if (dt !== null && dt <= -2) {
+      lectura = Math.abs(dt) + ' km/h down at the trap: the straight alone '
+        + 'is not going to do it.';
+    } else if (a.pierde && a.gana) {
+      lectura = 'Matched on the straight. It is being decided in sector '
+        + a.pierde.n + '.';
+    }
+    el.innerHTML = '<div class="cab"><span class="et">STUCK BEHIND</span>'
+      + '<span class="pn">' + a.vueltas + ' LAPS · '
+      + a.gap.toFixed(2) + 's</span></div>'
+      + '<div class="acab"><b style="color:' + cA + '">' + esc(A.acr)
+      + '</b><span>can\\'t get past</span><b style="color:' + cB + '">'
+      + esc(B.acr) + '</b></div>'
+      + '<div class="agrid">' + filas + '</div>'
+      + '<div class="razon">' + esc(lectura) + (donde ? ' ' + esc(donde) : '')
+      + '</div>';
+  };
+  pinta(a, pases);
+  el._actualizar = (d) => {
+    const nuevo = (d.atascos || []).find(
+      x => x.detras.acr === a.detras.acr && x.delante.acr === a.delante.acr);
+    if (nuevo) pinta(nuevo, d.pases);
+  };
   return el;
 }
 
@@ -4437,6 +4584,7 @@ async function tick() {
   // recortaban los nombres y los tiempos.
   pintarRotulo(d);
   pintarPase(d);
+  encuadrarMapa();
   // Coste de parada medido de las paradas reales de ESTA carrera
   const pitloss = document.getElementById('pitloss');
   if (d.pit) {

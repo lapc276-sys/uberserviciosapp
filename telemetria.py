@@ -436,6 +436,7 @@ class Telemetria:
         self._vueltas = {}        # numero -> [{"n", "dur", "out"}] cronológico
         self._pit_laps = {}       # numero -> {vueltas en las que entró a boxes}
         self.velocidades = {}     # numero -> [km/h de la trampa, por vuelta]
+        self._gaps_vuelta = {}    # numero -> {vuelta: hueco mínimo esa vuelta}
         self._pits = []           # [{"numero", "vuelta"}] paradas ya ocurridas
         # timeline: lista de (fecha, tipo, dato) ordenada por fecha
         self._timeline = []
@@ -749,6 +750,11 @@ class Telemetria:
                 self._vueltas.setdefault(dato["driver_number"], []).append({
                     "n": n, "dur": dato["lap_duration"],
                     "out": bool(dato.get("is_pit_out_lap")),
+                    # Los tres sectores. Son los que explican POR QUÉ un
+                    # coche no consigue pasar al de delante: casi siempre
+                    # gana en uno y lo pierde justo en el que desemboca en
+                    # la recta.
+                    "s": [dato.get(f"duration_sector_{i}") for i in (1, 2, 3)],
                 })
             dur = dato.get("lap_duration")
             if dur and n > 1 and not dato.get("is_pit_out_lap"):
@@ -776,6 +782,16 @@ class Telemetria:
             if isinstance(anterior, (int, float)):
                 self.gaps_anteriores[n] = anterior
             self.gaps[n] = dato.get("interval")
+            # Cuánto ha estado pegado, vuelta a vuelta. Con solo el hueco
+            # de ahora no se puede decir "lleva seis vueltas ahí detrás",
+            # que es lo que convierte un hueco pequeño en una historia.
+            if isinstance(self.gaps[n], (int, float)) and self.vuelta:
+                h = self._gaps_vuelta.setdefault(n, {})
+                v = self.vuelta
+                h[v] = min(h.get(v, 9e9), float(self.gaps[n]))
+                if len(h) > 25:
+                    for viejo in sorted(h)[:-25]:
+                        del h[viejo]
             return None
         if tipo == "control":
             msj = (dato.get("message") or "").strip()
@@ -917,6 +933,98 @@ class Telemetria:
             if estr:
                 r["estrategia"] = estr
         return resultados
+
+    # ---------- atascado detrás: por qué no pasa ----------
+
+    @staticmethod
+    def _mediana(vals):
+        v = sorted(x for x in vals if isinstance(x, (int, float)))
+        if not v:
+            return None
+        m = len(v) // 2
+        return v[m] if len(v) % 2 else (v[m - 1] + v[m]) / 2
+
+    def _ultimas_limpias(self, numero, cuantas=5):
+        """Las últimas vueltas del coche sin entradas ni salidas de boxes."""
+        en_boxes = self._pit_laps.get(numero, set())
+        return [v for v in self._vueltas.get(numero, [])
+                if not v["out"] and v["n"] not in en_boxes][-cuantas:]
+
+    def vueltas_pegado(self, numero, umbral=1.2):
+        """Vueltas SEGUIDAS que lleva a menos de `umbral` del de delante."""
+        h = self._gaps_vuelta.get(numero) or {}
+        n = 0
+        v = self.vuelta
+        while v >= 1 and h.get(v) is not None and h[v] <= umbral:
+            n += 1
+            v -= 1
+        return n
+
+    def atascos(self, minimo=3, umbral=1.2):
+        """Coches que llevan varias vueltas pegados y no consiguen pasar,
+        con lo que se puede MEDIR de por qué.
+
+        Nada de aquí es una opinión: son las medianas de las últimas
+        vueltas limpias de cada uno. El sector donde el de atrás gana y
+        el sector donde lo pierde salen de sus propios tiempos; la
+        diferencia en la trampa de velocidad, de sus propias lecturas; la
+        edad del neumático, de los stints. Si a un dato le faltan
+        vueltas, ese dato no sale — no se rellena con una estimación.
+        """
+        tabla = self.tabla()
+        pos_num = {p: n for n, p in self.posiciones.items()}
+        fuera = []
+        for i in range(1, len(tabla)):
+            delante_f, detras_f = tabla[i - 1], tabla[i]
+            gap = detras_f.get("gap_seg")
+            if gap is None or gap > umbral:
+                continue
+            detras = pos_num.get(detras_f["pos"])
+            delante = pos_num.get(delante_f["pos"])
+            if not (detras and delante):
+                continue
+            vueltas = self.vueltas_pegado(detras, umbral)
+            if vueltas < minimo:
+                continue
+
+            va = self._ultimas_limpias(detras)
+            vb = self._ultimas_limpias(delante)
+            sectores = []
+            if len(va) >= 3 and len(vb) >= 3:
+                for k in range(3):
+                    ma = self._mediana([v.get("s") and v["s"][k] for v in va])
+                    mb = self._mediana([v.get("s") and v["s"][k] for v in vb])
+                    if ma is not None and mb is not None:
+                        # Negativo = el de ATRÁS es más rápido en ese sector
+                        sectores.append({"n": k + 1, "delta": round(ma - mb, 3)})
+
+            trampa = None
+            ta = self._mediana((self.velocidades.get(detras) or [])[-5:])
+            tb = self._mediana((self.velocidades.get(delante) or [])[-5:])
+            if ta is not None and tb is not None:
+                trampa = {"detras": round(ta), "delante": round(tb),
+                          "delta": round(ta - tb)}
+
+            neu_a = self.neumaticos.get(detras) or {}
+            neu_b = self.neumaticos.get(delante) or {}
+            fuera.append({
+                "delante": delante_f, "detras": detras_f,
+                "vueltas": vueltas, "gap": round(gap, 3),
+                "sectores": sectores,
+                # El sector donde más gana y donde más pierde, ya elegidos
+                # aquí: la pantalla no tiene por qué saber de medianas.
+                "gana": min(sectores, key=lambda s: s["delta"], default=None),
+                "pierde": max(sectores, key=lambda s: s["delta"], default=None),
+                "trampa": trampa,
+                "neumaticos": {
+                    "detras": {"c": neu_a.get("compuesto", ""),
+                               "v": neu_a.get("vueltas", 0)},
+                    "delante": {"c": neu_b.get("compuesto", ""),
+                                "v": neu_b.get("vueltas", 0)},
+                },
+            })
+        fuera.sort(key=lambda a: -a["vueltas"])
+        return fuera
 
     # ---------- estrategia (métricas medidas, nunca inventadas) ----------
 
