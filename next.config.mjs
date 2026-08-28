@@ -18,7 +18,17 @@ const nextConfig = {
           { key: 'X-Content-Type-Options', value: 'nosniff' },
           { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
           { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
-          { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=(self)' },
+          // `camera=()` and `microphone=()` deny the feature to *everyone*,
+          // this origin included — which silently killed the two things the
+          // field tools depend on: hands-free voice correction, and any
+          // getUserMedia capture. `(self)` still blocks every embedded frame
+          // and third party, which is the actual threat, while letting our own
+          // pages ask the user. A header that disables your own product is not
+          // a security win.
+          {
+            key: 'Permissions-Policy',
+            value: 'camera=(self), microphone=(self), geolocation=(self)',
+          },
         ],
       },
     ];
