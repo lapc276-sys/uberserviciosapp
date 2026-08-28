@@ -25,5 +25,6 @@ run = ["npm", "run", "start"]
 localPort = 3000
 externalPort = 80
 
-[env]
-NODE_ENV = "production"
+# No NODE_ENV here on purpose. `next build` and `next start` set production
+# themselves, while forcing it in the workspace would break the Run button:
+# `next dev` with NODE_ENV=production is a broken combination.
