@@ -3,6 +3,7 @@
 import { useRef, useState } from 'react';
 import { Upload, Loader2, Sparkles, ArrowRight, AlertTriangle, Clock, Users, ShoppingBag } from 'lucide-react';
 import { extractFrames, readImages, DEFAULT_FRAME_COUNT } from '@/lib/vision/frames';
+import { GuidedCapture } from '@/components/capture/GuidedCapture';
 import { formatDuration } from '@/lib/vision/estimate';
 import { formatCurrency } from '@/lib/utils';
 import { CONDITION_LABELS, SOIL_DIMENSIONS, type PropertyAnalysis } from '@/lib/vision/types';
@@ -62,13 +63,27 @@ export function VideoQuote() {
         throw new Error('Please choose a video or photos of the space.');
       }
 
-      setFrames(extracted);
-      setStage('analyzing');
+      await analyze(extracted, undefined, serviceSlug);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Something went wrong.');
+      setStage('error');
+    }
+  }
 
+  /** Shared by the guided walkthrough and the saved-file path. */
+  async function analyze(extracted: string[], captions: string[] | undefined, service: string) {
+    setError('');
+    setAnalysis(null);
+    setQuote(null);
+    setFrames(extracted);
+    setServiceSlug(service);
+    setStage('analyzing');
+
+    try {
       const res = await fetch('/api/vision/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ frames: extracted, serviceSlug, city }),
+        body: JSON.stringify({ frames: extracted, captions, serviceSlug: service, city }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -149,21 +164,22 @@ export function VideoQuote() {
             </div>
           ) : (
             <>
-              <span className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-brand-50 text-brand-600 dark:bg-brand-950/50">
-                <Upload className="h-6 w-6" />
-              </span>
-              <h2 className="mt-4 text-lg font-semibold">Record or upload a walkthrough</h2>
-              <p className="mx-auto mt-2 max-w-sm text-sm text-slate-500 dark:text-slate-400">
-                Walk slowly through each room with good lighting. 30–90 seconds is plenty. Photos work too.
-              </p>
-              <button
-                onClick={() => inputRef.current?.click()}
-                className="mt-6 inline-flex h-12 items-center justify-center gap-2 rounded-full bg-brand-600 px-7 text-sm font-medium text-white transition-all hover:bg-brand-700"
-              >
-                <Sparkles className="h-4 w-4" /> {analysis ? 'Try another video' : 'Choose video or photos'}
-              </button>
+              <div className="mx-auto max-w-md text-left">
+                <GuidedCapture
+                  serviceSlug={serviceSlug}
+                  onComplete={({ frames: shot, captions }) => analyze(shot, captions, serviceSlug)}
+                  fallback={
+                    <button
+                      onClick={() => inputRef.current?.click()}
+                      className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-full bg-brand-600 px-7 text-sm font-medium text-white transition-all hover:bg-brand-700"
+                    >
+                      <Upload className="h-4 w-4" /> Choose a saved video
+                    </button>
+                  }
+                />
+              </div>
               <p className="mt-3 text-xs text-slate-400">
-                Frames are read on your device — the full video is never uploaded.
+                Frames are captured on your device — no video is uploaded or saved to your gallery.
               </p>
             </>
           )}

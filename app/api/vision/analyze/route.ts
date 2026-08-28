@@ -5,18 +5,17 @@ import { buildAnalysis } from '@/lib/vision/estimate';
 import { priceFromAnalysis } from '@/lib/vision/pricing';
 import { services } from '@/lib/config/services';
 import { saveVisionAnalysis, createLead } from '@/lib/data';
-import { framesAreSafe, FRAME_ERROR } from '@/lib/vision/input';
+import { framesAreSafe, validateCaptions, FRAME_ERROR, MAX_FRAMES } from '@/lib/vision/input';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
-
-const MAX_FRAMES = 12;
 
 const schema = z.object({
   frames: z
     .array(z.string().min(32))
     .min(1, 'Add at least one frame')
     .max(MAX_FRAMES, `Up to ${MAX_FRAMES} frames`),
+  captions: z.array(z.string().max(200)).max(MAX_FRAMES).optional(),
   serviceSlug: z.string().refine((s) => services.some((x) => x.slug === s), 'Unknown service'),
   city: z.string().max(120).optional(),
   contact: z
@@ -44,13 +43,18 @@ export async function POST(req: Request) {
     );
   }
 
-  const { frames, serviceSlug, city, contact } = parsed.data;
+  const { frames, captions, serviceSlug, city, contact } = parsed.data;
   if (!framesAreSafe(frames)) {
     return NextResponse.json({ error: FRAME_ERROR }, { status: 422 });
   }
 
+  const captionError = validateCaptions(frames, captions);
+  if (captionError) {
+    return NextResponse.json({ error: captionError }, { status: 422 });
+  }
+
   const analyzer = getAnalyzer();
-  const { rooms, warnings } = await analyzer.analyze({ frames, serviceSlug });
+  const { rooms, warnings } = await analyzer.analyze({ frames, captions, serviceSlug });
 
   const analysis = buildAnalysis(rooms, { serviceSlug, source: analyzer.name, warnings });
   if (analysis.rooms.length === 0) {

@@ -25,6 +25,13 @@ You receive still frames sampled from a walkthrough video of a home or business.
 
 Identify each DISTINCT physical room visible across the frames. Multiple frames often show the SAME room from different angles — do not double-count. Prefer under-reporting rooms over inventing them.
 
+Frames may be captioned. A caption looks like "[kitchen-1] kitchen — Dentro del microondas (Cocina)". When captions are present they are ground truth recorded at capture time, not guesses:
+- The bracketed id identifies the physical space. Every frame sharing an id is the SAME room. Report exactly one room per distinct id, no more and no fewer.
+- Use the caption's room type rather than inferring one from the pixels.
+- The Spanish text says what the camera was aimed at, so judge that surface. A frame captioned "Dentro del horno" is scored on the inside of the oven, not on the kitchen around it.
+- Score each room from all of its frames together. A close-up of clean countertops does not make the room clean if its floor frame is filthy.
+- An uncaptioned frame is an extra the person added; assign it to a captioned space if it clearly belongs to one, otherwise treat it as its own room.
+
 Rate soiling against this published industry rubric, not against your own sense of "dirty". A human inspector is scoring the same rooms with these exact words, and the two of you must be able to disagree about the room rather than about what the number means:
 
 ${appaPromptRubric()}
@@ -89,9 +96,18 @@ function coerceObservations(parsed: any): { rooms: RawRoomObservation[]; warning
 
 export const visionLlmAnalyzer: VisionAnalyzer = {
   name: 'vision-llm',
-  async analyze({ frames }: AnalyzerInput) {
+  async analyze({ frames, captions }: AnalyzerInput) {
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) return { rooms: [], warnings: ['Vision model not configured.'] };
+
+    // A caption goes immediately before the image it describes. Sending them
+    // as one block up front would make the model count positions to pair them
+    // up, and an off-by-one there labels every frame with its neighbour.
+    const frameParts = frames.flatMap((url, i) => {
+      const caption = captions?.[i]?.trim();
+      const image = { type: 'image_url' as const, image_url: { url, detail: 'low' as const } };
+      return caption ? [{ type: 'text' as const, text: `Frame ${i + 1} — ${caption}` }, image] : [image];
+    });
 
     try {
       const res = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -107,11 +123,13 @@ export const visionLlmAnalyzer: VisionAnalyzer = {
             {
               role: 'user',
               content: [
-                { type: 'text', text: `Analyze these ${frames.length} frames from a property walkthrough.` },
-                ...frames.map((url) => ({
-                  type: 'image_url' as const,
-                  image_url: { url, detail: 'low' as const },
-                })),
+                {
+                  type: 'text',
+                  text: captions?.length
+                    ? `Analyze these ${frames.length} captioned frames from a guided walkthrough. The captions were recorded as each shot was taken — trust them for room identity.`
+                    : `Analyze these ${frames.length} frames from a property walkthrough.`,
+                },
+                ...frameParts,
               ],
             },
           ],

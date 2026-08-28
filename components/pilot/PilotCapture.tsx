@@ -13,6 +13,7 @@ import {
 } from '@/lib/vision/types';
 import { VoiceControl } from '@/components/pilot/VoiceControl';
 import { LiveCapture } from '@/components/capture/LiveCapture';
+import { GuidedCapture } from '@/components/capture/GuidedCapture';
 import { RoomSize } from '@/components/pilot/RoomSize';
 import { appaLevelFor } from '@/lib/vision/appa';
 import type { VoiceCommand } from '@/lib/vision/voice-commands';
@@ -87,8 +88,12 @@ export function PilotCapture({ capturedBy }: { capturedBy: string }) {
     }
   }
 
-  /** Shared by the live camera and the file picker — one analysis path. */
-  async function analyzeFrames(frames: string[], phase: 'before' | 'after' = 'before') {
+  /** Shared by the guided walkthrough, the live camera and the file picker. */
+  async function analyzeFrames(
+    frames: string[],
+    phase: 'before' | 'after' = 'before',
+    captions?: string[],
+  ) {
     setError('');
     try {
       if (phase === 'before') setFrameCount(frames.length);
@@ -97,7 +102,7 @@ export function PilotCapture({ capturedBy }: { capturedBy: string }) {
       const res = await fetch('/api/vision/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ frames, serviceSlug, city }),
+        body: JSON.stringify({ frames, captions, serviceSlug, city }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -448,9 +453,9 @@ export function PilotCapture({ capturedBy }: { capturedBy: string }) {
               </div>
             ) : (
               <>
-                <LiveCapture
-                  label="Grabar recorrido"
-                  onFrames={(frames) => analyzeFrames(frames, 'before')}
+                <GuidedCapture
+                  serviceSlug={serviceSlug}
+                  onComplete={({ frames, captions }) => analyzeFrames(frames, 'before', captions)}
                   fallback={
                     <button
                       onClick={() => inputRef.current?.click()}
@@ -461,6 +466,19 @@ export function PilotCapture({ capturedBy }: { capturedBy: string }) {
                     </button>
                   }
                 />
+                {/* The free-form pass stays available: a pro who already knows
+                    the property does not need to be walked through it. */}
+                <details className="rounded-xl border p-3">
+                  <summary className="cursor-pointer text-sm font-medium">
+                    Grabar libre, sin guía
+                  </summary>
+                  <div className="mt-3">
+                    <LiveCapture
+                      label="Grabar recorrido libre"
+                      onFrames={(frames) => analyzeFrames(frames, 'before')}
+                    />
+                  </div>
+                </details>
                 <BackButton onClick={() => setStep('consent')} />
               </>
             )}

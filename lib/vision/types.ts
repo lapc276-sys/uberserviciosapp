@@ -114,6 +114,16 @@ export interface RawRoomObservation {
 export interface AnalyzerInput {
   /** Data URLs or https URLs of frames sampled from the walkthrough video. */
   frames: string[];
+  /**
+   * What each frame was aimed at, parallel to `frames`, when the walkthrough
+   * was guided rather than sampled blindly.
+   *
+   * This is the difference between a model inferring which room a photo
+   * belongs to and being told. Inference is where double-counted rooms come
+   * from: four angles of one bathroom read as two bathrooms, and the estimate
+   * doubles. Absent for unguided uploads, where guessing is all there is.
+   */
+  captions?: string[];
   serviceSlug: string;
 }
 

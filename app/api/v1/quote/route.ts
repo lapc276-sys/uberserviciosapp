@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { getAnalyzer } from '@/lib/vision/analyzer';
 import { buildAnalysis } from '@/lib/vision/estimate';
 import { priceFromAnalysis } from '@/lib/vision/pricing';
-import { validateFrames } from '@/lib/vision/input';
+import { validateFrames, validateCaptions, MAX_FRAMES } from '@/lib/vision/input';
 import { services } from '@/lib/config/services';
 import { apiKeyFromRequest, checkQuota, getTenantByApiKey, recordQuote } from '@/lib/tenants/store';
 
@@ -21,14 +21,12 @@ import { apiKeyFromRequest, checkQuota, getTenantByApiKey, recordQuote } from '@
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 
-/** Higher than the first-party flow — API callers sample longer walkthroughs. */
-const MAX_FRAMES = 20;
-
 const schema = z.object({
   frames: z
     .array(z.string().min(32))
     .min(1, 'Add at least one frame')
     .max(MAX_FRAMES, `Up to ${MAX_FRAMES} frames`),
+  captions: z.array(z.string().max(200)).max(MAX_FRAMES).optional(),
   serviceSlug: z.string().refine((s) => services.some((x) => x.slug === s), 'Unknown service'),
   /** Free-form caller-side identifier, echoed back so they can reconcile. */
   reference: z.string().max(120).optional(),
@@ -72,14 +70,14 @@ export async function POST(req: Request) {
     );
   }
 
-  const { frames, serviceSlug, reference } = parsed.data;
-  const frameError = validateFrames(frames);
+  const { frames, captions, serviceSlug, reference } = parsed.data;
+  const frameError = validateFrames(frames) ?? validateCaptions(frames, captions);
   if (frameError) {
     return NextResponse.json({ error: 'invalid_frames', message: frameError }, { status: 422 });
   }
 
   const analyzer = getAnalyzer();
-  const { rooms, warnings } = await analyzer.analyze({ frames, serviceSlug });
+  const { rooms, warnings } = await analyzer.analyze({ frames, captions, serviceSlug });
 
   const analysis = buildAnalysis(rooms, {
     serviceSlug,

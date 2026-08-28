@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { Video, Loader2, Check, RotateCcw, AlertTriangle } from 'lucide-react';
 import { extractFrames, readImages, UnsupportedVideoError, DEFAULT_FRAME_COUNT } from '@/lib/vision/frames';
+import { GuidedCapture } from '@/components/capture/GuidedCapture';
 
 /**
  * The quoting page a cleaning company hands to its own customers.
@@ -77,6 +78,35 @@ export function HostedQuote({
 
   const busy = stage === 'reading' || stage === 'analyzing' || stage === 'sending';
 
+  /** Shared by the guided walkthrough and the saved-video fallback. */
+  async function requestQuote(frames: string[], captions: string[] | undefined, service: string) {
+    setError('');
+    setQuote(null);
+    setServiceSlug(service);
+
+    try {
+      setStage('analyzing');
+      const res = await fetch(`/api/public/quote/${slug}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ frames, captions, serviceSlug: service }),
+      });
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        setError(data.message ?? 'No pudimos calcular el estimado. Inténtalo otra vez.');
+        setStage('idle');
+        return;
+      }
+
+      setQuote(data as Quote);
+      setStage('quoted');
+    } catch {
+      setError('No pudimos calcular el estimado. Inténtalo otra vez.');
+      setStage('idle');
+    }
+  }
+
   async function handleFiles(files: FileList | null) {
     if (!files || files.length === 0) return;
     setError('');
@@ -91,22 +121,8 @@ export function HostedQuote({
         ? await extractFrames(list[0], { onProgress: (done, total) => setProgress({ done, total }) })
         : await readImages(list);
 
-      setStage('analyzing');
-      const res = await fetch(`/api/public/quote/${slug}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ frames, serviceSlug }),
-      });
-      const data = await res.json().catch(() => ({}));
-
-      if (!res.ok) {
-        setError(data.message ?? 'No pudimos calcular el estimado. Inténtalo otra vez.');
-        setStage('idle');
-        return;
-      }
-
-      setQuote(data as Quote);
-      setStage('quoted');
+      // An uploaded video carries no captions — nobody was told what to aim at.
+      await requestQuote(frames, undefined, serviceSlug);
     } catch (err) {
       setError(
         err instanceof UnsupportedVideoError
@@ -168,59 +184,48 @@ export function HostedQuote({
 
   return (
     <div className="space-y-5">
-      {/* Step 1 — what kind of job */}
-      <div className="rounded-2xl border p-5">
-        <label className="block text-sm font-medium">1. ¿Qué tipo de limpieza necesitas?</label>
-        <select
-          value={serviceSlug}
-          onChange={(e) => setServiceSlug(e.target.value)}
-          disabled={busy || stage === 'quoted'}
-          className="mt-2 min-h-[48px] w-full rounded-xl border bg-white px-3 text-sm outline-none disabled:opacity-60 dark:bg-white/5"
-        >
-          {services.map((s) => (
-            <option key={s.slug} value={s.slug}>
-              {s.name}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      {/* Step 2 — the video */}
-      {stage !== 'quoted' && (
+      {/* The walkthrough. No form to fill in first: the guide asks which
+          spaces there are as it goes, and asks how deep a clean at the end,
+          which is every question the old service dropdown was asking up front
+          of someone who has not seen a price yet. */}
+      {stage !== 'quoted' && !busy && (
         <div className="rounded-2xl border p-5">
-          <p className="text-sm font-medium">2. Graba un recorrido</p>
-          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-            Camina despacio por cada habitación, unos 30 segundos en total. Enciende las luces y apunta a
-            suelos, encimeras y baños.
-          </p>
-
-          <label
-            className={`mt-4 flex min-h-[64px] cursor-pointer items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 text-sm font-medium ${
-              busy ? 'opacity-60' : ''
-            }`}
-          >
-            {busy ? <Loader2 className="h-5 w-5 animate-spin" /> : <Video className="h-5 w-5" />}
-            {stage === 'reading'
-              ? `Leyendo el vídeo… ${progress.done}/${progress.total}`
-              : stage === 'analyzing'
-                ? 'Calculando tu estimado…'
-                : 'Grabar o elegir un vídeo'}
-            <input
-              type="file"
-              accept="video/*,image/*"
-              capture="environment"
-              multiple
-              className="sr-only"
-              disabled={busy}
-              onChange={(e) => {
-                handleFiles(e.target.files);
-                e.target.value = '';
-              }}
-            />
-          </label>
+          <GuidedCapture
+            onComplete={({ frames, captions, serviceSlug: chosen }) =>
+              requestQuote(frames, captions, chosen)
+            }
+            fallback={
+              <label className="flex min-h-[64px] cursor-pointer items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 text-sm font-medium">
+                <Video className="h-5 w-5" /> Subir un vídeo que ya tengas
+                <input
+                  type="file"
+                  accept="video/*,image/*"
+                  capture="environment"
+                  multiple
+                  className="sr-only"
+                  onChange={(e) => {
+                    handleFiles(e.target.files);
+                    e.target.value = '';
+                  }}
+                />
+              </label>
+            }
+          />
 
           <p className="mt-3 text-xs text-slate-400">
-            El vídeo no se sube: tu teléfono extrae unas pocas imágenes y solo esas se envían.
+            No se sube ningún vídeo ni se guarda nada en tu galería: las fotos salen de la cámara
+            directo al estimado.
+          </p>
+        </div>
+      )}
+
+      {busy && stage !== 'sending' && (
+        <div className="rounded-2xl border p-8 text-center">
+          <Loader2 className="mx-auto h-8 w-8 animate-spin text-brand-600" />
+          <p className="mt-4 text-sm font-medium">
+            {stage === 'reading'
+              ? `Leyendo el vídeo… ${progress.done}/${progress.total}`
+              : 'Calculando tu estimado…'}
           </p>
         </div>
       )}

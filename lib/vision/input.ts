@@ -133,6 +133,39 @@ export function validateFrames(frames: string[]): string | null {
   return null;
 }
 
+/**
+ * The most frames one request may carry.
+ *
+ * Set by the guided walkthrough, which plans a fixed number of deliberate
+ * shots and encodes each to `MAX_TOTAL_CHARS / frameCount`. More frames than
+ * this means each one is compressed past the point where grout, film on a
+ * countertop, or the inside of an oven is still legible — and an unreadable
+ * frame costs a model call without improving the estimate.
+ */
+export const MAX_FRAMES = 24;
+
+/** Long enough for "[bathroom-2] bathroom — Ducha o bañera (Baño 2)". */
+export const MAX_CAPTION_CHARS = 160;
+
+/**
+ * Checks the per-frame captions a guided walkthrough sends.
+ *
+ * Captions are positional — caption `i` describes frame `i` — so a mismatched
+ * length is not a cosmetic problem: it silently relabels every frame after the
+ * gap, and the model is explicitly told to trust captions over the pixels.
+ * Rejecting is the only safe answer.
+ */
+export function validateCaptions(frames: string[], captions?: string[]): string | null {
+  if (!captions) return null;
+  if (captions.length !== frames.length) {
+    return 'When captions are sent there must be exactly one per frame, in the same order.';
+  }
+  if (captions.some((c) => c.length > MAX_CAPTION_CHARS)) {
+    return `Each caption must be under ${MAX_CAPTION_CHARS} characters.`;
+  }
+  return null;
+}
+
 /** Generic fallback for callers that don't surface the specific reason. */
 export const FRAME_ERROR =
   'Frames must be JPEG, PNG or WebP images, sent inline or as public https URLs, ' +

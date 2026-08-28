@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { getAnalyzer } from '@/lib/vision/analyzer';
 import { buildAnalysis } from '@/lib/vision/estimate';
 import { priceFromAnalysis } from '@/lib/vision/pricing';
-import { validateFrames } from '@/lib/vision/input';
+import { validateFrames, validateCaptions, MAX_FRAMES } from '@/lib/vision/input';
 import { services } from '@/lib/config/services';
 import { checkQuota, getTenantBySlug, recordQuote } from '@/lib/tenants/store';
 import { rateLimit, clientIp } from '@/lib/rate-limit';
@@ -31,7 +31,8 @@ const RATE_LIMIT = 5;
 const RATE_WINDOW_MS = 10 * 60 * 1000;
 
 const schema = z.object({
-  frames: z.array(z.string().min(32)).min(1).max(12),
+  frames: z.array(z.string().min(32)).min(1).max(MAX_FRAMES),
+  captions: z.array(z.string().max(200)).max(MAX_FRAMES).optional(),
   serviceSlug: z.string().refine((s) => services.some((x) => x.slug === s), 'Unknown service'),
 });
 
@@ -75,14 +76,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ slug: s
     return NextResponse.json({ error: 'invalid_request', message: parsed.error.issues[0]?.message }, { status: 422 });
   }
 
-  const { frames, serviceSlug } = parsed.data;
-  const frameError = validateFrames(frames);
+  const { frames, captions, serviceSlug } = parsed.data;
+  const frameError = validateFrames(frames) ?? validateCaptions(frames, captions);
   if (frameError) {
     return NextResponse.json({ error: 'invalid_frames', message: frameError }, { status: 422 });
   }
 
   const analyzer = getAnalyzer();
-  const { rooms, warnings } = await analyzer.analyze({ frames, serviceSlug });
+  const { rooms, warnings } = await analyzer.analyze({ frames, captions, serviceSlug });
 
   const analysis = buildAnalysis(rooms, {
     serviceSlug,
