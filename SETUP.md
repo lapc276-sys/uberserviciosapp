@@ -381,3 +381,95 @@ debajo — el trabajo se alarga y lo paga tu margen. Es el error caro.
 
 Debajo de 8 muestras aparece "too few": con tan pocos datos una jornada rara
 mueve la mediana entera. No cambies precios con eso.
+
+---
+
+## Desplegar en Replit (alternativa a Vercel)
+
+La app es Next.js estándar. Lo único que estaba atado a Vercel eran las dos
+tareas programadas, y ya tienen equivalente aquí. **El proyecto puede vivir en
+cualquiera de las dos plataformas sin cambiar código** — el `vercel.json` y el
+`.replit` conviven, cada plataforma lee el suyo e ignora el otro.
+
+### 1. Traer el proyecto
+
+En Replit: **Create Repl → Import from GitHub** →
+`lapc276-sys/uberserviciosapp`, rama `main`.
+
+Replit detecta Node.js y lee el archivo `.replit` que ya está en el repositorio.
+
+### 2. Secretos
+
+Panel izquierdo → **Secrets** (el icono del candado). Mínimo para poder entrar:
+
+| Clave | Valor |
+|---|---|
+| `AUTH_SECRET` | una cadena larga y aleatoria |
+| `ADMIN_EMAIL` | tu correo |
+| `ADMIN_PASSWORD` | una contraseña larga |
+| `NEXT_PUBLIC_SITE_URL` | la dirección pública, sin barra final |
+
+`NEXT_PUBLIC_SITE_URL` la sabrás después de publicar. Ponla, vuelve a
+publicar, y ya queda bien.
+
+⚠️ **`NEXT_PUBLIC_` significa "esto se envía al navegador".** Va solo en la
+dirección web, que es pública de todas formas. Nunca se lo pongas a
+`AUTH_SECRET` ni a `ADMIN_PASSWORD` — cualquiera que abra tu web podría leerlas.
+
+### 3. Base de datos (opcional, pero merece la pena aquí)
+
+Replit trae **PostgreSQL integrado**: pestaña **Database** → crear. Te da una
+cadena de conexión; pégala como secreto `DATABASE_URL` y luego, en la consola:
+
+```
+npm run db:push
+```
+
+Sin esto la app funciona igual, pero los datos viven en memoria y **se pierden
+en cada reinicio** — incluidas tus muestras del piloto. Para recoger datos de
+verdad, esto no es opcional.
+
+### 4. Publicar
+
+Botón **Deploy** → **Autoscale**. Los comandos ya vienen puestos en `.replit`:
+
+- Build: `npm run build`
+- Run: `npm run start`
+
+El `start` escucha en `0.0.0.0` y en el puerto que Replit asigne. Comprobado
+arrancando en un puerto distinto del habitual.
+
+**Aviso de costes:** un Autoscale Deployment consume créditos de cómputo aparte
+de tu suscripción. Con poco tráfico suele ser insignificante, pero míralo antes
+de dejarlo corriendo — no vale la pena huir de una factura para encontrarse otra.
+
+### 5. Las dos tareas programadas
+
+En Vercel se configuraban solas desde `vercel.json`. En Replit se crean a mano:
+**Deployments → Scheduled**, una por cada tarea.
+
+| Tarea | Comando | Cuándo |
+|---|---|---|
+| Recordatorios | `npm run cron:reminders` | cada hora: `0 * * * *` |
+| Campañas | `npm run cron:campaigns` | martes 15:00: `0 15 * * 2` |
+
+Necesitan dos secretos más:
+
+| Clave | Valor |
+|---|---|
+| `CRON_SECRET` | una cadena aleatoria, la que quieras |
+| `CRON_TARGET_URL` | la misma dirección pública de la app |
+
+Hace falta `CRON_TARGET_URL` porque una tarea programada corre en un contenedor
+**distinto** al de la web: no puede llamarse a sí misma por `localhost`.
+
+Si una tarea falla —clave incorrecta, web caída— el comando **termina con
+error**, así que Replit te la marca en rojo. Una tarea rota que apareciera en
+verde sería peor que no tener tarea: creerías que se enviaron recordatorios que
+nadie recibió.
+
+### Qué NO cambia al mudarse
+
+Ni una línea de código de la aplicación. Y si algún día montas servidores
+propios, lo único que necesitas es Node y Postgres: `npm run build`,
+`npm run start`, y un cron del sistema llamando a esos dos comandos.

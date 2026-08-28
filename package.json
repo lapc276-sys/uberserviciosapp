@@ -2,18 +2,20 @@
   "name": "homigo",
   "version": "0.1.0",
   "private": true,
-  "description": "Homigo — Home services, on autopilot. Automated home-services platform (cleaning first, built to scale).",
+  "description": "Homigo \u2014 Home services, on autopilot. Automated home-services platform (cleaning first, built to scale).",
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev -H 0.0.0.0 -p ${PORT:-3000}",
     "build": "next build",
-    "start": "next start",
+    "start": "next start -H 0.0.0.0 -p ${PORT:-3000}",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "postinstall": "prisma generate",
     "db:push": "prisma db push",
     "db:migrate": "prisma migrate dev",
     "db:seed": "tsx prisma/seed.ts",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "cron:reminders": "node scripts/run-cron.mjs reminders",
+    "cron:campaigns": "node scripts/run-cron.mjs campaigns"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

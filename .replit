@@ -1,0 +1,29 @@
+# Replit configuration.
+#
+# The app is plain Next.js, so nothing here is a port of the code — it only
+# tells Replit how to build and run it, and which port to expose. The Vercel
+# config stays in the repo alongside this one; neither platform reads the
+# other's file, so the project can move back without changes.
+
+entrypoint = "package.json"
+modules = ["nodejs-20"]
+
+run = "npm run dev"
+
+[nix]
+channel = "stable-24_05"
+
+[deployment]
+# Autoscale suits a quoting API: bursty, stateless per request, idle most of
+# the time. Reserved VM would be the choice only if something needed to keep
+# running between requests, and nothing here does.
+deploymentTarget = "autoscale"
+build = ["npm", "run", "build"]
+run = ["npm", "run", "start"]
+
+[[ports]]
+localPort = 3000
+externalPort = 80
+
+[env]
+NODE_ENV = "production"
