@@ -149,6 +149,90 @@ def _luz(ruta_png):
         return None, None
 
 
+def mosaico(inf, salida, columnas=3):
+    """Todos los fotogramas en UNA imagen, con su hora y el veredicto.
+
+    Nueve archivos sueltos en una carpeta del servidor no los mira nadie.
+    Una sola imagen sí: se abre en el navegador, se ve de un vistazo si
+    el video salió bien y se puede mandar por chat tal cual. Es la
+    diferencia entre tener el control y usarlo.
+    """
+    fotos = [f for f in (inf.get("fotogramas") or []) if
+             os.path.exists(f.get("png", ""))]
+    if not fotos:
+        return None
+    try:
+        from PIL import Image, ImageDraw
+    except Exception:
+        return None
+    try:
+        import diagramas as D
+    except Exception:
+        D = None
+
+    with Image.open(fotos[0]["png"]) as p:
+        cw, ch = p.size
+    cols = max(1, min(columnas, len(fotos)))
+    filas = (len(fotos) + cols - 1) // cols
+    sep, cab = 10, 78
+    W = cols * cw + sep * (cols + 1)
+    H = cab + filas * (ch + 22) + sep * (filas + 1)
+    lienzo = Image.new("RGB", (W, H), "#0A0C11")
+    dib = ImageDraw.Draw(lienzo)
+
+    def _f(tam, negrita=True):
+        if D:
+            return D._fuente(tam, negrita)
+        from PIL import ImageFont
+        return ImageFont.load_default()
+
+    m = inf.get("meta") or {}
+    verde, rojo, ambar = "#31D97A", "#FF2D16", "#FFB020"
+    color = rojo if inf.get("grave") else (ambar if inf.get("avisos")
+                                           else verde)
+    dib.rectangle([0, 0, W, 5], fill=color)
+    dib.text((sep + 4, 16), os.path.basename(inf.get("archivo", "")),
+             font=_f(26), fill="#F2F4F8")
+    linea = (f"{m.get('duracion', 0):.0f}s · {m.get('ancho', '?')}x"
+             f"{m.get('alto', '?')} · {m.get('audio') or 'SIN AUDIO'}")
+    dib.text((sep + 4, 46), linea, font=_f(19, False), fill="#8892A3")
+    aviso = "; ".join((inf.get("grave") or []) + (inf.get("avisos") or []))
+    if aviso:
+        dib.text((sep + 4 + 320, 46), aviso[:110], font=_f(19, False),
+                 fill=color)
+
+    for i, f in enumerate(fotos):
+        cx = sep + (i % cols) * (cw + sep)
+        cy = cab + sep + (i // cols) * (ch + 22 + sep)
+        with Image.open(f["png"]) as im:
+            im = im.convert("RGB")
+            # Todos los fotogramas salen del mismo video y miden lo
+            # mismo, pero si alguno no lo hace, la rejilla se descuadra
+            # entera a partir de ahí. Ajustarlo cuesta una línea.
+            if im.size != (cw, ch):
+                im = im.resize((cw, ch))
+            lienzo.paste(im, (cx, cy))
+        # Un borde de color solo si ESE fotograma tiene algo raro: sin
+        # marca, el ojo no sabe cuál mirar de los nueve.
+        if f.get("marca"):
+            dib.rectangle([cx, cy, cx + cw - 1, cy + ch - 1],
+                          outline=rojo if f["marca"] == "negro" else ambar,
+                          width=3)
+        etq = f"{int(f['t'] // 60):02d}:{int(f['t'] % 60):02d}"
+        if f.get("marca"):
+            etq += f"  ({f['marca']})"
+        dib.text((cx + 2, cy + ch + 3), etq, font=_f(17, False),
+                 fill="#8892A3" if not f.get("marca") else ambar)
+    with contextlib.suppress(Exception):
+        os.makedirs(os.path.dirname(os.path.abspath(salida)), exist_ok=True)
+    try:
+        lienzo.save(salida, "PNG")
+        return salida
+    except Exception as e:
+        log.info("No pude guardar el mosaico de revisión (%s)", e)
+        return None
+
+
 def revisar(ruta, destino=None, fotogramas=9, esperado=None):
     """Revisa un video ya montado. Devuelve el informe; no borra nada.
 
@@ -246,6 +330,16 @@ def revisar(ruta, destino=None, fotogramas=9, esperado=None):
             f"{apagados} de {len(inf['fotogramas'])} fotogramas en negro")
 
     inf["ok"] = not inf["grave"]
+    # El mosaico va SIEMPRE, salga bien o mal, y siempre al mismo sitio:
+    # estatico/revision.png es "el último video que montamos, visto".
+    # Estando ahí se abre desde el navegador sin entrar al servidor.
+    inf["mosaico"] = mosaico(inf, os.path.join(destino, "mosaico.png"))
+    with contextlib.suppress(Exception):
+        if inf["mosaico"]:
+            os.makedirs("estatico", exist_ok=True)
+            import shutil as _sh
+            _sh.copy(inf["mosaico"], os.path.join("estatico", "revision.png"))
+            inf["url"] = "/estatico/revision.png"
     return inf
 
 

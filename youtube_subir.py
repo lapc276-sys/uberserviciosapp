@@ -1425,8 +1425,9 @@ async def subir_video(video_path, titulo, descripcion, tags, privacidad=None,
         with contextlib.suppress(Exception):
             import revisar
             inf = await revisar.revisar_async(video_path, fotogramas=6)
-            log.info("🔍 Revisión de %s: %s", os.path.basename(video_path),
-                     revisar.resumen(inf))
+            log.info("🔍 Revisión de %s: %s%s", os.path.basename(video_path),
+                     revisar.resumen(inf),
+                     "  →  /estatico/revision.png" if inf.get("url") else "")
             if inf.get("grave"):
                 log.error("📤 NO se sube %s — %s. Los fotogramas están en "
                           "%s para que los mires.", os.path.basename(

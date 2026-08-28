@@ -40,3 +40,8 @@ miniatura*.jpg
 
 # Tipografía descargada en el arranque (OFL, se baja sola)
 tipos/
+
+# Revisión de nuestros propios videos: fotogramas y mosaico. Es salida
+# de una comprobación, no fuente — se regenera con cada video.
+revision/
+estatico/revision.png
