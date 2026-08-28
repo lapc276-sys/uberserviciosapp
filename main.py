@@ -7041,11 +7041,16 @@ async def _titular_capitulos(client, caps):
 
 
 async def _indice_capitulos(audios, textos, client=None):
-    """Bloque de capítulos para la descripción de un video LARGO, o "".
+    """Capítulos de un video LARGO: (bloque_para_la_descripción, marcas).
 
     `audios` son los MP3 por línea en el mismo orden en que se concatenan;
     de ahí salen los tiempos exactos. Nunca lanza: si algo no cuadra, el
     video se sube sin índice, que es mejor que subirlo con uno roto.
+
+    Las `marcas` son [{inicio, titulo}] y sirven para dibujar la hoja de
+    cada capítulo DENTRO del video. Por eso esto se llama ANTES de montar
+    el video, aunque el índice no se use hasta escribir la descripción:
+    los dos salen del mismo cálculo y así no pueden discrepar.
     """
     try:
         piezas = []
@@ -7054,17 +7059,36 @@ async def _indice_capitulos(audios, textos, client=None):
             piezas.append((dur, textos[i] if i < len(textos) else ""))
         caps = capitulos.agrupar(piezas)
         if not caps:
-            return ""
+            return "", []
         titulos = await _titular_capitulos(client, caps)
         if not titulos:
-            return ""
+            return "", []
         bloque = capitulos.bloque(caps, titulos)
-        if bloque:
-            log.info("🔖 %d capítulos añadidos al video", len(caps))
-        return bloque
+        if not bloque:
+            return "", []
+        log.info("🔖 %d capítulos añadidos al video", len(caps))
+        return bloque, [{"inicio": c["inicio"], "titulo": t}
+                        for c, t in zip(caps, titulos)]
     except Exception as e:
         log.info("Capítulos no generados (%s)", e)
-        return ""
+        return "", []
+
+
+async def _hojas_capitulo(audios, textos, tmp, client=None, horizontal=True):
+    """Los capítulos y sus HOJAS ya dibujadas, listas para el montaje.
+
+    Devuelve (bloque, hojas). Si algo falla se devuelve ("", []) y el
+    video sale como salía antes: sin índice y sin hojas.
+    """
+    bloque, marcas = await _indice_capitulos(audios, textos, client)
+    if not marcas:
+        return bloque, []
+    tam = (1920, 1080) if horizontal else (1080, 1920)
+    hojas = await asyncio.to_thread(
+        capitulos.tarjetas, marcas, os.path.join(tmp, "capitulos"), tam)
+    if hojas:
+        log.info("📖 %d hojas de capítulo dentro del video", len(hojas))
+    return bloque, hojas
 # Estructuras de título que se van ROTANDO. Sin esto, el modelo tiende
 # siempre al mismo molde ("Why F1...", "Why Track...") y cuatro shorts
 # seguidos parecen el mismo video en el feed — el espectador desliza sin
@@ -10552,26 +10576,26 @@ async def _vod_procesar(ruta):
         with open(meta_ruta, "w") as f:
             json.dump(meta, f)
         return False
+    # Capítulos: el guion se grabó línea a línea junto a los MP3, así que
+    # los tiempos salen exactos de la duración de cada archivo. Se calculan
+    # ANTES de montar para que las hojas de capítulo entren en el video.
+    guion = []
+    with contextlib.suppress(Exception):
+        with open(os.path.join(ruta, "guion.txt")) as f:
+            guion = [ln.strip() for ln in f if ln.strip()]
+    indice, hojas = "", []
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        with contextlib.suppress(Exception):
+            indice, hojas = await _hojas_capitulo(
+                audios, guion, ruta, anthropic.AsyncAnthropic())
     video = os.path.join(ruta, "vod.mp4")
     ok = await youtube_subir.armar_video(audio_total, fotos, titulo, video,
-                                         horizontal=True)
+                                         horizontal=True, capitulos=hojas)
     if not ok:
         meta["intentos"] = meta.get("intentos", 0) + 1
         with open(meta_ruta, "w") as f:
             json.dump(meta, f)
         return False
-
-    # Capítulos: el guion se grabó línea a línea junto a los MP3, así que
-    # los tiempos salen exactos de la duración de cada archivo.
-    guion = []
-    with contextlib.suppress(Exception):
-        with open(os.path.join(ruta, "guion.txt")) as f:
-            guion = [ln.strip() for ln in f if ln.strip()]
-    indice = ""
-    if os.environ.get("ANTHROPIC_API_KEY"):
-        with contextlib.suppress(Exception):
-            indice = await _indice_capitulos(
-                audios, guion, anthropic.AsyncAnthropic())
     descripcion = (
         f"Full live commentary from our broadcast of the "
         f"{meta.get('sesion', 'session')} — {meta.get('pais', '')} "
@@ -11996,8 +12020,12 @@ async def _procesar_recap(ruta):
             json.dump(resumen, f, ensure_ascii=False)
         return False
     video = os.path.join(tmp, "recap.mp4")
+    # Los capítulos, antes de montar: el índice va a la descripción y las
+    # hojas van dentro del video, y los dos salen del mismo cálculo.
+    indice, hojas = await _hojas_capitulo(audios, textos_ok, tmp, client)
     ok = await youtube_subir.armar_video(audio_total, imagenes, titulo, video,
-                                         horizontal=True, con_musica=True)
+                                         horizontal=True, con_musica=True,
+                                         capitulos=hojas)
     if not ok:
         resumen["intentos"] = resumen.get("intentos", 0) + 1
         with open(ruta, "w") as f:
@@ -12019,7 +12047,6 @@ async def _procesar_recap(ruta):
         ([hero] + fotos) if hero else fotos,
         os.path.join(tmp, "thumb.jpg"),
         trazado=_cargar_trazado_cache(resumen.get("circuito") or ""))
-    indice = await _indice_capitulos(audios, textos_ok, client)
     descripcion = (
         f"Our full review of the {resumen.get('sesion','session')} at "
         f"{resumen.get('pais','')} — the good, the controversial, and our "
@@ -12234,8 +12261,16 @@ async def _subir_programa_video(ruta_ep):
             json.dump(ep, f)
         return
     video = os.path.join(tmp, "video.mp4")
+    # Índice y hojas de capítulo, los dos del mismo cálculo y antes de
+    # montar: las hojas tienen que entrar en el propio video.
+    indice, hojas = "", []
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        with contextlib.suppress(Exception):
+            indice, hojas = await _hojas_capitulo(
+                audios, textos_ok, tmp, anthropic.AsyncAnthropic())
     ok = await youtube_subir.armar_video(audio_total, fotos, titulo, video,
-                                         horizontal=True, con_musica=True)
+                                         horizontal=True, con_musica=True,
+                                         capitulos=hojas)
     if not ok:
         ep["video_intentos"] = ep.get("video_intentos", 0) + 1
         with open(ruta_ep, "w") as f:
@@ -12255,11 +12290,6 @@ async def _subir_programa_video(ruta_ep):
             gancho or ep.get("titulo") or prog["titulo"],
             ([hero] + fotos) if hero else fotos,
             os.path.join(tmp, "thumb.jpg"))
-    indice = ""
-    if os.environ.get("ANTHROPIC_API_KEY"):
-        with contextlib.suppress(Exception):
-            indice = await _indice_capitulos(audios, textos_ok,
-                                             anthropic.AsyncAnthropic())
     descripcion = (
         f"{prog['titulo'].title()} — {ep.get('titulo')}.\n\n"
         + (indice + "\n\n" if indice else "") +
@@ -12596,8 +12626,10 @@ async def _producir_tema(tema):
                  "'%s'", len(propios), len(clips), titulo[:50])
     fotos = fotos + cola
     video = os.path.join(tmp, "video.mp4")
+    indice, hojas = await _hojas_capitulo(audios, textos_ok, tmp, client)
     if not await youtube_subir.armar_video(audio_total, fotos, titulo, video,
-                                           horizontal=True, con_musica=True):
+                                           horizontal=True, con_musica=True,
+                                           capitulos=hojas):
         return False
     # Miniatura propia (+ posible título más curioso) para el CTR
     t_nuevo, gancho = await _titulo_y_gancho(
@@ -12609,7 +12641,6 @@ async def _producir_tema(tema):
     miniatura = await _miniatura_video(
         gancho or titulo, ([hero] + fotos) if hero else fotos,
         os.path.join(tmp, "thumb.jpg"))
-    indice = await _indice_capitulos(audios, textos_ok, client)
     descripcion = (
         f"{tema['intro']}\n\n"
         + (indice + "\n\n" if indice else "") +

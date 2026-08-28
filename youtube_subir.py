@@ -824,7 +824,7 @@ TITULO_EN_VIDEO = os.environ.get("TITULO_EN_VIDEO", "off").strip().lower() in (
 
 async def armar_video(audio_path, fotos_urls, titulo, salida_mp4,
                       horizontal=False, con_musica=False, cta_texto=None,
-                      chip=None):
+                      chip=None, capitulos=()):
     """Construye el MP4 y, si es un short vertical con `cta_texto`, le añade
     una píldora de suscripción en los últimos segundos (segunda pasada
     aislada: si falla, el video queda igual). `chip` = nombre de serie que se
@@ -833,7 +833,7 @@ async def armar_video(audio_path, fotos_urls, titulo, salida_mp4,
         titulo = ""      # el chip de serie sí se mantiene
     ok = await _armar_video_base(audio_path, fotos_urls, titulo, salida_mp4,
                                  horizontal=horizontal, con_musica=con_musica,
-                                 chip=chip)
+                                 chip=chip, capitulos=capitulos)
     if ok and cta_texto and not horizontal:
         dur = _duracion_audio(audio_path) or 25.0
         with contextlib.suppress(Exception):
@@ -851,6 +851,10 @@ TOMA_ARRANQUE = float(os.environ.get("TOMA_ARRANQUE", "3.2"))   # primeros 60 s
 TOMA_NORMAL = float(os.environ.get("TOMA_NORMAL", "4.6"))       # el resto
 TOMA_CHART = float(os.environ.get("TOMA_CHART", "6.5"))         # tienen texto
 TOMA_CLIP = float(os.environ.get("TOMA_CLIP", "5.0"))           # video propio
+# La hoja de capítulo. Corta a propósito: es un respiro y un rótulo, no
+# una pausa. Más de tres segundos de texto quieto sobre la narración ya
+# se siente como que el video se ha parado.
+TOMA_CAPITULO = float(os.environ.get("TOMA_CAPITULO", "2.6"))
 ARRANQUE_S = 60.0
 # Tope de tomas: cada una es una entrada de ffmpeg y el filtergraph crece
 # con ellas. Por encima de esto el encode se vuelve lentísimo, así que en
@@ -862,7 +866,7 @@ MAX_TOMAS = int(os.environ.get("MAX_TOMAS", "240"))
 VUELTAS_MAX = int(os.environ.get("VUELTAS_MAX", "14"))
 
 
-def _plan_tomas(dur, imgs, es_chart, es_clip, horizontal):
+def _plan_tomas(dur, imgs, es_chart, es_clip, horizontal, marcas=()):
     """Reparte el video en tomas: qué se ve en cada una y cuánto dura.
 
     Devuelve (imgs, es_chart, es_clip, duraciones).
@@ -920,10 +924,26 @@ def _plan_tomas(dur, imgs, es_chart, es_clip, horizontal):
     # Los gráficos y clips se reparten por el video en vez de amontonarse.
     cada = max(4, (len(fotos) or 1)) if otros else 0
 
+    # Las hojas de capítulo, pendientes de colocar. Van en el SEGUNDO
+    # EXACTO en el que empieza su capítulo: si se pusieran "más o menos
+    # ahí", el índice de la descripción llevaría al espectador a un sitio
+    # y la hoja diría otra cosa.
+    pend = sorted((m for m in (marcas or []) if m.get("png")),
+                  key=lambda m: m["inicio"])
+
     sec, chart2, clip2, pers = [], [], [], []
     t = 0.0
     k = j = puesto = 0
     while t < objetivo and len(sec) < MAX_TOMAS:
+        # ¿Toca hoja de capítulo? Va antes de elegir foto: es una cita
+        # con un segundo concreto, no una toma más del reparto.
+        if pend and t >= pend[0]["inicio"] - 0.05:
+            mk = pend.pop(0)
+            d = min(TOMA_CAPITULO, max(1.2, objetivo - t))
+            sec.append(mk["png"]); chart2.append(True); clip2.append(False)
+            pers.append(d)
+            t += d
+            continue
         if otros and cada and puesto and puesto % cada == 0 and j < len(otros):
             idx = otros[j]; j += 1
         elif fotos:
@@ -933,6 +953,10 @@ def _plan_tomas(dur, imgs, es_chart, es_clip, horizontal):
         else:
             break
         d = _dura(idx, t)
+        # Y si esta toma se comería el momento de la siguiente hoja, se
+        # corta justo ahí. Así la hoja entra clavada en su segundo.
+        if pend and t + d > pend[0]["inicio"]:
+            d = max(1.2, pend[0]["inicio"] - t)
         # La última toma se ajusta para no pasarse del audio
         if t + d > objetivo:
             d = max(1.5, objetivo - t)
@@ -964,7 +988,8 @@ def _imagen_valida(path):
 
 
 async def _armar_video_base(audio_path, fotos_urls, titulo, salida_mp4,
-                            horizontal=False, con_musica=False, chip=None):
+                            horizontal=False, con_musica=False, chip=None,
+                            capitulos=()):
     """Construye el MP4 (vertical para shorts; 16:9 para VODs de sesión).
     Devuelve True si se creó.
 
@@ -1069,7 +1094,7 @@ async def _armar_video_base(audio_path, fotos_urls, titulo, salida_mp4,
         # imagen salía dos veces seguidas y podía quedarse quieta casi
         # veinte segundos.
         imgs, es_chart, es_clip, pers = _plan_tomas(
-            dur, imgs, es_chart, es_clip, horizontal)
+            dur, imgs, es_chart, es_clip, horizontal, capitulos)
         if not imgs:
             return False
 
