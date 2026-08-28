@@ -17,14 +17,21 @@ const steps = [
 ];
 
 const trust = [
-  { icon: ShieldCheck, label: 'Licensed & insured' },
-  { icon: Star, label: `${site.rating.value}★ · ${site.rating.count.toLocaleString()} reviews` },
+  // Only claims that are actually true today. Insurance and review counts
+  // reappear here the moment they are real — not before.
+  ...(site.claims.licensedInsured ? [{ icon: ShieldCheck, label: 'Licensed & insured' }] : []),
+  ...(site.rating
+    ? [{ icon: Star, label: `${site.rating.value}★ · ${site.rating.count.toLocaleString()} reviews` }]
+    : []),
   { icon: Clock, label: 'Book in 60 seconds' },
 ];
 
 const homeFaqs = [
   { q: 'How does pricing work?', a: 'Transparent, upfront pricing based on your home size and service. You see the price before you book — no surprises, no hidden fees.' },
-  { q: 'Are your cleaners background-checked?', a: 'Yes. Every pro is background-checked, vetted and insured. Your satisfaction is guaranteed or we’ll make it right.' },
+  {
+    q: 'Are your cleaners background-checked?',
+    a: 'Every pro applies, and we review each application before approving them for work. We’re building out formal background screening — ask us about a specific pro and we’ll tell you exactly what we’ve verified.',
+  },
   { q: 'Can I reschedule or cancel?', a: 'Absolutely — free rescheduling or cancellation up to 24 hours before your appointment, right from your confirmation.' },
   { q: 'Do you offer recurring cleaning?', a: 'Yes, and recurring plans save up to 20%. Set weekly, bi-weekly or monthly and we handle the rest automatically.' },
 ];

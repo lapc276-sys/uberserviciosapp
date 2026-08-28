@@ -94,10 +94,15 @@ export default function ProApplyPage() {
                 </details>
               ))}
             </div>
-            <p className="mt-8 text-sm text-slate-500 dark:text-slate-400">
-              Still have questions? Call us at{' '}
-              <a href={site.phoneHref} className="text-brand-600 underline">{site.phone}</a>.
-            </p>
+            {site.phone && (
+              <p className="mt-8 text-sm text-slate-500 dark:text-slate-400">
+                Still have questions? Call us at{' '}
+                <a href={`tel:${site.phone.replace(/[^+\d]/g, '')}`} className="text-brand-600 underline">
+                  {site.phone}
+                </a>
+                .
+              </p>
+            )}
           </div>
         </div>
       </section>

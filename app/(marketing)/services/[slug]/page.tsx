@@ -68,7 +68,9 @@ export default async function ServicePage({ params }: { params: Promise<{ slug: 
               <p className="mt-4 max-w-lg text-lg text-slate-600 dark:text-slate-300">{service.description}</p>
               <div className="mt-6 flex flex-wrap items-center gap-x-5 gap-y-2 text-sm text-slate-500 dark:text-slate-400">
                 <span className="inline-flex items-center gap-1.5"><ShieldCheck className="h-4 w-4 text-brand-600" /> Insured pros</span>
-                <span className="inline-flex items-center gap-1.5"><Star className="h-4 w-4 text-brand-600" /> {site.rating.value}★ rated</span>
+                {site.rating && (
+                  <span className="inline-flex items-center gap-1.5"><Star className="h-4 w-4 text-brand-600" /> {site.rating.value}★ rated</span>
+                )}
                 <span className="inline-flex items-center gap-1.5"><Clock className="h-4 w-4 text-brand-600" /> {service.pricing.estimatedHours}</span>
               </div>
               <div className="mt-8 flex flex-col gap-3 sm:flex-row">

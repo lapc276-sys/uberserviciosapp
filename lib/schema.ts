@@ -4,8 +4,19 @@ import type { City } from './config/cities';
 
 /** JSON-LD builders. Consumed by the <JsonLd> component on relevant pages. */
 
+/**
+ * Structured data is a set of assertions to a search engine, not decoration.
+ * Every optional field here is emitted only when it is backed by something
+ * real — an absent property costs a rich-result feature, while a fabricated
+ * one is what earns a manual penalty.
+ */
+function omitEmpty<T extends Record<string, unknown>>(obj: T): T {
+  return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== null && v !== undefined)) as T;
+}
+
 export function organizationSchema() {
-  return {
+  const sameAs = Object.values(site.social);
+  return omitEmpty({
     '@context': 'https://schema.org',
     '@type': 'Organization',
     name: site.name,
@@ -14,12 +25,15 @@ export function organizationSchema() {
     logo: `${site.url}/logo.png`,
     email: site.email,
     telephone: site.phone,
-    sameAs: Object.values(site.social),
-  };
+    sameAs: sameAs.length > 0 ? sameAs : null,
+  });
 }
 
 export function localBusinessSchema(city?: City) {
-  return {
+  const a = site.address;
+  const geo = city?.geo ?? site.geo;
+
+  return omitEmpty({
     '@context': 'https://schema.org',
     '@type': 'HomeAndConstructionBusiness',
     '@id': `${site.url}#business`,
@@ -29,27 +43,26 @@ export function localBusinessSchema(city?: City) {
     telephone: site.phone,
     email: site.email,
     priceRange: site.priceRange,
-    address: {
-      '@type': 'PostalAddress',
-      streetAddress: site.address.street,
-      addressLocality: city?.name ?? site.address.city,
-      addressRegion: city?.region ?? site.address.region,
-      postalCode: site.address.postalCode,
-      addressCountry: site.address.country,
-    },
-    geo: {
-      '@type': 'GeoCoordinates',
-      latitude: city?.geo.lat ?? site.geo.lat,
-      longitude: city?.geo.lng ?? site.geo.lng,
-    },
+    // A PostalAddress tells Google the business operates from that spot.
+    // Emitted only when one exists; a city page still declares areaServed.
+    address: a
+      ? {
+          '@type': 'PostalAddress',
+          streetAddress: a.street,
+          addressLocality: city?.name ?? a.city,
+          addressRegion: city?.region ?? a.region,
+          postalCode: a.postalCode,
+          addressCountry: a.country,
+        }
+      : null,
+    geo: geo ? { '@type': 'GeoCoordinates', latitude: geo.lat, longitude: geo.lng } : null,
     openingHours: site.hours,
     areaServed: city ? `${city.name}, ${city.region}` : 'United States',
-    aggregateRating: {
-      '@type': 'AggregateRating',
-      ratingValue: site.rating.value,
-      reviewCount: site.rating.count,
-    },
-  };
+    // No invented aggregateRating. It reappears the day real reviews exist.
+    aggregateRating: site.rating
+      ? { '@type': 'AggregateRating', ratingValue: site.rating.value, reviewCount: site.rating.count }
+      : null,
+  });
 }
 
 export function serviceSchema(service: Service, city?: City) {

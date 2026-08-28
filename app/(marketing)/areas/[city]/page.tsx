@@ -67,8 +67,12 @@ export default async function CityPage({ params }: { params: Promise<{ city: str
           </h1>
           <p className="mt-4 max-w-2xl text-lg text-slate-600 dark:text-slate-300">{city.blurb}</p>
           <div className="mt-6 flex flex-wrap items-center gap-x-5 gap-y-2 text-sm text-slate-500 dark:text-slate-400">
-            <span className="inline-flex items-center gap-1.5"><ShieldCheck className="h-4 w-4 text-brand-600" /> Licensed & insured</span>
-            <span className="inline-flex items-center gap-1.5"><Star className="h-4 w-4 text-brand-600" /> {site.rating.value}★ · {site.rating.count.toLocaleString()} reviews</span>
+            {site.claims.licensedInsured && (
+              <span className="inline-flex items-center gap-1.5"><ShieldCheck className="h-4 w-4 text-brand-600" /> Licensed &amp; insured</span>
+            )}
+            {site.rating && (
+              <span className="inline-flex items-center gap-1.5"><Star className="h-4 w-4 text-brand-600" /> {site.rating.value}★ · {site.rating.count.toLocaleString()} reviews</span>
+            )}
           </div>
           <div className="mt-8">
             <Button href="/book" size="lg">Book in {city.name} <ArrowRight className="h-4 w-4" /></Button>

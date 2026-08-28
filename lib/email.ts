@@ -64,6 +64,18 @@ export async function sendEmail({ to, subject, html, replyTo, marketing }: Email
   }
 }
 
+/**
+ * Whether promotional email may legally be sent yet.
+ *
+ * CAN-SPAM requires a valid physical postal address in every commercial
+ * message. Sending without one is not a cosmetic gap — it is the violation
+ * itself, per message. Campaigns check this before sending rather than
+ * substituting a plausible-looking address, which would be worse.
+ */
+export function canSendMarketing(): boolean {
+  return site.address !== null;
+}
+
 // ── Templates ────────────────────────────────────────────────────────────────
 /**
  * @param unsubscribeFor  Recipient address. Present only on promotional mail,
@@ -71,15 +83,17 @@ export async function sendEmail({ to, subject, html, replyTo, marketing }: Email
  *   opt-out link. Transactional mail omits both.
  */
 function shell(inner: string, unsubscribeFor?: string): string {
-  const { street, city, region, postalCode } = site.address;
+  const a = site.address;
+  const postal = a ? `${a.street}, ${a.city}, ${a.region} ${a.postalCode}` : null;
+
   const footer = unsubscribeFor
     ? `<p style="text-align:center;color:#9ca3af;font-size:12px;margin-top:20px;line-height:1.6">
-         ${site.legalName}<br>${street}, ${city}, ${region} ${postalCode}<br>
+         ${site.legalName}${postal ? `<br>${postal}` : ''}<br>
          <a href="${site.url}/unsubscribe?e=${encodeURIComponent(unsubscribeFor)}" style="color:#9ca3af">Unsubscribe</a>
          · <a href="${site.url}" style="color:#9ca3af">${site.url.replace('https://', '')}</a>
        </p>`
     : `<p style="text-align:center;color:#9ca3af;font-size:12px;margin-top:20px">
-         ${site.legalName} · <a href="${site.url}" style="color:#9ca3af">${site.url.replace('https://', '')}</a> · ${site.phone}
+         ${site.legalName} · <a href="${site.url}" style="color:#9ca3af">${site.url.replace('https://', '')}</a>${site.phone ? ` · ${site.phone}` : ''}
        </p>`;
 
   return `<div style="font-family:ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;max-width:520px;margin:0 auto;color:#0a0a0b">

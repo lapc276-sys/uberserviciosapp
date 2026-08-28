@@ -1,5 +1,5 @@
 import { listCustomers, isUnsubscribed, type CustomerSummary } from '../data';
-import { sendEmail, marketingShell } from '../email';
+import { sendEmail, marketingShell, canSendMarketing } from '../email';
 import { site } from '../config/site';
 
 /**
@@ -102,6 +102,8 @@ export const CAMPAIGNS: CampaignTemplate[] = [
 export interface CampaignRun {
   sent: number;
   suppressed: number;
+  /** Set when the run stopped for a legal or config reason, not a per-recipient one. */
+  blocked?: 'no_postal_address';
   skipped: number;
   bySegment: Record<string, number>;
 }
@@ -136,6 +138,14 @@ export async function runCampaigns(options: { dryRun?: boolean; now?: number } =
     if (await isUnsubscribed(customer.email)) {
       result.suppressed++;
       continue;
+    }
+
+    // A commercial message with no postal address violates CAN-SPAM on every
+    // send, so this blocks rather than degrades. A dry run still reports what
+    // *would* go out, which is how you notice the address is missing.
+    if (!options.dryRun && !canSendMarketing()) {
+      result.blocked = 'no_postal_address';
+      break;
     }
 
     if (options.dryRun) {

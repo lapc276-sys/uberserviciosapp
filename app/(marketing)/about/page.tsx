@@ -15,9 +15,15 @@ const values = [
   { title: 'Consistent everywhere', text: 'The same high standard, photo-verified, in every home and every city we serve.' },
 ];
 
+// Rating and review counts appear here only once they exist. The other two
+// describe how the product behaves, which is true on day one.
 const stats = [
-  { value: `${site.rating.value}★`, label: 'Average rating' },
-  { value: `${(site.rating.count / 1000).toFixed(1)}k+`, label: 'Reviews' },
+  ...(site.rating
+    ? [
+        { value: `${site.rating.value}★`, label: 'Average rating' },
+        { value: `${(site.rating.count / 1000).toFixed(1)}k+`, label: 'Reviews' },
+      ]
+    : []),
   { value: '60s', label: 'Avg. time to book' },
   { value: '24/7', label: 'AI availability' },
 ];

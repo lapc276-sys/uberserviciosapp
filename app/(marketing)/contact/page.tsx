@@ -12,8 +12,10 @@ export const metadata: Metadata = buildMetadata({
 
 export default function ContactPage() {
   const channels = [
-    { icon: Phone, label: 'Call or text', value: site.phone, href: site.phoneHref },
-    { icon: Mail, label: 'Email', value: site.email, href: `mailto:${site.email}` },
+    ...(site.phone
+      ? [{ icon: Phone, label: 'Call or text', value: site.phone, href: `tel:${site.phone.replace(/[^+\d]/g, '')}` }]
+      : []),
+    ...(site.email ? [{ icon: Mail, label: 'Email', value: site.email, href: `mailto:${site.email}` }] : []),
     { icon: Clock, label: 'Hours', value: 'Mon–Sun · 7am–9pm', href: undefined },
     { icon: MessageSquare, label: 'Live chat', value: 'Bottom-right, 24/7 AI', href: undefined },
   ];

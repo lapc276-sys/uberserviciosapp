@@ -31,9 +31,15 @@ export function Footer() {
             {site.description}
           </p>
           <div className="mt-4 text-sm text-slate-500 dark:text-slate-400">
-            <a href={site.phoneHref} className="link-underline">{site.phone}</a>
-            <br />
-            <a href={`mailto:${site.email}`} className="link-underline">{site.email}</a>
+            {site.phone && (
+              <>
+                <a href={`tel:${site.phone.replace(/[^+\d]/g, '')}`} className="link-underline">{site.phone}</a>
+                <br />
+              </>
+            )}
+            {site.email && (
+              <a href={`mailto:${site.email}`} className="link-underline">{site.email}</a>
+            )}
           </div>
           <div className="mt-4 flex flex-wrap gap-2">
             {verticals.map((v) => (
@@ -55,7 +61,9 @@ export function Footer() {
       <div className="border-t">
         <div className="container flex flex-col items-center justify-between gap-2 py-6 text-xs text-slate-500 sm:flex-row dark:text-slate-400">
           <p>© {new Date().getFullYear()} {site.legalName}. All rights reserved.</p>
-          <p>Licensed & insured · Satisfaction guaranteed</p>
+          {/* Both are factual claims — one about insurance cover, one a
+              guarantee that would have to be honoured. Shown only when true. */}
+          {site.claims.licensedInsured && <p>Licensed &amp; insured · Satisfaction guaranteed</p>}
         </div>
       </div>
     </footer>
