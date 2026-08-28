@@ -16,7 +16,7 @@
  */
 
 export const DEFAULT_FRAME_COUNT = 8;
-const MAX_EDGE_PX = 768;
+export const MAX_EDGE_PX = 768;
 const JPEG_QUALITY = 0.72;
 
 /**
@@ -30,8 +30,8 @@ const JPEG_QUALITY = 0.72;
  * rather than a quality, or a customer's dirtiest property becomes the one
  * that fails to upload.
  */
-const FRAME_BUDGET_CHARS = 380_000;
-const TOTAL_BUDGET_CHARS = 3_800_000;
+export const FRAME_BUDGET_CHARS = 380_000;
+export const TOTAL_BUDGET_CHARS = 3_800_000;
 const QUALITY_LADDER = [JPEG_QUALITY, 0.6, 0.5, 0.4, 0.3];
 
 /** A seek that hasn't landed in this long is not going to. */
@@ -121,6 +121,36 @@ async function resolveDuration(video: HTMLVideoElement): Promise<number> {
 }
 
 /**
+ * Encodes whatever is currently on a canvas into a JPEG data URL that fits
+ * `budget`, stepping down quality and then resolution until it does.
+ *
+ * Shared by both capture paths — sampling a file and sampling a live camera —
+ * so a frame produced either way lands under the same server limit. Two
+ * encoders would drift, and the one that drifted would only fail in the field.
+ */
+export function encodeToBudget(
+  canvas: HTMLCanvasElement,
+  draw: (ctx: CanvasRenderingContext2D, edge: number) => void,
+  budget: number,
+): string {
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('Canvas unavailable');
+
+  let edge = MAX_EDGE_PX;
+  let best = '';
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    draw(ctx, edge);
+    for (const quality of QUALITY_LADDER) {
+      best = canvas.toDataURL('image/jpeg', quality);
+      if (best.length <= budget) return best;
+    }
+    edge = Math.round(edge * 0.75);
+  }
+  return best;
+}
+
+/**
  * Draws one frame at `time` seconds and returns it as a JPEG data URL sized to
  * fit `budget`, dropping quality and then resolution until it does.
  */
@@ -132,32 +162,16 @@ async function captureAt(
 ): Promise<string> {
   video.currentTime = time;
   await once(video, ['seeked'], SEEK_TIMEOUT_MS);
-
-  const ctx = canvas.getContext('2d');
-  if (!ctx) throw new Error('Canvas unavailable');
-
-  let edge = MAX_EDGE_PX;
-  let best = '';
-
-  // Two resolution steps is enough: quality alone handles almost everything,
-  // and below ~430px the model starts losing the detail it is judging.
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const scale = Math.min(1, edge / Math.max(video.videoWidth, video.videoHeight));
-    canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
-    canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-    for (const quality of QUALITY_LADDER) {
-      best = canvas.toDataURL('image/jpeg', quality);
-      if (best.length <= budget) return best;
-    }
-    edge = Math.round(edge * 0.75);
-  }
-
-  // Still over after every step — return the smallest we managed. The server
-  // may reject it, but a too-large frame is a better failure than a silent
-  // one, and this is already an extreme outlier.
-  return best;
+  return encodeToBudget(
+    canvas,
+    (ctx, edge) => {
+      const scale = Math.min(1, edge / Math.max(video.videoWidth, video.videoHeight));
+      canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
+      canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    },
+    budget,
+  );
 }
 
 export async function extractFrames(file: File, options: ExtractOptions = {}): Promise<string[]> {

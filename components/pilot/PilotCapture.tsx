@@ -12,6 +12,7 @@ import {
   type PropertyAnalysis, type RoomAnalysis, type RoomType,
 } from '@/lib/vision/types';
 import { VoiceControl } from '@/components/pilot/VoiceControl';
+import { LiveCapture } from '@/components/capture/LiveCapture';
 import { RoomSize } from '@/components/pilot/RoomSize';
 import { appaLevelFor } from '@/lib/vision/appa';
 import type { VoiceCommand } from '@/lib/vision/voice-commands';
@@ -79,7 +80,17 @@ export function PilotCapture({ capturedBy }: { capturedBy: string }) {
       const frames = list[0].type.startsWith('video/')
         ? await extractFrames(list[0], { onProgress: (done, total) => setProgress({ done, total }) })
         : await readImages(list);
+      await analyzeFrames(frames, phase);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Something went wrong.');
+      setBusy(null);
+    }
+  }
 
+  /** Shared by the live camera and the file picker — one analysis path. */
+  async function analyzeFrames(frames: string[], phase: 'before' | 'after' = 'before') {
+    setError('');
+    try {
       if (phase === 'before') setFrameCount(frames.length);
       setBusy('analyzing');
 
@@ -437,16 +448,19 @@ export function PilotCapture({ capturedBy }: { capturedBy: string }) {
               </div>
             ) : (
               <>
-                <button
-                  onClick={() => inputRef.current?.click()}
-                  className="w-full rounded-2xl border-2 border-dashed p-10 text-center transition-colors hover:border-brand-400"
-                >
-                  <Upload className="mx-auto h-8 w-8 text-brand-600" />
-                  <span className="mt-3 block font-medium">Record walkthrough</span>
-                  <span className="mt-1 block text-sm text-slate-500 dark:text-slate-400">
-                    Walk slowly through each room, lights on
-                  </span>
-                </button>
+                <LiveCapture
+                  label="Grabar recorrido"
+                  onFrames={(frames) => analyzeFrames(frames, 'before')}
+                  fallback={
+                    <button
+                      onClick={() => inputRef.current?.click()}
+                      className="w-full rounded-2xl border-2 border-dashed p-6 text-center text-sm"
+                    >
+                      <Upload className="mx-auto h-6 w-6 text-brand-600" />
+                      <span className="mt-2 block font-medium">Elegir un vídeo guardado</span>
+                    </button>
+                  }
+                />
                 <BackButton onClick={() => setStep('consent')} />
               </>
             )}

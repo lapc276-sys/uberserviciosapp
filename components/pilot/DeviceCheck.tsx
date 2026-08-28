@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { Check, X, AlertTriangle, Loader2, Video } from 'lucide-react';
 import { extractFrames, UnsupportedVideoError } from '@/lib/vision/frames';
+import { LiveCapture } from '@/components/capture/LiveCapture';
 
 /**
  * Thirty-second device readiness check.
@@ -115,6 +116,23 @@ export function DeviceCheck() {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<{ status: Status; message: string; frames?: string[] } | null>(null);
 
+  /**
+   * Live capture has already produced the frames, so this only reports what
+   * came back. Nothing is decoded, which is exactly why the live path cannot
+   * hit the codec problems the file path has to defend against.
+   */
+  function runLiveTest(frames: string[]) {
+    const largest = Math.max(...frames.map((f) => f.length), 0);
+    setResult({
+      status: frames.length >= 3 ? 'pass' : 'warn',
+      message:
+        frames.length >= 3
+          ? `Se capturaron ${frames.length} fotogramas desde la cámara, el mayor de ${Math.round(largest / 1000)} KB. Este teléfono está listo.`
+          : `Solo se capturaron ${frames.length} fotogramas. Funcionará, pero graba unos segundos más.`,
+      frames,
+    });
+  }
+
   async function runVideoTest(file: File) {
     setBusy(true);
     setResult(null);
@@ -172,28 +190,43 @@ export function DeviceCheck() {
       </section>
 
       <section className="rounded-2xl border bg-white p-5 dark:bg-white/[0.03]">
-        <h2 className="font-semibold">2. The real test</h2>
+        <h2 className="font-semibold">2. La prueba de verdad</h2>
         <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-          Record about 10 seconds of any room and pick it here. This runs the exact same code the job will,
-          so if it passes here it will work on a real property — <strong>even if step 1 showed warnings</strong>.
+          Graba unos segundos de cualquier habitación aquí mismo. Esto ejecuta exactamente el mismo
+          código que un trabajo real, así que si pasa aquí, funciona en una casa —{' '}
+          <strong>aunque el paso 1 haya mostrado avisos</strong>.
         </p>
 
-        <label className="mt-4 flex cursor-pointer items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 py-6 text-sm font-medium">
-          {busy ? <Loader2 className="h-5 w-5 animate-spin" /> : <Video className="h-5 w-5" />}
-          {busy ? 'Reading the video…' : 'Record or choose a video'}
-          <input
-            type="file"
-            accept="video/*"
-            capture="environment"
-            className="sr-only"
-            disabled={busy}
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (file) runVideoTest(file);
-              e.target.value = '';
-            }}
-          />
-        </label>
+        <div className="mt-4">
+          {busy ? (
+            <p className="flex items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 py-6 text-sm font-medium">
+              <Loader2 className="h-5 w-5 animate-spin" /> Leyendo…
+            </p>
+          ) : (
+            <LiveCapture
+              label="Grabar aquí mismo"
+              frameCount={4}
+              intervalMs={1200}
+              onFrames={runLiveTest}
+              fallback={
+                <label className="flex cursor-pointer items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 py-5 text-sm font-medium">
+                  <Video className="h-5 w-5" /> Elegir un vídeo guardado
+                  <input
+                    type="file"
+                    accept="video/*"
+                    capture="environment"
+                    className="sr-only"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) runVideoTest(file);
+                      e.target.value = '';
+                    }}
+                  />
+                </label>
+              }
+            />
+          )}
+        </div>
 
         {result && (
           <div
