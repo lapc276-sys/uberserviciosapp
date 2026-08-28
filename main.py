@@ -47,6 +47,7 @@ import diagramas
 import fuentes
 import portada
 import telegram_bot
+import revisar
 import telemetria
 import velocidades
 import youtube_subir
@@ -1188,6 +1189,40 @@ async def control_velocidades(year: int = 0, gp: str = "", tipo: str = "Race",
         "medianas": {s["nombre"]: round(
             sorted(s["valores"])[len(s["valores"]) // 2], 1) for s in series},
     })
+
+
+@app.post("/control/revisar")
+async def control_revisar(archivo: str = "", fotogramas: int = 9):
+    """Revisa un video ya montado: trozos en negro, imagen congelada,
+    silencios, audio que no cuadra con la imagen — y saca fotogramas
+    repartidos a revision/ para poder MIRAR cómo quedó.
+
+    Sin `archivo`, coge el MP4 más reciente que haya montado el canal.
+    """
+    if archivo:
+        # Solo dentro del proyecto: sin esto, un ../ leería cualquier
+        # archivo del servidor.
+        ruta = os.path.normpath(archivo)
+        if ruta.startswith(("/", "..")) or not os.path.isfile(ruta):
+            return JSONResponse(
+                {"ok": False, "error": "Ruta fuera del proyecto o no existe"},
+                status_code=400)
+    else:
+        cand = []
+        for base in ("shorts", VOD_DIR, "programas_video", "resumenes"):
+            with contextlib.suppress(Exception):
+                cand += glob.glob(os.path.join(base, "**", "*.mp4"),
+                                  recursive=True)
+        if not cand:
+            return JSONResponse(
+                {"ok": False, "error": "No hay ningún MP4 montado todavía"},
+                status_code=404)
+        ruta = max(cand, key=os.path.getmtime)
+    inf = await revisar.revisar_async(
+        ruta, fotogramas=max(1, min(24, fotogramas)))
+    log.info("🔍 Revisión a mano de %s: %s", ruta, revisar.resumen(inf))
+    return JSONResponse({"ok": inf["ok"], "archivo": ruta,
+                         "resumen": revisar.resumen(inf), **inf})
 
 
 @app.post("/control/short/velocidades")

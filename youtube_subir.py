@@ -1415,6 +1415,27 @@ async def subir_video(video_path, titulo, descripcion, tags, privacidad=None,
                     "(faltan YOUTUBE_CLIENT_ID / SECRET / REFRESH_TOKEN)")
         _ULTIMO_FALLO = "auth"
         return None
+    # Una mirada al archivo ANTES de mandarlo. El control va aquí y no en
+    # cada sitio que sube algo porque aquí pasan todos: shorts, VOD,
+    # documentales y micro-shorts. Los avisos se cuentan y se sube igual
+    # —quien decide si un fotograma está feo es una persona—; lo que se
+    # PARA es lo que no tiene arreglo: sin imagen, sin audio o en negro.
+    # Un video roto publicado no se puede despublicar del feed de nadie.
+    if os.environ.get("REVISAR_ANTES", "on").lower() not in ("off", "0", ""):
+        with contextlib.suppress(Exception):
+            import revisar
+            inf = await revisar.revisar_async(video_path, fotogramas=6)
+            log.info("🔍 Revisión de %s: %s", os.path.basename(video_path),
+                     revisar.resumen(inf))
+            if inf.get("grave"):
+                log.error("📤 NO se sube %s — %s. Los fotogramas están en "
+                          "%s para que los mires.", os.path.basename(
+                              video_path), "; ".join(inf["grave"]),
+                          os.path.dirname((inf["fotogramas"] or [{}])[0]
+                                          .get("png", "revision/")) or
+                          "revision/")
+                _ULTIMO_FALLO = "video_roto"
+                return None
     privacidad = privacidad or os.environ.get("YOUTUBE_PRIVACIDAD", "public")
     try:
         resp = await asyncio.to_thread(

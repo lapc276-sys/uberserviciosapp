@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>{{TITLE}}</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #161922;
+    --panel-2: #1c2030;
+    --ink: #e8ecf4;
+    --muted: #9aa3b8;
+    --accent: #6ee7b7;
+    --accent-2: #fbbf24;
+    --rule: #2a2f40;
+    --row: #1a1e2a;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink); }
+  body {
+    font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif;
+    padding: 48px 24px 96px;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; }
+  header { border-bottom: 1px solid var(--rule); padding-bottom: 24px; margin-bottom: 32px; }
+  .eyebrow { color: var(--accent); font-size: 12px; letter-spacing: .14em; text-transform: uppercase; margin: 0 0 8px; }
+  h1 { font-size: 32px; line-height: 1.15; margin: 0 0 12px; font-weight: 700; letter-spacing: -0.01em; }
+  h1 .sub { color: var(--muted); font-weight: 500; }
+  .meta { color: var(--muted); font-size: 14px; }
+  .meta a { color: var(--accent); text-decoration: none; }
+  .meta a:hover { text-decoration: underline; }
+  .tldr {
+    background: linear-gradient(180deg, var(--panel-2), var(--panel));
+    border: 1px solid var(--rule); border-left: 3px solid var(--accent);
+    border-radius: 10px; padding: 18px 20px; margin: 24px 0 36px;
+  }
+  .tldr .label { color: var(--accent); font-size: 11px; letter-spacing: .14em; text-transform: uppercase; margin-bottom: 6px; }
+  .tldr p { margin: 0; font-size: 17px; }
+  h2 { font-size: 20px; margin: 40px 0 14px; letter-spacing: -0.005em; }
+  h2::before { content: ""; display: inline-block; width: 6px; height: 6px; background: var(--accent-2); border-radius: 50%; margin-right: 10px; transform: translateY(-3px); }
+  .timeline { display: grid; gap: 14px; }
+  .row {
+    display: grid; grid-template-columns: 88px 220px 1fr 1fr; gap: 16px;
+    background: var(--row); border: 1px solid var(--rule); border-radius: 10px; padding: 14px 16px;
+  }
+  .row .t { font-variant-numeric: tabular-nums; font-weight: 700; color: var(--accent); font-size: 15px; }
+  .row img { width: 100%; aspect-ratio: 16/9; object-fit: cover; border-radius: 6px; border: 1px solid var(--rule); background: #000; }
+  .row .col h4 { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); margin: 0 0 4px; font-weight: 600; }
+  .row .col p { margin: 0; font-size: 14px; color: var(--ink); }
+  .row .col .quote { font-style: italic; }
+  @media (max-width: 880px) { .row { grid-template-columns: 1fr; } .row .t { font-size: 18px; } }
+  blockquote { margin: 12px 0; padding: 14px 18px; background: var(--panel); border-left: 3px solid var(--accent-2); border-radius: 6px; font-size: 15px; }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 720px) { .grid-2 { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--rule); border-radius: 10px; padding: 16px 18px; }
+  .card h3 { font-size: 13px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); margin: 0 0 8px; font-weight: 600; }
+  ul.tight { margin: 0; padding-left: 18px; }
+  ul.tight li { margin: 4px 0; }
+  ul.tight code, code.inline { background: #0a0c12; border: 1px solid var(--rule); padding: 1px 5px; border-radius: 4px; font-size: 12.5px; }
+  .interrupt { background: linear-gradient(180deg, #2a2010, #1a1410); border: 1px solid #6b4a14; border-radius: 10px; padding: 16px 18px; }
+  .interrupt .stamp { display: inline-block; background: var(--accent-2); color: #1a1410; font-weight: 700; font-size: 12px; letter-spacing: .1em; padding: 2px 8px; border-radius: 4px; margin-right: 8px; }
+  .promise { background: var(--panel); border: 1px solid var(--rule); border-radius: 10px; padding: 16px 18px; font-size: 16px; }
+  .template { background: var(--panel); border: 1px solid var(--rule); border-radius: 10px; padding: 18px 20px; }
+  .template .fill { background: #2a2f40; padding: 1px 6px; border-radius: 4px; color: var(--accent); }
+  table.cost { width: 100%; border-collapse: collapse; margin-top: 8px; background: var(--panel); border: 1px solid var(--rule); border-radius: 10px; overflow: hidden; }
+  table.cost td { padding: 10px 14px; border-bottom: 1px solid var(--rule); font-size: 14px; }
+  table.cost tr:last-child td { border-bottom: none; }
+  table.cost td:first-child { color: var(--muted); width: 50%; }
+  table.cost td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+  table.cost tr.total td { font-weight: 700; color: var(--accent); }
+  footer { margin-top: 48px; color: var(--muted); font-size: 12px; text-align: center; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <p class="eyebrow">{{EYEBROW}}</p>
+      <h1>{{HEADLINE}}</h1>
+      <p class="meta">{{META}}</p>
+    </header>
+
+    {{BODY}}
+
+    <h2>Run cost</h2>
+    {{COST_TABLE}}
+
+    <footer>Generated by /watch · {{MODE}} mode · {{EFFORT}} effort</footer>
+  </div>
+</body>
+</html>
