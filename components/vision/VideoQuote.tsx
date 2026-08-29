@@ -4,6 +4,7 @@ import { useRef, useState } from 'react';
 import { Upload, Loader2, Sparkles, ArrowRight, AlertTriangle, Clock, Users, ShoppingBag } from 'lucide-react';
 import { extractFrames, readImages, DEFAULT_FRAME_COUNT } from '@/lib/vision/frames';
 import { GuidedCapture } from '@/components/capture/GuidedCapture';
+import { readJson } from '@/lib/http';
 import { formatDuration } from '@/lib/vision/estimate';
 import { formatCurrency } from '@/lib/utils';
 import { CONDITION_LABELS, SOIL_DIMENSIONS, type PropertyAnalysis } from '@/lib/vision/types';
@@ -85,7 +86,13 @@ export function VideoQuote() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ frames: extracted, captions, serviceSlug: service, city }),
       });
-      const data = await res.json();
+
+      const { data, failure } = await readJson<any>(res);
+      if (failure || !data) {
+        setError(failure ?? 'We could not analyze that footage.');
+        setStage('error');
+        return;
+      }
       if (!res.ok) {
         setError(data.error ?? 'We could not analyze that footage.');
         setStage('error');
@@ -95,8 +102,13 @@ export function VideoQuote() {
       setAnalysis(data.analysis);
       setQuote(data.quote);
       setStage('done');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Something went wrong.');
+    } catch {
+      // A rejected fetch here means the connection itself dropped — the
+      // request never came back at all. `err.message` would say "Failed to
+      // fetch", which tells the person nothing they can act on.
+      setError(
+        'Se cortó la conexión antes de recibir el estimado. Si tienes muchos espacios seleccionados, prueba con la cocina y un baño primero.',
+      );
       setStage('error');
     }
   }
@@ -105,7 +117,9 @@ export function VideoQuote() {
 
   return (
     <div className="grid gap-8 lg:grid-cols-[1fr_22rem]">
-      <div className="space-y-6">
+      {/* min-w-0: a grid item defaults to min-width:auto, so the frame strip
+          below would widen the whole page instead of scrolling inside itself. */}
+      <div className="min-w-0 space-y-6">
         {/* Setup */}
         <div className="rounded-3xl border bg-white p-6 shadow-soft dark:bg-white/[0.03]">
           <div className="grid gap-4 sm:grid-cols-2">

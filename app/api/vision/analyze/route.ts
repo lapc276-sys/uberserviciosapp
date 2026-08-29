@@ -53,8 +53,24 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: captionError }, { status: 422 });
   }
 
+  /**
+   * One line per analysis, in the deployment log.
+   *
+   * When a request dies between the browser and here — a proxy body limit, a
+   * request timeout, a container running out of memory — the browser is handed
+   * an empty response that names none of those. The only way to tell them
+   * apart afterwards is whether this route was reached at all, and how long it
+   * had been running when it stopped. Both lines below answer that.
+   */
+  const started = Date.now();
+  const payloadMb = frames.reduce((sum, f) => sum + f.length, 0) / 1_000_000;
   const analyzer = getAnalyzer();
+  console.log(
+    `[vision] start frames=${frames.length} captioned=${captions?.length ?? 0} payload=${payloadMb.toFixed(2)}MB engine=${analyzer.name}`,
+  );
+
   const { rooms, warnings } = await analyzer.analyze({ frames, captions, serviceSlug });
+  console.log(`[vision] done in ${Date.now() - started}ms rooms=${rooms.length}`);
 
   const analysis = buildAnalysis(rooms, { serviceSlug, source: analyzer.name, warnings });
   if (analysis.rooms.length === 0) {

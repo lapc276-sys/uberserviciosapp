@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Video, Loader2, Check, RotateCcw, AlertTriangle } from 'lucide-react';
 import { extractFrames, readImages, UnsupportedVideoError, DEFAULT_FRAME_COUNT } from '@/lib/vision/frames';
 import { GuidedCapture } from '@/components/capture/GuidedCapture';
+import { readJson } from '@/lib/http';
 
 /**
  * The quoting page a cleaning company hands to its own customers.
@@ -91,8 +92,12 @@ export function HostedQuote({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ frames, captions, serviceSlug: service }),
       });
-      const data = await res.json().catch(() => ({}));
-
+      const { data, failure } = await readJson<any>(res);
+      if (failure || !data) {
+        setError(failure ?? 'No pudimos calcular el estimado. Inténtalo otra vez.');
+        setStage('idle');
+        return;
+      }
       if (!res.ok) {
         setError(data.message ?? 'No pudimos calcular el estimado. Inténtalo otra vez.');
         setStage('idle');

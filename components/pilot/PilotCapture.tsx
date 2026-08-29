@@ -14,6 +14,7 @@ import {
 import { VoiceControl } from '@/components/pilot/VoiceControl';
 import { LiveCapture } from '@/components/capture/LiveCapture';
 import { GuidedCapture } from '@/components/capture/GuidedCapture';
+import { readJson } from '@/lib/http';
 import { RoomSize } from '@/components/pilot/RoomSize';
 import { appaLevelFor } from '@/lib/vision/appa';
 import type { VoiceCommand } from '@/lib/vision/voice-commands';
@@ -104,7 +105,11 @@ export function PilotCapture({ capturedBy }: { capturedBy: string }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ frames, captions, serviceSlug, city }),
       });
-      const data = await res.json();
+      const { data, failure } = await readJson<any>(res);
+      if (failure || !data) {
+        setError(failure ?? 'Analysis failed.');
+        return;
+      }
       if (!res.ok) {
         setError(data.error ?? 'Analysis failed.');
         return;

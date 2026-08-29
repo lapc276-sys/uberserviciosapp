@@ -16,7 +16,21 @@
  */
 
 export const DEFAULT_FRAME_COUNT = 8;
-export const MAX_EDGE_PX = 768;
+
+/**
+ * Sized to what the model actually looks at, not to what the camera can give.
+ *
+ * The analyzer sends every frame with `detail: 'low'`, and low detail is a
+ * fixed 512×512 representation — the provider downsamples anything larger
+ * before the model sees a pixel of it. Encoding at 768 was therefore paying
+ * upload bandwidth, and a hosting proxy's body limit, for detail that was
+ * discarded on arrival.
+ *
+ * This is coupled to that setting on purpose: if the analyzer ever moves to
+ * `detail: 'high'`, raise this with it, or the model starts working from a
+ * genuinely worse image.
+ */
+export const MAX_EDGE_PX = 512;
 const JPEG_QUALITY = 0.72;
 
 /**
@@ -31,7 +45,21 @@ const JPEG_QUALITY = 0.72;
  * that fails to upload.
  */
 export const FRAME_BUDGET_CHARS = 380_000;
-export const TOTAL_BUDGET_CHARS = 3_800_000;
+
+/**
+ * Well under the 4MB the API accepts, on purpose.
+ *
+ * The API limit describes what our route will parse. It says nothing about
+ * what the hosting platform in front of it will forward, and that layer
+ * rejects an oversized body without ever reaching our code — the browser gets
+ * an empty response and an error that names neither the size nor the fix.
+ *
+ * Two different platforms are in play (Vercel's ~4.5MB, Replit's own proxy),
+ * so the client aims at a figure comfortably below the lower plausible bound
+ * rather than at whichever ceiling is nearest. An eighteen-frame walkthrough
+ * lands near 1.4MB at this budget.
+ */
+export const TOTAL_BUDGET_CHARS = 2_000_000;
 const QUALITY_LADDER = [JPEG_QUALITY, 0.6, 0.5, 0.4, 0.3];
 
 /** A seek that hasn't landed in this long is not going to. */
