@@ -47,6 +47,8 @@ For each room, rate each dimension 0-100 using that rubric:
 
 Also list cleaning-relevant objects you can actually see (oven, refrigerator, bathtub, toilet, carpet, window, sofa, litter box, etc.) with a count and your confidence.
 
+Report these even though they are not themselves cleaned, because they say who lives here and therefore how fast the place gets dirty again: baby bottle, high chair, crib, changing table, playpen, stroller, diaper, baby toys, toys, play mat, dog bowl, cat bowl, pet food, dog bed, pet bed, litter box, pet crate, leash, scratching post, dog, cat, ashtray, cigarettes, moving boxes. Use exactly these names so they can be matched. Only report one you can actually see.
+
 Be conservative and evidence-based. If a frame is blurry, dark, or ambiguous, lower your confidence rather than guessing. Do NOT estimate time or price — that is computed separately.
 
 Respond ONLY with JSON matching:

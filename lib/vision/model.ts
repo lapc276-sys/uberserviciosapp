@@ -81,6 +81,68 @@ export const OBJECT_TIME_COST: Record<string, number> = {
   balcony: 8,
 };
 
+/**
+ * Things that predict work the camera did not catch.
+ *
+ * A baby bottle takes no time to clean. What it tells you is that there is an
+ * infant in the house, and a home with an infant generates mess between the
+ * video and the visit in a way an empty apartment does not. A dog bowl says
+ * the same about hair: a floor can photograph clean and still shed a bag of it
+ * into a vacuum, because the frame caught the half of the room the dog was not
+ * lying on.
+ *
+ * So these are not priced as objects. They raise a FLOOR under one soil
+ * dimension — the estimate refuses to believe hair is near zero in a house
+ * with a dog — and they only ever raise it. A room the model already scored
+ * above the floor is left exactly as observed, which keeps the signal from
+ * stacking on top of evidence that already accounts for it.
+ *
+ * The honest framing for a customer: "we saw a dog bowl, so we budgeted for
+ * pet hair even though your floor looked clean in the video."
+ */
+export interface HouseholdSignal {
+  /** Object names, lowercase, as the model reports them. */
+  match: string[];
+  dimension: SoilDimension;
+  /** The 0-100 value this dimension cannot fall below once the signal fires. */
+  floor: number;
+  /** Shown to the pro so the number is explainable, not magic. */
+  label: string;
+}
+
+export const HOUSEHOLD_SIGNALS: HouseholdSignal[] = [
+  {
+    match: ['baby bottle', 'bottle warmer', 'high chair', 'crib', 'cot', 'changing table', 'playpen', 'stroller', 'diaper', 'baby toys'],
+    dimension: 'stains',
+    floor: 35,
+    label: 'bebé en casa',
+  },
+  {
+    match: ['dog bowl', 'cat bowl', 'pet bowl', 'pet food', 'dog food', 'cat food', 'dog bed', 'pet bed', 'litter box', 'pet crate', 'leash', 'scratching post', 'dog', 'cat'],
+    dimension: 'hair',
+    floor: 40,
+    label: 'mascota',
+  },
+  {
+    match: ['toys', 'toy box', 'kids toys', 'play mat'],
+    dimension: 'clutter',
+    floor: 35,
+    label: 'niños pequeños',
+  },
+  {
+    match: ['ashtray', 'cigarettes', 'cigarette'],
+    dimension: 'stains',
+    floor: 30,
+    label: 'se fuma dentro',
+  },
+  {
+    match: ['moving boxes', 'cardboard boxes', 'packing boxes'],
+    dimension: 'dust',
+    floor: 30,
+    label: 'mudanza en curso',
+  },
+];
+
 /** A single job longer than this warrants a second pro, and so on. */
 export const MINUTES_PER_PRO = 240;
 

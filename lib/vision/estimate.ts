@@ -12,6 +12,7 @@ import { planSupplies } from './supplies';
 import {
   ROOM_BASE_MINUTES,
   OBJECT_TIME_COST,
+  HOUSEHOLD_SIGNALS,
   MINUTES_PER_PRO,
   SERVICE_TIME_MULTIPLIER,
   soilWeightsFor,
@@ -38,6 +39,36 @@ function normalizeSoil(soil: Partial<SoilScores> | undefined): SoilScores {
     out[key] = clampScore(soil?.[key]);
   }
   return out;
+}
+
+/**
+ * Raises soil floors where the objects predict work the frames didn't show.
+ *
+ * Applied before minutes are computed, so a signal flows through the normal
+ * weighting rather than being bolted on as a surcharge — pet hair in a bedroom
+ * costs what pet hair in a bedroom costs. Returns the labels it fired so the
+ * pro sees why the number moved.
+ */
+function applyHouseholdSignals(
+  soil: SoilScores,
+  objects: RawRoomObservation['objects'],
+): { soil: SoilScores; fired: string[] } {
+  if (objects.length === 0) return { soil, fired: [] };
+
+  const names = new Set(objects.map((o) => o.name.trim().toLowerCase()));
+  const out = { ...soil };
+  const fired: string[] = [];
+
+  for (const signal of HOUSEHOLD_SIGNALS) {
+    if (!signal.match.some((m) => names.has(m))) continue;
+    // Only ever raises. A room already scored above the floor was observed
+    // properly, and overwriting that would double-count the same evidence.
+    if (out[signal.dimension] >= signal.floor) continue;
+    out[signal.dimension] = signal.floor;
+    fired.push(signal.label);
+  }
+
+  return { soil: out, fired };
 }
 
 function roomMinutes(
@@ -120,7 +151,8 @@ export function buildAnalysis(
     (calibration?.serviceMultiplier?.[serviceSlug] ?? SERVICE_TIME_MULTIPLIER[serviceSlug] ?? 1) * timeFactor;
 
   const rooms: RoomAnalysis[] = observations.map((obs, i) => {
-    const soil = normalizeSoil(obs.soil);
+    const observed = normalizeSoil(obs.soil);
+    const { soil, fired } = applyHouseholdSignals(observed, obs.objects);
     const minutes = roomMinutes(obs, soil, baseOverrides) * multiplier;
     return {
       type: obs.type,
@@ -130,7 +162,12 @@ export function buildAnalysis(
       soil,
       condition: conditionFromIndex(soilIndex(soil, obs.type)),
       estimatedMinutes: Math.round(minutes),
-      notes: obs.notes,
+      // Signals are appended to the note rather than hidden, so a pro who
+      // wonders why a tidy-looking bedroom was budgeted for hair can read the
+      // reason instead of distrusting the number.
+      notes: [obs.notes, fired.length ? `Señales: ${fired.join(', ')}` : '']
+        .filter(Boolean)
+        .join(' · ') || undefined,
     };
   });
 

@@ -27,11 +27,31 @@ import type { RoomType } from '@/lib/vision/types';
  * answer, and the answer is the photograph.
  */
 
+/**
+ * How a step decides it has what it needs.
+ *
+ * `settle` waits for the view to change and then hold still — someone aiming
+ * at a sink, or swinging a fridge door open and steadying the phone. One frame.
+ *
+ * `pan` samples across a slow sweep and keeps the most different frames, so an
+ * overview of a kitchen covers the room instead of photographing one cupboard
+ * three times.
+ */
+export type StepMode = 'settle' | 'pan';
+
 export interface StepTemplate {
   /** Short label shown on screen and used as the frame's caption. */
   title: string;
   /** Read aloud. Written as an instruction to a person holding a phone. */
   spoken: string;
+  /**
+   * Said once the shot is taken. Only where the person is left holding
+   * something open — nobody should have to guess when they can close the oven.
+   */
+  after?: string;
+  mode?: StepMode;
+  /** How many frames a `pan` step keeps. Ignored by `settle`. */
+  frames?: number;
   /**
    * Skippable with "no tengo".
    *
@@ -57,13 +77,33 @@ export const SPACE_TEMPLATES: SpaceTemplate[] = [
     label: 'Cocina',
     emoji: '🍳',
     steps: [
-      { title: 'Vista general', spoken: 'Ponte en la puerta y apunta a toda la cocina.' },
+      {
+        title: 'Vista general',
+        spoken: 'Ponte en la puerta y haz un paneo lento de la cocina, de izquierda a derecha.',
+        mode: 'pan',
+        frames: 3,
+      },
       { title: 'Encimeras', spoken: 'Ahora enfoca las encimeras y todo lo que haya encima.' },
       { title: 'Fregadero', spoken: 'Apunta al fregadero por dentro, con el grifo.' },
       { title: 'Estufa y hornillas', spoken: 'Enfoca la estufa y las hornillas de cerca.' },
-      { title: 'Dentro del microondas', spoken: 'Abre el microondas y apunta adentro.', optional: true },
-      { title: 'Dentro del horno', spoken: 'Ahora abre el horno y apunta adentro.', optional: true },
-      { title: 'Nevera por fuera', spoken: 'Apunta a la nevera por fuera, sobre todo las manijas.', optional: true },
+      {
+        title: 'Dentro del microondas',
+        spoken: 'Abre el microondas y apunta adentro. Sujeta el teléfono quieto un segundo.',
+        after: 'Listo, ya puedes cerrarlo.',
+        optional: true,
+      },
+      {
+        title: 'Dentro del horno',
+        spoken: 'Ahora abre el horno y apunta adentro.',
+        after: 'Ya está, ciérralo.',
+        optional: true,
+      },
+      {
+        title: 'Dentro de la nevera',
+        spoken: 'Abre la nevera y apunta a los estantes.',
+        after: 'Perfecto, ciérrala.',
+        optional: true,
+      },
       { title: 'Suelo', spoken: 'Baja el teléfono y enfoca el suelo, sobre todo debajo de los muebles.' },
       { title: 'Zona de basura', spoken: 'Por último, apunta a donde está la basura.', optional: true },
     ],
@@ -74,7 +114,7 @@ export const SPACE_TEMPLATES: SpaceTemplate[] = [
     label: 'Baño',
     emoji: '🚿',
     steps: [
-      { title: 'Vista general', spoken: 'Desde la puerta, apunta a todo el baño.' },
+      { title: 'Vista general', spoken: 'Desde la puerta, haz un paneo lento de todo el baño.', mode: 'pan', frames: 2 },
       { title: 'Inodoro', spoken: 'Enfoca el inodoro de cerca, por dentro y por detrás.' },
       { title: 'Ducha o bañera', spoken: 'Ahora la ducha. Acércate a las juntas de los azulejos.' },
       { title: 'Lavamanos y espejo', spoken: 'Apunta al lavamanos y al espejo.' },
@@ -87,7 +127,7 @@ export const SPACE_TEMPLATES: SpaceTemplate[] = [
     label: 'Habitación',
     emoji: '🛏️',
     steps: [
-      { title: 'Vista general', spoken: 'Desde la puerta, apunta a toda la habitación.' },
+      { title: 'Vista general', spoken: 'Desde la puerta, haz un paneo lento de toda la habitación.', mode: 'pan', frames: 2 },
       { title: 'Cama', spoken: 'Enfoca la cama y la ropa de cama.' },
       { title: 'Suelo', spoken: 'Apunta al suelo, incluyendo debajo de la cama si puedes.' },
       { title: 'Superficies y ventanas', spoken: 'Enfoca las mesitas, la cómoda y las ventanas.', optional: true },
@@ -99,7 +139,7 @@ export const SPACE_TEMPLATES: SpaceTemplate[] = [
     label: 'Sala',
     emoji: '🛋️',
     steps: [
-      { title: 'Vista general', spoken: 'Apunta a toda la sala desde una esquina.' },
+      { title: 'Vista general', spoken: 'Desde una esquina, haz un paneo lento de toda la sala.', mode: 'pan', frames: 2 },
       { title: 'Sofá y sillones', spoken: 'Enfoca el sofá de cerca, incluyendo los cojines.' },
       { title: 'Mesas y superficies', spoken: 'Apunta a las mesas y a lo que haya encima.' },
       { title: 'Suelo o alfombra', spoken: 'Enfoca el suelo o la alfombra.' },
@@ -111,7 +151,7 @@ export const SPACE_TEMPLATES: SpaceTemplate[] = [
     label: 'Comedor',
     emoji: '🍽️',
     steps: [
-      { title: 'Vista general', spoken: 'Apunta a todo el comedor.' },
+      { title: 'Vista general', spoken: 'Haz un paneo lento de todo el comedor.', mode: 'pan', frames: 2 },
       { title: 'Mesa y sillas', spoken: 'Enfoca la mesa y las sillas de cerca.' },
       { title: 'Suelo', spoken: 'Apunta al suelo, sobre todo debajo de la mesa.' },
     ],
@@ -122,8 +162,12 @@ export const SPACE_TEMPLATES: SpaceTemplate[] = [
     label: 'Lavadero',
     emoji: '🧺',
     steps: [
-      { title: 'Vista general', spoken: 'Apunta a todo el lavadero.' },
-      { title: 'Lavadora y secadora', spoken: 'Enfoca la lavadora y la secadora, por fuera y por dentro.' },
+      { title: 'Vista general', spoken: 'Haz un paneo lento de todo el lavadero.', mode: 'pan', frames: 2 },
+      {
+        title: 'Lavadora y secadora',
+        spoken: 'Abre la lavadora y apunta al tambor por dentro.',
+        after: 'Ya puedes cerrarla.',
+      },
       { title: 'Pila o fregadero', spoken: 'Si hay pila, apunta adentro.', optional: true },
       { title: 'Suelo', spoken: 'Enfoca el suelo y detrás de las máquinas.' },
     ],
@@ -134,7 +178,7 @@ export const SPACE_TEMPLATES: SpaceTemplate[] = [
     label: 'Oficina',
     emoji: '💻',
     steps: [
-      { title: 'Vista general', spoken: 'Apunta a toda la oficina.' },
+      { title: 'Vista general', spoken: 'Haz un paneo lento de toda la oficina.', mode: 'pan', frames: 2 },
       { title: 'Escritorio', spoken: 'Enfoca el escritorio y lo que haya encima.' },
       { title: 'Suelo', spoken: 'Apunta al suelo y debajo del escritorio.' },
     ],
@@ -145,7 +189,7 @@ export const SPACE_TEMPLATES: SpaceTemplate[] = [
     label: 'Pasillo / escaleras',
     emoji: '🚪',
     steps: [
-      { title: 'Vista general', spoken: 'Apunta a lo largo del pasillo.' },
+      { title: 'Vista general', spoken: 'Haz un paneo lento a lo largo del pasillo.', mode: 'pan', frames: 2 },
       { title: 'Suelo y esquinas', spoken: 'Enfoca el suelo, las esquinas y los rodapiés.' },
     ],
   },
@@ -155,7 +199,7 @@ export const SPACE_TEMPLATES: SpaceTemplate[] = [
     label: 'Otro espacio',
     emoji: '📦',
     steps: [
-      { title: 'Vista general', spoken: 'Apunta a todo el espacio desde la entrada.' },
+      { title: 'Vista general', spoken: 'Desde la entrada, haz un paneo lento de todo el espacio.', mode: 'pan', frames: 2 },
       { title: 'Lo más sucio', spoken: 'Ahora acércate a la parte que más trabajo va a dar.' },
       { title: 'Suelo', spoken: 'Enfoca el suelo.', optional: true },
     ],
@@ -176,6 +220,10 @@ export interface CaptureStep {
   spaceLabel: string;
   title: string;
   spoken: string;
+  after?: string;
+  mode: StepMode;
+  /** Frames this step contributes. 1 for `settle`, more for a pan. */
+  frames: number;
   optional: boolean;
 }
 
@@ -232,13 +280,20 @@ export function buildPlan(selection: SpaceSelection): CapturePlan {
           spaceLabel,
           title: step.title,
           spoken: step.spoken,
+          after: step.after,
+          mode: step.mode ?? 'settle',
+          frames: step.mode === 'pan' ? (step.frames ?? 2) : 1,
           optional: step.optional ?? false,
         });
       }
     }
   }
 
-  if (steps.length <= MAX_GUIDED_FRAMES) {
+  // The cap is on frames, not on steps: a pan contributes several, so counting
+  // steps would let an eight-room plan sail past the limit it is meant to hold.
+  const frameTotal = (list: CaptureStep[]) => list.reduce((sum, s) => sum + s.frames, 0);
+
+  if (frameTotal(steps) <= MAX_GUIDED_FRAMES) {
     return { steps, droppedOptional: 0, tooManySpaces: false };
   }
 
@@ -247,24 +302,34 @@ export function buildPlan(selection: SpaceSelection): CapturePlan {
   // thing to lose.
   const kept = [...steps];
   let dropped = 0;
-  for (let i = kept.length - 1; i >= 0 && kept.length > MAX_GUIDED_FRAMES; i--) {
+  for (let i = kept.length - 1; i >= 0 && frameTotal(kept) > MAX_GUIDED_FRAMES; i--) {
     if (kept[i].optional) {
       kept.splice(i, 1);
       dropped += 1;
     }
   }
 
+  // Still over: drop whole steps off the end rather than truncating mid-pan,
+  // which would leave a step promising three frames and delivering one.
+  while (kept.length > 0 && frameTotal(kept) > MAX_GUIDED_FRAMES) kept.pop();
+
   return {
-    steps: kept.slice(0, MAX_GUIDED_FRAMES),
+    steps: kept,
     droppedOptional: dropped,
-    tooManySpaces: kept.length > MAX_GUIDED_FRAMES,
+    tooManySpaces: frameTotal(steps) > MAX_GUIDED_FRAMES && dropped === 0,
   };
 }
 
-/** Roughly how long the walkthrough will take, for the "listo?" screen. */
-export function estimateWalkSeconds(stepCount: number): number {
-  // ~8s per step in testing: hear the instruction, move, aim, shoot.
-  return stepCount * 8;
+/** Total frames a plan will produce, which is what the size budget divides. */
+export function planFrameCount(steps: CaptureStep[]): number {
+  return steps.reduce((sum, s) => sum + s.frames, 0);
+}
+
+/** Roughly how long the walkthrough will take, for the planning screen. */
+export function estimateWalkSeconds(steps: CaptureStep[]): number {
+  // ~9s per step: hear the instruction, walk to it, aim, hold still. A pan
+  // runs longer because the sweep itself has to be slow enough to stay sharp.
+  return steps.reduce((sum, s) => sum + (s.mode === 'pan' ? 14 : 9), 0);
 }
 
 /**

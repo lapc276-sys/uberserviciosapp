@@ -8,26 +8,36 @@ import {
   buildPlan,
   captionFor,
   estimateWalkSeconds,
+  planFrameCount,
   MAX_GUIDED_FRAMES,
   MAX_SPACES,
   type CaptureStep,
   type SpaceSelection,
 } from '@/lib/capture/guide';
+import { SettleWatcher, signatureOf, spreadPick, type Signature } from '@/lib/capture/scene';
 import { getRecognition, speak, stopSpeaking, synthesisSupported, type SpeechRecognitionLike } from '@/lib/speech';
 import { normalize } from '@/lib/vision/voice-commands';
 
 /**
  * A walkthrough the app leads, instead of a video the person guesses at.
  *
- * The camera opens once and stays open. For each item on the checklist the
- * phone says what to point at, the person points, one frame is captured, and
- * it moves on. Nothing is saved to the gallery, nothing is uploaded until the
- * end, and the frame count is decided by the checklist rather than by how long
- * someone happened to walk.
+ * The camera opens once and runs continuously. The phone says what to point
+ * at, watches the stream, and takes the shot itself the moment the view has
+ * changed and then held still — someone swinging a fridge door open and
+ * steadying their hand. Then it says "ya puedes cerrarla" and moves on. No
+ * button is pressed at any point in a normal walkthrough.
  *
- * Voice is first-class here, not a bonus: the phone is held up at arm's length
- * facing a room, so "listo" advancing the step is often the only reachable
- * control. The buttons stay for every browser that has no speech engine.
+ * Deciding when to shoot is done on the phone, by comparing 32x32 thumbnails
+ * (see lib/capture/scene.ts). The alternative — asking a vision model "is the
+ * fridge open yet?" once a second — is a network round trip per check, in
+ * someone else's kitchen, on one bar of signal: slower, far more expensive,
+ * and a hundred new ways for the walkthrough to die halfway. The model gets
+ * the whole set once, at the end, where it is actually good.
+ *
+ * Every automatic path has a manual one beside it, because a phone held
+ * perfectly still from the start never produces the change the watcher waits
+ * for. The shutter button stays, voice stays, and a step that sees nothing
+ * decisive shoots anyway rather than stranding someone mid-kitchen.
  */
 
 export interface GuidedResult {
@@ -70,6 +80,24 @@ const DEPTH_OPTIONS = [
 const SAY_CAPTURE = ['listo', 'ya', 'ahora', 'foto', 'toma', 'dale', 'ok', 'okay', 'ready'];
 const SAY_SKIP = ['saltar', 'salta', 'no tengo', 'no hay', 'siguiente', 'pasa', 'skip'];
 
+/** How often the stream is sampled while looking for the shot. */
+const WATCH_INTERVAL_MS = 400;
+
+/**
+ * A step that has seen nothing decisive for this long shoots anyway.
+ *
+ * Someone who holds the phone perfectly steady from the first instruction
+ * never produces the change-then-settle the watcher waits for, and waiting
+ * forever for a signal that is not coming is worse than an imperfect frame.
+ */
+const SETTLE_TIMEOUT_MS = 9000;
+
+/** Grace period after speaking, so the shot isn't taken mid-instruction. */
+const LEAD_IN_MS = 1200;
+
+/** A pan samples across this window, then keeps the most different frames. */
+const PAN_WINDOW_MS = 7000;
+
 export function GuidedCapture({ onComplete, fallback, serviceSlug, disabled }: GuidedCaptureProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -84,17 +112,19 @@ export function GuidedCapture({ onComplete, fallback, serviceSlug, disabled }: G
   const [shots, setShots] = useState<{ step: CaptureStep; frame: string }[]>([]);
   const [heard, setHeard] = useState('');
   const [voiceOn, setVoiceOn] = useState(false);
+  const [watching, setWatching] = useState<'waiting' | 'moving' | 'settling'>('waiting');
   const [error, setError] = useState('');
 
   const plan = buildPlan(selection);
   const totalSpaces = Object.values(selection).reduce((a, b) => a + b, 0);
   const current = steps[index];
 
-  // Budget is fixed by the plan length before the first shot, so every frame in
-  // one walkthrough is encoded to the same ceiling and the whole set fits.
+  // Fixed by the plan before the first shot, so every frame in one walkthrough
+  // is encoded to the same ceiling and the whole set fits. Divides by frames
+  // rather than steps, because a pan contributes several.
   const budget = Math.min(
     FRAME_BUDGET_CHARS,
-    Math.floor(TOTAL_BUDGET_CHARS / Math.max(1, steps.length || MAX_GUIDED_FRAMES)),
+    Math.floor(TOTAL_BUDGET_CHARS / Math.max(1, planFrameCount(steps) || MAX_GUIDED_FRAMES)),
   );
 
   const stopStream = useCallback(() => {
@@ -144,26 +174,33 @@ export function GuidedCapture({ onComplete, fallback, serviceSlug, disabled }: G
     );
   }, [budget]);
 
+  const grabSignature = useCallback((): Signature | null => {
+    const video = videoRef.current;
+    if (!video || !video.videoWidth) return null;
+    return signatureOf(video, video.videoWidth, video.videoHeight);
+  }, []);
+
   /**
-   * Advancing is a ref-driven callback because the speech recogniser outlives
-   * the render that created it; reading `index` from a closure would freeze the
-   * walkthrough on whichever step was current when the microphone started.
+   * Ref-driven because both the speech recogniser and the sampling interval
+   * outlive the render that created them; reading `index` from a closure would
+   * freeze the walkthrough on whichever step was current when they started.
    */
-  const advanceRef = useRef<(action: 'capture' | 'skip') => void>(() => {});
+  const advanceRef = useRef<(action: 'capture' | 'skip', collected?: string[]) => void>(() => {});
 
   const advance = useCallback(
-    (action: 'capture' | 'skip') => {
+    (action: 'capture' | 'skip', collected?: string[]) => {
       const step = steps[index];
       if (!step) return;
 
       if (action === 'capture') {
-        const frame = grabFrame();
-        if (!frame) {
-          setError('La cámara todavía no está lista. Espera un segundo y vuelve a intentar.');
+        const frames = collected?.length ? collected : [grabFrame()].filter((f): f is string => !!f);
+        if (frames.length === 0) {
+          setError('La cámara todavía no está lista. Espera un segundo.');
           return;
         }
-        setShots((prev) => [...prev, { step, frame }]);
+        setShots((prev) => [...prev, ...frames.map((frame) => ({ step, frame }))]);
         if (typeof navigator !== 'undefined' && 'vibrate' in navigator) navigator.vibrate?.(40);
+        if (step.after) speak(step.after);
       }
 
       setError('');
@@ -182,11 +219,69 @@ export function GuidedCapture({ onComplete, fallback, serviceSlug, disabled }: G
 
   advanceRef.current = advance;
 
-  // Read each instruction aloud as it becomes current.
+  /**
+   * Runs one step: speak it, watch the stream, shoot when it is right.
+   *
+   * All of a step's behaviour lives in this one effect, keyed on the step
+   * itself, so moving to the next step tears the whole thing down — timers,
+   * watcher, pan buffer — and builds it again. Sharing any of that across
+   * steps is how a pan's leftover frames end up attached to the next
+   * instruction.
+   */
   useEffect(() => {
     if (stage !== 'guiding' || !current) return;
+
     speak(current.spoken);
-  }, [stage, current]);
+    setWatching('waiting');
+
+    const watcher = new SettleWatcher();
+    const panBuffer: { frame: string; signature: Signature | null }[] = [];
+    const startedAt = Date.now();
+    let done = false;
+
+    const finishStep = (frames?: string[]) => {
+      if (done) return;
+      done = true;
+      advanceRef.current('capture', frames);
+    };
+
+    const timer = setInterval(() => {
+      const elapsed = Date.now() - startedAt;
+      // Don't shoot over the instruction still being spoken.
+      if (elapsed < LEAD_IN_MS) return;
+
+      const signature = grabSignature();
+
+      if (current.mode === 'pan') {
+        const frame = grabFrame();
+        if (frame) panBuffer.push({ frame, signature });
+        setWatching('moving');
+        if (elapsed >= LEAD_IN_MS + PAN_WINDOW_MS) {
+          // Keep the most different frames, so a sweep covers the room rather
+          // than returning three photographs of the same cupboard.
+          finishStep(spreadPick(panBuffer, current.frames));
+        }
+        return;
+      }
+
+      const settled = watcher.push(signature);
+      setWatching(watcher.state);
+
+      if (settled) {
+        finishStep();
+        return;
+      }
+
+      // Nothing decisive: someone holding the phone steady from the start
+      // never produces the change the watcher waits for.
+      if (elapsed >= LEAD_IN_MS + SETTLE_TIMEOUT_MS) finishStep();
+    }, WATCH_INTERVAL_MS);
+
+    return () => {
+      clearInterval(timer);
+      done = true;
+    };
+  }, [stage, current, grabFrame, grabSignature]);
 
   /**
    * Re-binds the stream whenever the stage swaps one `<video>` for another.
@@ -404,8 +499,9 @@ export function GuidedCapture({ onComplete, fallback, serviceSlug, disabled }: G
 
         {totalSpaces > 0 && (
           <p className="text-sm text-slate-500 dark:text-slate-400">
-            {plan.steps.length} tomas · unos {Math.ceil(estimateWalkSeconds(plan.steps.length) / 60)} min
-            caminando.
+            {plan.steps.length} pasos · {planFrameCount(plan.steps)} fotos · unos{' '}
+            {Math.ceil(estimateWalkSeconds(plan.steps) / 60)} min caminando. No tienes que pulsar nada:
+            la cámara dispara sola.
           </p>
         )}
 
@@ -439,15 +535,33 @@ export function GuidedCapture({ onComplete, fallback, serviceSlug, disabled }: G
             <p className="mt-1 text-xl font-semibold leading-snug text-white">{current?.spoken}</p>
           </div>
 
+          {/* What the app is doing right now. Without this the camera looks
+              frozen while it waits, and people start pressing things. */}
           <div className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-2 bg-gradient-to-t from-black/80 to-transparent p-3">
-            {voiceOn ? (
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-white/15 px-2.5 py-1 text-xs text-white">
-                <Mic className="h-3.5 w-3.5" /> di “listo”
+            <span
+              className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium text-white ${
+                watching === 'settling' ? 'bg-emerald-600' : 'bg-white/15'
+              }`}
+            >
+              <span
+                className={`h-2 w-2 rounded-full ${
+                  watching === 'waiting' ? 'bg-white/70' : 'animate-pulse bg-white'
+                }`}
+              />
+              {current?.mode === 'pan'
+                ? 'Grabando el paneo…'
+                : watching === 'settling'
+                  ? 'Quieto… tomando la foto'
+                  : watching === 'moving'
+                    ? 'Te veo, sujeta el teléfono quieto'
+                    : 'Esperando a que apuntes'}
+            </span>
+            {voiceOn && (
+              <span className="inline-flex items-center gap-1 text-xs text-white/60">
+                <Mic className="h-3.5 w-3.5" />
+                {heard ? `“${heard}”` : 'di “listo”'}
               </span>
-            ) : (
-              <span />
             )}
-            {heard && <span className="truncate text-xs text-white/60">“{heard}”</span>}
           </div>
 
           <div
@@ -458,28 +572,32 @@ export function GuidedCapture({ onComplete, fallback, serviceSlug, disabled }: G
 
         {error && <p className="text-sm text-red-600">{error}</p>}
 
-        <button
-          type="button"
-          onClick={() => advance('capture')}
-          className="inline-flex min-h-[64px] w-full items-center justify-center gap-2 rounded-2xl bg-brand-600 text-lg font-semibold text-white"
-        >
-          <Camera className="h-6 w-6" /> Tomar la foto
-        </button>
-
+        {/* The walkthrough shoots by itself. These stay because automatic
+            detection has one honest failure mode — a phone held perfectly
+            still from the start never changes enough to trigger it — and
+            because a browser with no speech engine leaves nothing else. */}
         <div className="flex gap-2">
           <button
             type="button"
+            onClick={() => advance('capture')}
+            className="inline-flex min-h-[56px] flex-1 items-center justify-center gap-2 rounded-xl bg-brand-600 text-base font-semibold text-white"
+          >
+            <Camera className="h-5 w-5" /> Tomar ya
+          </button>
+          <button
+            type="button"
             onClick={() => advance('skip')}
-            className="inline-flex min-h-[48px] flex-1 items-center justify-center gap-2 rounded-xl border text-sm font-medium"
+            className="inline-flex min-h-[56px] flex-1 items-center justify-center gap-2 rounded-xl border text-sm font-medium"
           >
             <SkipForward className="h-4 w-4" /> {current?.optional ? 'No tengo' : 'Saltar'}
           </button>
-          {!synthesisSupported() && (
-            <span className="flex-1 self-center text-center text-xs text-slate-500">
-              Este navegador no habla — lee la instrucción arriba.
-            </span>
-          )}
         </div>
+
+        {!synthesisSupported() && (
+          <p className="text-center text-xs text-slate-500">
+            Este navegador no habla en voz alta — lee la instrucción de arriba.
+          </p>
+        )}
       </div>
     );
   }
