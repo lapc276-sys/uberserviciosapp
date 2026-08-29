@@ -20,6 +20,7 @@ Config opcional:
 
 import asyncio
 import contextlib
+import datetime as dt
 import logging
 import os
 import random
@@ -44,6 +45,14 @@ SCOPES_COMENTARIOS = ["https://www.googleapis.com/auth/youtube.upload",
 # Los subtítulos (captions.insert) piden force-ssl igual que los comentarios:
 # una sola re-autorización desbloquea las dos cosas.
 SCOPES_SUBTITULOS = SCOPES_COMENTARIOS
+# La RETENCIÓN (cuánto se ve de cada video antes de irse) no está en la API
+# de datos: vive en la de Analytics, que pide su propio permiso. Es el único
+# dato que distingue un short que se quedó en la puerta de uno que despegó,
+# así que merece la re-autorización.
+SCOPES_ANALITICA = ["https://www.googleapis.com/auth/youtube.upload",
+                    "https://www.googleapis.com/auth/youtube.readonly",
+                    "https://www.googleapis.com/auth/youtube.force-ssl",
+                    "https://www.googleapis.com/auth/yt-analytics.readonly"]
 # User-Agent conforme a la política de Wikimedia (identificable + contacto);
 # sin esto, upload.wikimedia.org responde 429 a IPs compartidas como Replit
 _UA = {"User-Agent":
@@ -1366,6 +1375,55 @@ def listar_mis_videos(max_n=50):
     except Exception as e:
         log.warning("No se pudieron listar los videos (¿falta el permiso de "
                     "lectura? re-autoriza con autorizar_youtube.py) — %s", e)
+        return None
+
+
+# ---------------------- retención (API de Analytics) ----------------------
+
+def _retencion_sync(desde, hasta, maximo):
+    """Métricas por video del canal en un rango de fechas.
+
+    Devuelve [{id, vistas, minutos, duracion_media_s, retencion_pct}].
+    `retencion_pct` es lo que se ve de media EN PORCENTAJE del video: es la
+    cifra que hay que mirar, porque no depende de que el video dure 40
+    segundos o diez minutos.
+    """
+    from googleapiclient.discovery import build
+    ya = build("youtubeAnalytics", "v2",
+               credentials=_credenciales(SCOPES_ANALITICA),
+               cache_discovery=False)
+    r = ya.reports().query(
+        ids="channel==MINE", startDate=desde, endDate=hasta,
+        metrics=("views,estimatedMinutesWatched,averageViewDuration,"
+                 "averageViewPercentage"),
+        dimensions="video", sort="-views",
+        maxResults=max(1, min(200, maximo))).execute()
+    cols = [c["name"] for c in r.get("columnHeaders", [])]
+    fuera = []
+    for fila in r.get("rows", []):
+        d = dict(zip(cols, fila))
+        fuera.append({
+            "id": d.get("video", ""),
+            "vistas": int(d.get("views") or 0),
+            "minutos": float(d.get("estimatedMinutesWatched") or 0.0),
+            "duracion_media_s": float(d.get("averageViewDuration") or 0.0),
+            "retencion_pct": float(d.get("averageViewPercentage") or 0.0),
+        })
+    return fuera
+
+
+def retencion(dias=28, maximo=200):
+    """Envoltura segura. None si falta el permiso (hay que re-autorizar)."""
+    if not oauth_configurado():
+        return None
+    hoy = dt.date.today()
+    try:
+        return _retencion_sync((hoy - dt.timedelta(days=dias)).isoformat(),
+                               hoy.isoformat(), maximo)
+    except Exception as e:
+        log.warning("Sin datos de retención (¿falta el permiso "
+                    "yt-analytics.readonly? re-autoriza con "
+                    "autorizar_youtube.py) — %s", e)
         return None
 
 

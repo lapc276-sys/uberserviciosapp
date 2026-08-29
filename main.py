@@ -1191,6 +1191,41 @@ async def control_velocidades(year: int = 0, gp: str = "", tipo: str = "Race",
     })
 
 
+@app.get("/control/retencion")
+async def control_retencion(dias: int = 28):
+    """Retención de los videos del canal y qué separa a los que despegaron.
+
+    Necesita el permiso yt-analytics.readonly: si no lo tienes, vuelve a
+    correr autorizar_youtube.py y actualiza YOUTUBE_REFRESH_TOKEN.
+    """
+    filas = await asyncio.to_thread(youtube_subir.retencion, dias)
+    if filas is None:
+        return JSONResponse(
+            {"ok": False, "error": "Sin permiso de Analytics. Corre "
+             "autorizar_youtube.py otra vez (ya pide el permiso nuevo) y "
+             "actualiza el Secret YOUTUBE_REFRESH_TOKEN."}, status_code=403)
+    if not filas:
+        return JSONResponse({"ok": True, "videos": 0,
+                             "estado": f"Sin datos en los últimos {dias} días"})
+    # Los títulos, para que el veredicto se lea con nombres y no con ids
+    titulos = {}
+    with contextlib.suppress(Exception):
+        vids = await asyncio.to_thread(youtube_subir.listar_mis_videos, 200)
+        titulos = {v["id"]: v["titulo"] for v in (vids or [])}
+    comparacion = metricas.comparar_retencion(filas, titulos)
+    peores = sorted(filas, key=lambda f: f.get("retencion_pct") or 0)[:5]
+    return JSONResponse({
+        "ok": True, "dias": dias, "videos": len(filas),
+        "comparacion": comparacion,
+        # Los que menos aguantan: son los que hay que mirar primero.
+        "peor_retencion": [
+            {"titulo": titulos.get(f["id"], f["id"]),
+             "retencion_pct": round(f.get("retencion_pct") or 0, 1),
+             "vistas": f["vistas"]} for f in peores],
+        "filas": [{**f, "titulo": titulos.get(f["id"], "")} for f in filas],
+    })
+
+
 @app.post("/control/revisar")
 async def control_revisar(archivo: str = "", fotogramas: int = 9):
     """Revisa un video ya montado: trozos en negro, imagen congelada,

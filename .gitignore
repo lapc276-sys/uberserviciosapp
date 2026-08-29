@@ -45,3 +45,6 @@ tipos/
 # de una comprobación, no fuente — se regenera con cada video.
 revision/
 estatico/revision.png
+
+# Backtest: PNG y informes que se regeneran corriendo el script.
+backtest/

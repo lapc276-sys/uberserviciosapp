@@ -169,6 +169,79 @@ def resumen(datos=None):
     }
 
 
+# ── Qué tienen en común los que despegaron ────────────────────────────
+# Con muchos videos aterrizando en la MISMA cifra (unos mil), lo que
+# separa a los que salieron de ahí no son las visitas: es la retención.
+# Esto parte la lista en dos por visitas y compara la retención de cada
+# mitad, que es la única comparación que responde a "¿por qué ese sí?".
+
+#: Por debajo de esto no se compara nada: cuatro videos no son una
+#: muestra, son cuatro anécdotas.
+MIN_PARA_COMPARAR = 6
+
+
+def _mediana(xs):
+    v = sorted(x for x in xs if isinstance(x, (int, float)))
+    if not v:
+        return None
+    m = len(v) // 2
+    return v[m] if len(v) % 2 else (v[m - 1] + v[m]) / 2
+
+
+def comparar_retencion(filas, titulos=None):
+    """Compara los que más vistas hicieron con los que menos.
+
+    `filas` = [{id, vistas, retencion_pct, duracion_media_s}] tal como las
+    devuelve youtube_subir.retencion(). `titulos` = {id: título}.
+
+    Devuelve un veredicto con la diferencia de retención entre las dos
+    mitades — o `suficiente: False` si no hay material para comparar. No
+    inventa una conclusión con cuatro videos.
+    """
+    filas = [f for f in (filas or []) if f.get("vistas")]
+    if len(filas) < MIN_PARA_COMPARAR:
+        return {"suficiente": False, "videos": len(filas),
+                "hacen_falta": MIN_PARA_COMPARAR}
+    orden = sorted(filas, key=lambda f: -f["vistas"])
+    corte = max(2, len(orden) // 3)
+    arriba, abajo = orden[:corte], orden[-corte:]
+
+    def _lado(g):
+        return {
+            "videos": len(g),
+            "vistas_mediana": _mediana([f["vistas"] for f in g]),
+            "retencion_mediana": _mediana([f.get("retencion_pct") or 0
+                                           for f in g]),
+            "segundos_vistos_mediana": _mediana(
+                [f.get("duracion_media_s") or 0 for f in g]),
+            "titulos": [(titulos or {}).get(f["id"], f["id"]) for f in g],
+        }
+
+    a, b = _lado(arriba), _lado(abajo)
+    dif = None
+    if a["retencion_mediana"] is not None and b["retencion_mediana"] is not None:
+        dif = round(a["retencion_mediana"] - b["retencion_mediana"], 1)
+    # La lectura, dicha con las mismas cifras que están arriba. El umbral
+    # de 5 puntos no es magia: por debajo de eso, con estas muestras tan
+    # pequeñas, la diferencia puede ser ruido.
+    if dif is None:
+        lectura = "Sin datos de retención suficientes."
+    elif dif >= 5:
+        lectura = (f"Los que despegaron se ven un {dif} % más. La diferencia "
+                   "está en cuánto aguanta la gente, no en el tema: hay que "
+                   "mirar el gancho y el ritmo de los que se quedaron.")
+    elif dif <= -5:
+        lectura = (f"Los que despegaron se ven un {abs(dif)} % MENOS. La "
+                   "retención no explica el reparto: lo que cambia está "
+                   "fuera del video — tema, título o miniatura.")
+    else:
+        lectura = (f"Retención casi igual en los dos grupos ({dif:+} %). No "
+                   "es el montaje lo que separa a unos de otros: mira el "
+                   "tema, el título y la miniatura.")
+    return {"suficiente": True, "arriba": a, "abajo": b,
+            "diferencia_retencion": dif, "lectura": lectura}
+
+
 def en_seguimiento(publicado):
     """¿Sigue mereciendo la pena medir este short?"""
     h = _horas(publicado, _ahora().isoformat())

@@ -27,11 +27,14 @@ import sys
 
 # upload = subir videos y fijar miniaturas; readonly = listar los videos ya
 # subidos para re-generarles la miniatura; force-ssl = leer y responder los
-# comentarios del canal. Si ya te habías autorizado antes con menos permisos,
+# comentarios del canal; yt-analytics = la RETENCIÓN, que no está en la API
+# de datos y es lo único que distingue un video que despegó de uno que se
+# quedó en la puerta. Si ya te habías autorizado antes con menos permisos,
 # vuelve a correr este script para concederlos todos y actualiza el Secret.
 SCOPES = ["https://www.googleapis.com/auth/youtube.upload",
           "https://www.googleapis.com/auth/youtube.readonly",
-          "https://www.googleapis.com/auth/youtube.force-ssl"]
+          "https://www.googleapis.com/auth/youtube.force-ssl",
+          "https://www.googleapis.com/auth/yt-analytics.readonly"]
 
 
 def _pedir(nombre, pista, comprobar=None):
