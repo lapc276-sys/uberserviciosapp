@@ -83,6 +83,120 @@ try:
     MUSICA_VOLUMEN = float(os.environ.get("MUSICA_VOLUMEN", "0.12"))
 except ValueError:
     MUSICA_VOLUMEN = 0.12
+
+
+def _num_env(nombre, defecto):
+    try:
+        return float(os.environ.get(nombre, defecto))
+    except (TypeError, ValueError):
+        return float(defecto)
+
+
+# ── La mezcla: voz delante, música debajo ─────────────────────────────
+# Los niveles se miden en LUFS (sonoridad integrada) y no en el volumen
+# del fader, por una razón práctica: YouTube normaliza todo lo que se
+# sube a su propio nivel, así que el número absoluto que pongamos da
+# igual — lo que sobrevive a esa normalización es la DIFERENCIA entre la
+# voz y la música. Por eso lo que se fija aquí es esa diferencia.
+#
+# Y se MIDE en vez de suponerse. Antes la música se bajaba a un 0.12
+# fijo, lo que solo funciona si el track viene con la sonoridad que uno
+# se imaginó: cambia de música y la mezcla se descuadra. Normalizando
+# las dos pistas, la separación es la misma con cualquier track.
+VOZ_LUFS = _num_env("VOZ_LUFS", -16.0)
+MUSICA_DEBAJO_DB = _num_env("MUSICA_DEBAJO_DB", 15.0)   # bajo la voz
+
+# El hueco de frecuencias: se le quitan unos decibelios a la música justo
+# en la banda donde vive la inteligibilidad de la voz (1-3 kHz). La voz
+# se entiende mejor sin tener que bajar más la música, que es lo que
+# hace que un fondo suene lleno y no tapado.
+CARVE_HZ = _num_env("CARVE_HZ", 2000.0)
+CARVE_Q = _num_env("CARVE_Q", 1.4)
+CARVE_DB = _num_env("CARVE_DB", -3.0)
+
+# Ducking: la música cede un poco cada vez que la voz entra.
+#
+# Cuánto cede sale de la cuenta del compresor: reducción ≈ (cuánto pasa
+# la voz del umbral) × (1 − 1/ratio). Con la voz ya normalizada, sus
+# picos rondan los −2 dB, o sea unos 16 dB por encima del umbral de
+# −18 dB (0.125): con ratio 1.5 eso son unos 5 dB de bajada. Ese es el
+# orden que se busca — lo justo para abrir hueco. Un ducking profundo
+# suena a bombeo y hace desaparecer la música en cada frase.
+DUCK_UMBRAL = _num_env("DUCK_UMBRAL", 0.125)
+DUCK_RATIO = _num_env("DUCK_RATIO", 1.5)
+DUCK_ATAQUE = _num_env("DUCK_ATAQUE", 20.0)     # ms
+DUCK_SUELTA = _num_env("DUCK_SUELTA", 350.0)    # ms
+
+
+def _filtros_mezcla(i_voz, i_mus):
+    """Los filtros para mezclar narración y música. Devuelve [partes].
+
+    La salida se llama [aout]. El orden es el de una mesa de mezclas de
+    verdad: primero se igualan los niveles, luego se le abre hueco a la
+    voz en la música, luego la música cede cuando la voz habla, y al
+    final un limitador que solo actúa si algo se pasa.
+
+    Lo que se quitó de la versión anterior fue un `dynaudnorm` al final
+    de todo. Un normalizador dinámico sobre la mezcla YA HECHA levanta lo
+    que suena bajo, y lo que suena bajo en las pausas es justo la música:
+    hacía lo contrario del ducking, la subía cada vez que el narrador
+    callaba.
+    """
+    mus_lufs = VOZ_LUFS - abs(MUSICA_DEBAJO_DB)
+    return [
+        f"[{i_voz}:a]loudnorm=I={VOZ_LUFS:.1f}:TP=-1.5:LRA=11[voz0]",
+        # La voz se usa dos veces: una para oírse y otra como disparador
+        # del ducking. Sin el asplit, ffmpeg no deja consumir la misma
+        # etiqueta en dos filtros.
+        "[voz0]asplit=2[voz][llave]",
+        f"[{i_mus}:a]loudnorm=I={mus_lufs:.1f}:TP=-3:LRA=7,"
+        f"equalizer=f={CARVE_HZ:.0f}:t=q:w={CARVE_Q:.2f}:g={CARVE_DB:.1f}[bg0]",
+        f"[bg0][llave]sidechaincompress=threshold={DUCK_UMBRAL:.3f}:"
+        f"ratio={DUCK_RATIO:.2f}:attack={DUCK_ATAQUE:.0f}:"
+        f"release={DUCK_SUELTA:.0f}:makeup=1[bg]",
+        # duration=first → la mezcla dura lo que la voz. El limitador va
+        # al final y solo por seguridad: no cambia el equilibrio, evita
+        # que un pico de la suma sature.
+        "[voz][bg]amix=inputs=2:duration=first:dropout_transition=0,"
+        "alimiter=limit=0.95[aout]",
+    ]
+
+
+#: Lo que dice ffmpeg cuando no conoce un filtro de la mezcla nueva.
+_FILTROS_MEZCLA = ("loudnorm", "sidechaincompress", "alimiter", "equalizer",
+                   "asplit")
+
+
+def _fallo_de_mezcla(err):
+    """¿El error viene de la cadena de audio y no del video?
+
+    Sirve para no tirar el Ken Burns ni la música por culpa de un ffmpeg
+    que no trae uno de estos filtros: si el fallo es de la mezcla, se
+    reintenta lo mismo con la mezcla simple.
+    """
+    t = (err or "").lower()
+    if not any(f in t for f in _FILTROS_MEZCLA):
+        return False
+    return any(p in t for p in ("no such filter", "unknown filter",
+                                "invalid argument", "error initializing",
+                                "option not found", "unrecognized option",
+                                "error parsing filterchain",
+                                "failed to configure"))
+
+
+def _filtros_mezcla_simple(i_voz, i_mus):
+    """La mezcla de toda la vida: música a volumen fijo y a correr.
+
+    Existe como red de seguridad. Si el ffmpeg de turno no trae
+    `sidechaincompress` o `loudnorm`, el video no se queda sin música por
+    eso: se cae a esto, que funciona en cualquier build.
+    """
+    vol = max(0.0, min(1.0, MUSICA_VOLUMEN))
+    return [
+        f"[{i_voz}:a]volume=1.0[voz]",
+        f"[{i_mus}:a]volume={vol:.3f}[bg]",
+        "[voz][bg]amix=inputs=2:duration=first:dropout_transition=0[aout]",
+    ]
 # Efecto Ken Burns (zoom/paneo lento sobre las fotos) para que no se vean
 # estáticas. Activado de fábrica; se apaga con KEN_BURNS=off. Los gráficos
 # de datos NUNCA llevan Ken Burns (recortaría ejes/etiquetas).
@@ -337,7 +451,7 @@ def _envolver(texto, ancho=26):
 
 
 def _construir_ffmpeg(imgs, audio, salida, pers, w, h, fps, musica=None,
-                      es_clip=None):
+                      es_clip=None, mezcla_simple=False):
     """Arma la lista de argumentos de ffmpeg (el rótulo ya viene pintado
     en las imágenes con Pillow — el drawtext del build estático no está
     disponible).
@@ -372,13 +486,8 @@ def _construir_ffmpeg(imgs, audio, salida, pers, w, h, fps, musica=None,
     partes.append(f"{cadena}concat=n={n}:v=1:a=0[vc]")
 
     if musica:
-        vol = max(0.0, min(1.0, MUSICA_VOLUMEN))
-        partes.append(f"[{n}:a]volume=1.0[voz]")
-        partes.append(f"[{n + 1}:a]volume={vol:.3f}[bg]")
-        # duration=first → la mezcla dura lo que la voz; dropout_transition=0
-        # evita que la música suba de volumen si la voz calla un instante.
-        partes.append("[voz][bg]amix=inputs=2:duration=first:"
-                      "dropout_transition=0,dynaudnorm[aout]")
+        partes += (_filtros_mezcla_simple(n, n + 1) if mezcla_simple
+                   else _filtros_mezcla(n, n + 1))
         mapa_audio = "[aout]"
     else:
         mapa_audio = f"{n}:a"
@@ -400,7 +509,8 @@ def _par(x):
 
 
 def _construir_ffmpeg_kb(imgs, es_chart, titulo_png, audio, salida, pers,
-                         w, h, fps, musica=None, es_clip=None):
+                         w, h, fps, musica=None, es_clip=None,
+                         mezcla_simple=False):
     """Como _construir_ffmpeg pero con efecto Ken Burns (zoom lento) en las
     FOTOS. Los gráficos (es_chart) quedan estáticos y encajados; los clips
     (es_clip, ya normalizados) entran tal cual — traen movimiento propio.
@@ -466,11 +576,8 @@ def _construir_ffmpeg_kb(imgs, es_chart, titulo_png, audio, salida, pers,
         partes.append("[vbg]null[vc]")
 
     if musica:
-        vol = max(0.0, min(1.0, MUSICA_VOLUMEN))
-        partes.append(f"[{idx}:a]volume=1.0[voz]")
-        partes.append(f"[{idx_mus}:a]volume={vol:.3f}[bg]")
-        partes.append("[voz][bg]amix=inputs=2:duration=first:"
-                      "dropout_transition=0,dynaudnorm[aout]")
+        partes += (_filtros_mezcla_simple(idx, idx_mus) if mezcla_simple
+                   else _filtros_mezcla(idx, idx_mus))
         mapa_audio = "[aout]"
     else:
         mapa_audio = f"{idx}:a"
@@ -1158,6 +1265,20 @@ async def _armar_video_base(audio_path, fotos_urls, titulo, salida_mp4,
             ok, err = _correr_ffmpeg(args, salida_mp4, limite)
             if ok:
                 return True
+            # Si lo que falló fue la mezcla (un ffmpeg sin loudnorm o sin
+            # sidechaincompress), se reintenta LO MISMO con la mezcla de
+            # toda la vida antes de renunciar a nada. Un build viejo no
+            # tiene por qué costarnos ni el Ken Burns ni la música.
+            if musica and _fallo_de_mezcla(err):
+                log.info("La mezcla nueva no la traga este ffmpeg — "
+                         "reintento con la mezcla simple")
+                args = _construir_ffmpeg_kb(
+                    imgs, es_chart, titulo_png, audio_path, salida_mp4, pers,
+                    w, h, fps, musica=musica, es_clip=es_clip,
+                    mezcla_simple=True)
+                ok, err = _correr_ffmpeg(args, salida_mp4, limite)
+                if ok:
+                    return True
             log.warning("Ken Burns falló (%s) — armo el video clásico", err)
             # Para el plan clásico las fotos necesitan el título pintado
             _prep(lambda img, w_, h_: _preparar_imagen(img, titulo, w_, h_),
@@ -1171,6 +1292,14 @@ async def _armar_video_base(audio_path, fotos_urls, titulo, salida_mp4,
         ok, err = _correr_ffmpeg(args, salida_mp4, limite)
         if ok:
             return True
+        if musica and _fallo_de_mezcla(err):
+            args = _construir_ffmpeg(imgs, audio_path, salida_mp4, pers, w, h,
+                                     fps, musica=musica, es_clip=es_clip,
+                                     mezcla_simple=True)
+            ok, err = _correr_ffmpeg(args, salida_mp4, limite)
+            if ok:
+                log.info("Video armado con la mezcla simple")
+                return True
         log.warning("ffmpeg falló al armar el video: %s", err)
 
         # 3) Último recurso: sin música por si el mix de audio fue el problema
