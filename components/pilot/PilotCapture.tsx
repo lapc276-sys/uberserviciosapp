@@ -5,7 +5,7 @@ import {
   Upload, Loader2, Check, ArrowRight, ArrowLeft, ShieldCheck,
   Clock, AlertTriangle, Plus, Trash2, Sparkles, Mic,
 } from 'lucide-react';
-import { extractFrames, readImages, DEFAULT_FRAME_COUNT } from '@/lib/vision/frames';
+import { extractFrames, readImages, thumbnailsFor, DEFAULT_FRAME_COUNT } from '@/lib/vision/frames';
 import { formatDuration } from '@/lib/vision/estimate';
 import {
   SOIL_DIMENSIONS, ROOM_TYPES, ROOM_LABELS, EMPTY_SOIL,
@@ -15,6 +15,7 @@ import { VoiceControl } from '@/components/pilot/VoiceControl';
 import { LiveCapture } from '@/components/capture/LiveCapture';
 import { GuidedCapture } from '@/components/capture/GuidedCapture';
 import { readJson } from '@/lib/http';
+import { THUMBNAIL_EDGE_PX } from '@/lib/vision/archive';
 import { RoomSize } from '@/components/pilot/RoomSize';
 import { appaLevelFor } from '@/lib/vision/appa';
 import type { VoiceCommand } from '@/lib/vision/voice-commands';
@@ -100,10 +101,22 @@ export function PilotCapture({ capturedBy }: { capturedBy: string }) {
       if (phase === 'before') setFrameCount(frames.length);
       setBusy('analyzing');
 
+      // Only built when the customer actually agreed. Generating them anyway
+      // and letting the server decide would put images the customer refused
+      // onto the wire, which is the wrong side of the decision to be on.
+      const archive = consentTraining ? await thumbnailsFor(frames, THUMBNAIL_EDGE_PX) : undefined;
+
       const res = await fetch('/api/vision/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ frames, captions, serviceSlug, city }),
+        body: JSON.stringify({
+          frames,
+          captions,
+          archiveFrames: archive,
+          consentTraining,
+          serviceSlug,
+          city,
+        }),
       });
       const { data, failure } = await readJson<any>(res);
       if (failure || !data) {

@@ -6,6 +6,7 @@ import { priceFromAnalysis } from '@/lib/vision/pricing';
 import { services } from '@/lib/config/services';
 import { saveVisionAnalysis, createLead } from '@/lib/data';
 import { framesAreSafe, validateCaptions, FRAME_ERROR, MAX_FRAMES } from '@/lib/vision/input';
+import { archiveFrames } from '@/lib/vision/archive';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -16,6 +17,15 @@ const schema = z.object({
     .min(1, 'Add at least one frame')
     .max(MAX_FRAMES, `Up to ${MAX_FRAMES} frames`),
   captions: z.array(z.string().max(200)).max(MAX_FRAMES).optional(),
+  /**
+   * Small copies of the frames, for the training archive. Sent separately from
+   * `frames` so that what is analysed and what is retained are two decisions,
+   * not one — the analyser wants the biggest image that fits, the archive
+   * wants the smallest one still worth learning from.
+   */
+  archiveFrames: z.array(z.string().max(40_000)).max(MAX_FRAMES).optional(),
+  /** The customer agreed their footage may be used to improve the model. */
+  consentTraining: z.boolean().optional(),
   serviceSlug: z.string().refine((s) => services.some((x) => x.slug === s), 'Unknown service'),
   city: z.string().max(120).optional(),
   contact: z
@@ -94,6 +104,17 @@ export async function POST(req: Request) {
     quote,
     contactEmail: contact?.email,
   });
+
+  // Stored after the estimate is computed, and awaited only for its result —
+  // archiveFrames never throws, so a failure here costs a training sample and
+  // nothing else. The customer asked for a price, not to donate data.
+  const archived = await archiveFrames({
+    analysisId: id,
+    frames: parsed.data.archiveFrames ?? [],
+    captions,
+    consentTraining: parsed.data.consentTraining === true,
+  });
+  if (archived.stored > 0) console.log(`[archive] kept ${archived.stored} ${archived.mode} frames for ${id}`);
 
   // A video walkthrough is high purchase intent — capture it even if they
   // abandon before booking.

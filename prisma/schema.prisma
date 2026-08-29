@@ -344,6 +344,7 @@ model TrainingSample {
    * /**
    * /**
    * /**
+   * /**
    * /** 1 = first job of that worker's day, 2 = second, etc.
    */
   jobSequence      Int?
@@ -575,4 +576,44 @@ model ActivitySegment {
 
   @@index([sessionId])
   @@index([roomType])
+}
+
+/**
+ * Frames kept for training, when the operator has switched archiving on and
+ * the customer consented. See lib/vision/archive.ts for why this is opt-in and
+ * time-bounded rather than a default.
+ */
+model VisionFrameArchive {
+  id         String   @id @default(cuid())
+  /**
+   * The VisionAnalysis this frame belongs to. Not a foreign key: an analysis
+   * may be deleted for its own reasons, and orphaning the frames would leave
+   * them undeletable by the one handle anybody has for them.
+   */
+  analysisId String
+  /**
+   * Order within the walkthrough, so the set can be reassembled.
+   */
+  position   Int
+  /**
+   * What the camera was aimed at, e.g. "[kitchen-1] kitchen - Dentro del
+   * horno". The label half of a training pair.
+   */
+  caption    String?
+  /**
+   * thumbnail | full — which archive mode produced this row.
+   */
+  kind       String
+  /**
+   * The image as a data URL.
+   */
+  data       String
+  /**
+   * Hard deletion date, written at insert. A scheduled purge enforces it.
+   */
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+
+  @@index([analysisId])
+  @@index([expiresAt])
 }

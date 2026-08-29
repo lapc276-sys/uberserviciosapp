@@ -10,12 +10,17 @@
  *
  *   node scripts/run-cron.mjs reminders
  *   node scripts/run-cron.mjs campaigns
+ *   node scripts/run-cron.mjs retention
  *
  * Reads CRON_TARGET_URL, falling back to NEXT_PUBLIC_SITE_URL — on Replit the
  * scheduled container is not the web container, so localhost is not an option.
  */
 
-const JOBS = { reminders: '/api/cron/reminders', campaigns: '/api/cron/campaigns' };
+const JOBS = {
+  reminders: '/api/cron/reminders',
+  campaigns: '/api/cron/campaigns',
+  retention: '/api/cron/retention',
+};
 
 const job = process.argv[2];
 if (!JOBS[job]) {

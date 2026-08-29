@@ -280,6 +280,43 @@ export async function extractFrames(file: File, options: ExtractOptions = {}): P
   }
 }
 
+/**
+ * A small copy of each frame, for the training archive.
+ *
+ * Made here rather than on the server because the browser has already decoded
+ * the image and has a canvas; doing it again server-side would mean an image
+ * library inside a serverless runtime to redo work that was free on the phone.
+ *
+ * The size is chosen to keep what a model can learn from — grease sheen,
+ * clutter density, the texture of a dirty grout line — while dropping what a
+ * person could read: a letter on a counter, a face across a room, a screen.
+ * That is a reduction in identifiability, not anonymisation, and the storage
+ * layer treats it as personal data regardless.
+ */
+export function thumbnailsFor(frames: string[], edge: number): Promise<string[]> {
+  return Promise.all(
+    frames.map(
+      (src) =>
+        new Promise<string>((resolve) => {
+          const img = new Image();
+          img.onload = () => {
+            const canvas = document.createElement('canvas');
+            const scale = Math.min(1, edge / Math.max(img.width, img.height));
+            canvas.width = Math.max(1, Math.round(img.width * scale));
+            canvas.height = Math.max(1, Math.round(img.height * scale));
+            const ctx = canvas.getContext('2d');
+            if (!ctx) return resolve('');
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            resolve(canvas.toDataURL('image/jpeg', 0.6));
+          };
+          // A frame that won't reload is not worth failing an estimate over.
+          img.onerror = () => resolve('');
+          img.src = src;
+        }),
+    ),
+  ).then((list) => list.filter(Boolean));
+}
+
 /** Reads still photos (fallback path when someone uploads images instead). */
 export function readImages(files: File[]): Promise<string[]> {
   return Promise.all(
