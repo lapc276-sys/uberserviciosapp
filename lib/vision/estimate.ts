@@ -11,7 +11,7 @@ import {
 import { planSupplies } from './supplies';
 import {
   ROOM_BASE_MINUTES,
-  OBJECT_TIME_COST,
+  objectMinutesFor,
   HOUSEHOLD_SIGNALS,
   countCapFor,
   MINUTES_PER_PRO,
@@ -72,11 +72,21 @@ function applyHouseholdSignals(
   return { soil: out, fired };
 }
 
+/**
+ * Splits a room's minutes into the part a service multiplier may scale and the
+ * part it may not.
+ *
+ * A deep clean does not make a floor take 45% longer; it adds the inside of an
+ * oven. Base and soil scale with how thoroughly you work a surface, so the
+ * multiplier applies. Object time is already chosen per service, so scaling it
+ * again charges the same depth twice — which is exactly what the old code did.
+ */
 function roomMinutes(
   room: RawRoomObservation,
   soil: SoilScores,
   baseOverrides: Partial<Record<RawRoomObservation['type'], number>>,
-): number {
+  serviceSlug: string,
+): { scalable: number; objectMinutes: number } {
   const base = baseOverrides[room.type] ?? ROOM_BASE_MINUTES[room.type] ?? ROOM_BASE_MINUTES.other;
   const weights = soilWeightsFor(room.type);
 
@@ -87,17 +97,20 @@ function roomMinutes(
   );
 
   // Objects add fixed handling time, discounted by detection confidence so a
-  // shaky guess can't inflate the bill.
+  // shaky guess can't inflate the bill. The per-object cost already depends on
+  // the service — wiping a fridge front or clearing its shelves — so it is
+  // returned separately and deliberately NOT scaled by the service multiplier
+  // again below.
   const objectMinutes = room.objects.reduce((sum, obj) => {
     const key = obj.name.trim().toLowerCase();
-    const cost = OBJECT_TIME_COST[key];
+    const cost = objectMinutesFor(key, serviceSlug);
     if (!cost) return sum;
     const count = Math.max(1, Math.min(obj.count || 1, countCapFor(key)));
     const weight = Math.max(0.3, Math.min(obj.confidence || 0.5, 1));
     return sum + cost * count * weight;
   }, 0);
 
-  return base + soilMinutes + objectMinutes;
+  return { scalable: base + soilMinutes, objectMinutes };
 }
 
 /** Labels repeated room types as "Bedroom 2", "Bathroom 3", etc. */
@@ -154,7 +167,8 @@ export function buildAnalysis(
   const rooms: RoomAnalysis[] = observations.map((obs, i) => {
     const observed = normalizeSoil(obs.soil);
     const { soil, fired } = applyHouseholdSignals(observed, obs.objects);
-    const minutes = roomMinutes(obs, soil, baseOverrides) * multiplier;
+    const parts = roomMinutes(obs, soil, baseOverrides, serviceSlug);
+    const minutes = parts.scalable * multiplier + parts.objectMinutes * timeFactor;
     return {
       type: obs.type,
       label: labels[i],

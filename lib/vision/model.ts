@@ -50,37 +50,95 @@ const ROOM_SOIL_WEIGHTS: Partial<Record<RoomType, Partial<Record<SoilDimension, 
   patio: { dust: 14, clutter: 12, mold: 10 },
 };
 
-/** Objects that reliably add work when present, in minutes each. */
-export const OBJECT_TIME_COST: Record<string, number> = {
-  oven: 14,
-  stove: 8,
-  refrigerator: 12,
-  fridge: 12,
-  microwave: 5,
-  dishwasher: 5,
-  'range hood': 8,
-  bathtub: 10,
-  shower: 10,
-  toilet: 6,
-  sink: 4,
-  mirror: 3,
-  window: 4,
-  blinds: 6,
-  carpet: 8,
-  rug: 5,
-  sofa: 6,
-  couch: 6,
-  mattress: 5,
-  bed: 4,
-  'litter box': 8,
-  'pet bed': 5,
-  'trash can': 3,
-  cabinet: 4,
-  'ceiling fan': 5,
-  chandelier: 6,
-  balcony: 8,
+/**
+ * Two jobs per object, not one.
+ *
+ * Wiping the front of a fridge and cleaning its shelves are different work by
+ * an order of magnitude, and which one happens is decided by the service, not
+ * by the appliance. A single number per object cannot express that, so the
+ * old table quietly encoded the deep figure and then let the service
+ * multiplier scale it — which charged a maintenance clean for work nobody did,
+ * and charged a deep clean twice.
+ *
+ * The split comes from a measured job where, by luck, exactly one appliance
+ * was cleaned inside and the rest were wiped down. Same person, same
+ * apartment, same afternoon:
+ *
+ *   microwave, cleaned INSIDE   3.5 min   (old table said 5 — close)
+ *   dishwasher, wiped outside   0.7 min   (old table said 5 — 7x over)
+ *   fridge door, wiped          1.0 min   (old table said 12 — 12x over)
+ *   cabinet, wiped, each        0.6 min   (old table said 4 — 7x over)
+ *   oven, not touched at all    0.0 min   (old table charged 14)
+ *
+ * The one deep-cleaned item was nearly right and every surface-cleaned item
+ * was five to twelve times over. That is not a calibration error, it is a
+ * missing dimension.
+ *
+ * `surface` values marked MEASURED come from that job. The rest are estimates
+ * pending measurement, set at roughly the same ratio, and should be treated as
+ * hypotheses exactly like every other number in this file.
+ */
+export interface ObjectTimeCost {
+  /** Wiping the outside. What a maintenance clean actually does. */
+  surface: number;
+  /** Cleaning inside, degreasing, moving contents. What a deep clean adds. */
+  deep: number;
+}
+
+export const OBJECT_TIME_COST: Record<string, ObjectTimeCost> = {
+  oven: { surface: 1.5, deep: 14 },
+  stove: { surface: 2, deep: 8 },
+  refrigerator: { surface: 1.0, deep: 12 }, // surface MEASURED (door)
+  fridge: { surface: 1.0, deep: 12 }, // surface MEASURED (door)
+  microwave: { surface: 1.0, deep: 3.5 }, // deep MEASURED
+  dishwasher: { surface: 0.7, deep: 5 }, // surface MEASURED
+  'range hood': { surface: 1.5, deep: 8 },
+  bathtub: { surface: 3, deep: 10 },
+  shower: { surface: 3, deep: 10 },
+  toilet: { surface: 2.5, deep: 6 },
+  sink: { surface: 1.5, deep: 4 },
+  mirror: { surface: 1.5, deep: 3 },
+  window: { surface: 1.5, deep: 4 },
+  blinds: { surface: 1.5, deep: 6 },
+  carpet: { surface: 3, deep: 8 },
+  rug: { surface: 2, deep: 5 },
+  sofa: { surface: 2, deep: 6 },
+  couch: { surface: 2, deep: 6 },
+  mattress: { surface: 1, deep: 5 },
+  bed: { surface: 2, deep: 4 },
+  'litter box': { surface: 3, deep: 8 },
+  'pet bed': { surface: 2, deep: 5 },
+  'trash can': { surface: 1, deep: 3 },
+  cabinet: { surface: 0.6, deep: 4 }, // surface MEASURED
+  'ceiling fan': { surface: 1.5, deep: 5 },
+  chandelier: { surface: 2, deep: 6 },
+  balcony: { surface: 3, deep: 8 },
 };
 
+/**
+ * Which services open things up, and which only wipe them down.
+ *
+ * This replaces asking the service multiplier to express depth. It could not:
+ * a multiplier scales everything in the room by the same factor, but going
+ * from maintenance to deep does not make the floor take 45% longer — it adds
+ * the inside of an oven.
+ */
+const DEEP_SERVICES = new Set([
+  'deep-cleaning',
+  'move-in-cleaning',
+  'move-out-cleaning',
+  'post-construction-cleaning',
+]);
+
+export function objectMinutesFor(name: string, serviceSlug: string): number {
+  const cost = OBJECT_TIME_COST[name];
+  if (!cost) return 0;
+  return DEEP_SERVICES.has(serviceSlug) ? cost.deep : cost.surface;
+}
+
+export function isDeepService(serviceSlug: string): boolean {
+  return DEEP_SERVICES.has(serviceSlug);
+}
 /**
  * Things that predict work the camera did not catch.
  *
