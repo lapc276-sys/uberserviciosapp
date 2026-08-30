@@ -70,6 +70,25 @@ export interface SpaceTemplate {
   steps: StepTemplate[];
 }
 
+/**
+ * One of these is not like the others.
+ *
+ * Every space below is filmed to judge how dirty it is. `closet` is filmed to
+ * judge how much STUFF is in it, which is a different question with a
+ * different answer — and one no walkthrough can answer unless somebody opens
+ * the door.
+ *
+ * That distinction came from a measured job: a 945 sq ft apartment, clean
+ * apart from dust, where 39 of 71 minutes went into reorganising one laundry
+ * cupboard. From the room, with the doors shut, that cupboard is a white
+ * panel. A tidy one and a disastrous one are the same photograph. No vision
+ * model can price the difference — not a hosted one, not a self-hosted
+ * detector, not one trained on a million homes — because the information is
+ * not in the image.
+ *
+ * So it is asked rather than inferred, and it is asked the only way that
+ * works: by walking someone through opening the door.
+ */
 export const SPACE_TEMPLATES: SpaceTemplate[] = [
   {
     key: 'kitchen',
@@ -191,6 +210,32 @@ export const SPACE_TEMPLATES: SpaceTemplate[] = [
     steps: [
       { title: 'Vista general', spoken: 'Haz un paneo lento a lo largo del pasillo.', mode: 'pan', frames: 2 },
       { title: 'Suelo y esquinas', spoken: 'Enfoca el suelo, las esquinas y los rodapiés.' },
+    ],
+  },
+  {
+    key: 'closet',
+    roomType: 'other',
+    label: 'Armario / despensa (organizar)',
+    emoji: '🗄️',
+    steps: [
+      {
+        title: 'Armario cerrado',
+        spoken: 'Ponte frente al armario, con las puertas cerradas, y apunta.',
+      },
+      {
+        title: 'Armario abierto',
+        spoken: 'Ahora ábrelo del todo y apunta adentro. Sujeta el teléfono quieto.',
+        after: 'Déjalo abierto, vamos por los estantes.',
+      },
+      {
+        title: 'Estantes de arriba',
+        spoken: 'Enfoca los estantes de arriba, de cerca.',
+      },
+      {
+        title: 'Estantes de abajo',
+        spoken: 'Ahora los de abajo y el suelo del armario.',
+        after: 'Listo, ya puedes cerrarlo.',
+      },
     ],
   },
   {

@@ -143,6 +143,46 @@ export const HOUSEHOLD_SIGNALS: HouseholdSignal[] = [
   },
 ];
 
+/**
+ * How many of a thing may legitimately be counted.
+ *
+ * A blanket cap existed to stop a hallucinated "47 ovens" inflating a bill,
+ * and it was set at 6 for everything. But the things that hallucinate are the
+ * things there is normally one of, and the things there are genuinely many of
+ * — cabinets, windows, doors — are exactly the ones a real kitchen exceeds.
+ * A measured job with ten cabinets was silently priced as six.
+ *
+ * So the cap is per object: one for the appliances a home has one of, and
+ * generous for the countable ones. A second oven still counts as one, which
+ * is the correct failure: under-counting an appliance costs a few minutes,
+ * while believing in six of them costs the customer their trust.
+ */
+export const OBJECT_COUNT_CAP: Record<string, number> = {
+  cabinet: 20,
+  window: 16,
+  blinds: 16,
+  mirror: 6,
+  sink: 4,
+  toilet: 6,
+  bathtub: 4,
+  shower: 4,
+  rug: 8,
+  carpet: 6,
+  sofa: 4,
+  couch: 4,
+  bed: 6,
+  mattress: 6,
+  'trash can': 6,
+  'ceiling fan': 8,
+};
+
+/** Things a home has one of. Anything not listed above gets this. */
+export const DEFAULT_OBJECT_COUNT_CAP = 2;
+
+export function countCapFor(name: string): number {
+  return OBJECT_COUNT_CAP[name] ?? DEFAULT_OBJECT_COUNT_CAP;
+}
+
 /** A single job longer than this warrants a second pro, and so on. */
 export const MINUTES_PER_PRO = 240;
 

@@ -13,6 +13,7 @@ import {
   ROOM_BASE_MINUTES,
   OBJECT_TIME_COST,
   HOUSEHOLD_SIGNALS,
+  countCapFor,
   MINUTES_PER_PRO,
   SERVICE_TIME_MULTIPLIER,
   soilWeightsFor,
@@ -91,7 +92,7 @@ function roomMinutes(
     const key = obj.name.trim().toLowerCase();
     const cost = OBJECT_TIME_COST[key];
     if (!cost) return sum;
-    const count = Math.max(1, Math.min(obj.count || 1, 6));
+    const count = Math.max(1, Math.min(obj.count || 1, countCapFor(key)));
     const weight = Math.max(0.3, Math.min(obj.confidence || 0.5, 1));
     return sum + cost * count * weight;
   }, 0);
