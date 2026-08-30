@@ -14,6 +14,7 @@ import {
 import { VoiceControl } from '@/components/pilot/VoiceControl';
 import { LiveCapture } from '@/components/capture/LiveCapture';
 import { GuidedCapture } from '@/components/capture/GuidedCapture';
+import type { CaptureStep } from '@/lib/capture/guide';
 import { readJson } from '@/lib/http';
 import { THUMBNAIL_EDGE_PX } from '@/lib/vision/archive';
 import { RoomSize } from '@/components/pilot/RoomSize';
@@ -66,6 +67,15 @@ export function PilotCapture({ capturedBy }: { capturedBy: string }) {
   /** Which slider was last moved, so only its rubric wording is shown. */
   const [touched, setTouched] = useState<{ room: number; dim: string } | null>(null);
   const [afterAnalysis, setAfterAnalysis] = useState<PropertyAnalysis | null>(null);
+  /**
+   * The plan the "before" pass walked, replayed for the "after".
+   *
+   * A quality score is the difference between two readings of the same
+   * surface. Letting someone film the finished job freehand produces a photo
+   * of whatever caught their eye, and subtracting that from "inside the
+   * microwave" measures nothing.
+   */
+  const [capturePlan, setCapturePlan] = useState<CaptureStep[] | null>(null);
   const [quality, setQuality] = useState<{ score: number; verdict: string; summary: string } | null>(null);
   const [actualMinutes, setActualMinutes] = useState('');
   const [jobSequence, setJobSequence] = useState('1');
@@ -473,6 +483,7 @@ export function PilotCapture({ capturedBy }: { capturedBy: string }) {
               <>
                 <GuidedCapture
                   serviceSlug={serviceSlug}
+                  onPlan={setCapturePlan}
                   onComplete={({ frames, captions }) => analyzeFrames(frames, 'before', captions)}
                   fallback={
                     <button
@@ -650,6 +661,22 @@ export function PilotCapture({ capturedBy }: { capturedBy: string }) {
                   {busy === 'frames' ? `Reading frame ${progress.done} of ${progress.total}` : 'Analyzing…'}
                 </p>
               </div>
+            ) : capturePlan?.length ? (
+              <GuidedCapture
+                plan={capturePlan}
+                serviceSlug={serviceSlug}
+                title="Repite el mismo recorrido"
+                onComplete={({ frames, captions }) => analyzeFrames(frames, 'after', captions)}
+                fallback={
+                  <button
+                    onClick={() => afterInputRef.current?.click()}
+                    className="w-full rounded-2xl border-2 border-dashed p-6 text-center text-sm font-medium"
+                  >
+                    <Upload className="mx-auto h-6 w-6 text-brand-600" />
+                    <span className="mt-2 block">Subir un vídeo del después</span>
+                  </button>
+                }
+              />
             ) : (
               <>
                 <button

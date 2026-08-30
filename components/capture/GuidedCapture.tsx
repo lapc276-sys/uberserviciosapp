@@ -54,6 +54,21 @@ export interface GuidedCaptureProps {
   /** Skips the closing depth question when the caller already knows the service. */
   serviceSlug?: string;
   disabled?: boolean;
+  /**
+   * A fixed plan to walk, instead of asking which spaces there are.
+   *
+   * This is what makes an "after" pass comparable to its "before". Measuring
+   * improvement means subtracting two scores of the SAME surface; a free-form
+   * second walkthrough produces a photo of whatever the person pointed at,
+   * and the difference between "inside the microwave" and "a countertop" is
+   * not a quality score, it is noise. Replaying the plan guarantees frame i
+   * of the after shows what frame i of the before showed.
+   */
+  plan?: CaptureStep[];
+  /** Reports the plan actually walked, so an "after" pass can replay it. */
+  onPlan?: (steps: CaptureStep[]) => void;
+  /** Shown above the walkthrough, e.g. "Repite el recorrido del principio". */
+  title?: string;
 }
 
 type Stage = 'plan' | 'starting' | 'guiding' | 'review' | 'depth' | 'denied' | 'unsupported';
@@ -98,7 +113,15 @@ const LEAD_IN_MS = 1200;
 /** A pan samples across this window, then keeps the most different frames. */
 const PAN_WINDOW_MS = 7000;
 
-export function GuidedCapture({ onComplete, fallback, serviceSlug, disabled }: GuidedCaptureProps) {
+export function GuidedCapture({
+  onComplete,
+  fallback,
+  serviceSlug,
+  disabled,
+  plan: fixedPlan,
+  onPlan,
+  title,
+}: GuidedCaptureProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -359,7 +382,7 @@ export function GuidedCapture({ onComplete, fallback, serviceSlug, disabled }: G
       return;
     }
 
-    const built = buildPlan(selection);
+    const built = fixedPlan?.length ? { steps: fixedPlan } : buildPlan(selection);
     if (built.steps.length === 0) {
       setError('Elige al menos un espacio.');
       return;
@@ -379,6 +402,7 @@ export function GuidedCapture({ onComplete, fallback, serviceSlug, disabled }: G
       }
 
       setSteps(built.steps);
+      onPlan?.(built.steps);
       setShots([]);
       setIndex(0);
       setStage('guiding');
@@ -433,6 +457,45 @@ export function GuidedCapture({ onComplete, fallback, serviceSlug, disabled }: G
           </button>
         )}
         {fallback}
+      </div>
+    );
+  }
+
+  if ((stage === 'plan' || stage === 'starting') && fixedPlan?.length) {
+    // Replaying a known plan: nothing to choose, so nothing is asked.
+    const spaces = Array.from(new Set(fixedPlan.map((s) => s.spaceLabel)));
+    return (
+      <div className="space-y-4">
+        <div>
+          <h3 className="font-semibold">{title ?? 'Repite el mismo recorrido'}</h3>
+          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+            Los mismos {fixedPlan.length} pasos, en el mismo orden. Te voy guiando igual que antes — así
+            cada foto del después se compara con la misma foto del antes.
+          </p>
+        </div>
+
+        <ul className="rounded-2xl border divide-y text-sm">
+          {spaces.map((label) => (
+            <li key={label} className="flex items-center gap-2 p-3">
+              <Check className="h-4 w-4 shrink-0 text-brand-600" />
+              {label}
+            </li>
+          ))}
+        </ul>
+
+        {error && <p className="text-sm text-red-600">{error}</p>}
+
+        <button
+          type="button"
+          onClick={begin}
+          disabled={disabled || stage === 'starting'}
+          className="inline-flex min-h-[56px] w-full items-center justify-center gap-2 rounded-xl bg-brand-600 text-base font-semibold text-white disabled:opacity-60"
+        >
+          <Camera className="h-5 w-5" />
+          {stage === 'starting' ? 'Abriendo la cámara…' : 'Empezar'}
+        </button>
+
+        <video ref={videoRef} playsInline muted className="hidden" />
       </div>
     );
   }
@@ -636,7 +699,7 @@ export function GuidedCapture({ onComplete, fallback, serviceSlug, disabled }: G
           <button
             type="button"
             disabled={shots.length === 0}
-            onClick={() => (serviceSlug ? finish(serviceSlug) : setStage('depth'))}
+            onClick={() => (serviceSlug || fixedPlan?.length ? finish(serviceSlug ?? DEPTH_OPTIONS[0].slug) : setStage('depth'))}
             className="inline-flex min-h-[56px] w-full items-center justify-center gap-2 rounded-xl bg-brand-600 text-base font-semibold text-white disabled:opacity-60"
           >
             Continuar <ChevronRight className="h-5 w-5" />
