@@ -1192,12 +1192,21 @@ async def control_velocidades(year: int = 0, gp: str = "", tipo: str = "Race",
 
 
 @app.get("/control/retencion")
-async def control_retencion(dias: int = 28):
+async def control_retencion(dias: int = 28, clave: str = ""):
     """Retención de los videos del canal y qué separa a los que despegaron.
 
     Necesita el permiso yt-analytics.readonly: si no lo tienes, vuelve a
     correr autorizar_youtube.py y actualiza YOUTUBE_REFRESH_TOKEN.
+
+    Va por GET para poder abrirlo en el navegador, pero enseña las cifras
+    del canal — así que si hay PANEL_CLAVE, aquí también se pide. El
+    candado general solo cubre los POST (los GET los usa la propia
+    pantalla sin clave), de ahí que este se lo ponga él mismo.
     """
+    if PANEL_CLAVE and not pysecrets.compare_digest(clave, PANEL_CLAVE):
+        return JSONResponse(
+            {"ok": False, "error": "Añade ?clave=<PANEL_CLAVE> a la URL"},
+            status_code=401)
     filas = await asyncio.to_thread(youtube_subir.retencion, dias)
     if filas is None:
         return JSONResponse(

@@ -103,8 +103,9 @@ def main():
     print("   · Elige la cuenta de Google DEL CANAL (no otra).")
     print("   · Si sale «Google no ha verificado esta aplicación»:")
     print("     Configuración avanzada → Ir a … (no seguro). Es TU app.")
-    print("   · ACEPTA LOS TRES PERMISOS. Si dejas uno fuera, los "
-          "subtítulos y los comentarios seguirán sin funcionar.\n")
+    print("   · ACEPTA LOS CUATRO PERMISOS. Si dejas uno fuera, se "
+          "quedan sin funcionar los subtítulos, los comentarios o "
+          "los datos de retención.\n")
     try:
         flow = InstalledAppFlow.from_client_config(config, scopes=SCOPES)
         creds = flow.run_local_server(port=0, prompt="consent",
