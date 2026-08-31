@@ -8731,6 +8731,52 @@ def _tema_tecnico_impl(prioritario):
     return elegido
 
 
+def _pista_vocabulario(categoria, leccion):
+    """Le ofrece al guionista UN término del glosario, con su definición.
+
+    La diferencia entre un canal técnico y uno que cuenta de oídas está
+    casi entera aquí: decir "la estela" y no "el aire de detrás". Pero la
+    forma de conseguirlo NO es darle la lista de veinticuatro términos —
+    eso produce guiones que sueltan seis tecnicismos seguidos y no
+    explican ninguno. Se le da UNO, el que encaje con lo que está
+    escribiendo, con su definición, y se le pide que lo explique al
+    usarlo.
+
+    Devuelve "" si no hay ninguno que pegue: forzar un término de
+    aerodinámica en un short de estrategia sería peor que no ponerlo.
+    """
+    try:
+        import aerodinamica
+    except Exception:
+        return ""
+    texto = f"{categoria} {leccion}".lower()
+    # Solo se ofrece vocabulario aerodinámico a lecciones que van de
+    # aire. En un short de motor o de reglamento no pinta nada.
+    if not any(p in texto for p in (
+            "aero", "air", "wing", "downforce", "drag", "floor", "wake",
+            "flow", "vortex", "diffuser", "slipstream", "dirty")):
+        return ""
+    candidatos = []
+    for g in aerodinamica.GLOSARIO:
+        # El nombre del término más los alias: la gente dice "aire sucio"
+        # y no "estela", y sin los alias el que encajaba no se elegía.
+        palabras = [p for p in g["termino"].lower().split() if len(p) > 3]
+        palabras += [a.lower() for a in g.get("alias", [])]
+        if any(p in texto for p in palabras):
+            candidatos.append(g)
+    # Si nada casa por palabra, se rota por el día del año: así el canal
+    # va recorriendo el vocabulario en vez de repetir siempre los mismos
+    # cuatro términos fáciles.
+    if not candidatos:
+        i = dt.date.today().timetuple().tm_yday % len(aerodinamica.GLOSARIO)
+        candidatos = [aerodinamica.GLOSARIO[i]]
+    g = candidatos[0]
+    return (f"\n\nUse the term \"{g['termino']}\" once, and explain it in "
+            f"passing so a newcomer understands it — this is what it means: "
+            f"{g['definicion']} Use ONLY this one technical term; a script "
+            f"that fires several in a row teaches nothing.")
+
+
 async def generar_short(client: anthropic.AsyncAnthropic, tipo="noticia",
                         titulares=None, tema=None):
     """Genera el guión de un short (30-60 seg) para redes sociales.
@@ -8750,7 +8796,8 @@ async def generar_short(client: anthropic.AsyncAnthropic, tipo="noticia",
             f"Do not use these worn-out words: payoff, game-changer, "
             f"masterclass, insane, absolutely massive. End with a question to "
             f"the viewer. Category: {cat}. Write ONLY the script, one tight "
-            f"paragraph.")
+            f"paragraph."
+            + _pista_vocabulario(cat, leccion))
         system = (
             "You are a viral motorsport EXPLAINER writing 25-35 second "
             "educational Shorts that make people feel smarter. Punchy, "

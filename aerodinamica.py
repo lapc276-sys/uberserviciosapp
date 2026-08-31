@@ -299,7 +299,7 @@ MECANISMOS = [
 #   "<nombre>"           → el diagrama de ese mecanismo de MECANISMOS
 #   ""                   → todavía no tiene imagen propia
 GLOSARIO = [
-    {"termino": "Boundary layer",
+    {"termino": "Boundary layer", "alias": ["surface", "skin"],
      "definicion": "The thin skin of air dragged along by the car's own "
                    "surface, from zero speed at the paint to full speed a "
                    "few millimetres out. Almost every aerodynamic problem "
@@ -315,7 +315,7 @@ GLOSARIO = [
                    "it carries far more energy close to the surface, so it "
                    "stays attached where laminar flow would have let go.",
      "visual": "The boundary layer"},
-    {"termino": "Flow separation",
+    {"termino": "Flow separation", "alias": ["separat", "detach"],
      "definicion": "The moment the air stops following the surface and "
                    "breaks away. The low pressure that was holding the car "
                    "down disappears with it.",
@@ -335,7 +335,7 @@ GLOSARIO = [
                    "comes to a complete stop. Everything that happens "
                    "further back starts from where this point sits.",
      "visual": "calculado:estancamiento"},
-    {"termino": "Ground effect",
+    {"termino": "Ground effect", "alias": ["floor", "underbody"],
      "definicion": "The floor is close enough to the road that the air "
                    "squeezed underneath accelerates hard, pressure drops, "
                    "and the whole car is sucked down. It is the cheapest "
@@ -371,13 +371,13 @@ GLOSARIO = [
                    "That roll-up is a vortex, and it is a wing paying for "
                    "its own downforce.",
      "visual": "Endplate vortices"},
-    {"termino": "Von Karman vortex street",
+    {"termino": "Von Karman vortex street", "alias": ["wheel", "blunt"],
      "definicion": "Behind a blunt body — a wheel, a roll hoop — vortices "
                    "shed alternately, first one side then the other, in a "
                    "regular procession. That procession is a good part of "
                    "what a following car has to drive through.",
      "visual": "calculado:calle"},
-    {"termino": "Wake",
+    {"termino": "Wake", "alias": ["dirty air", "behind"],
      "definicion": "The trail of disturbed, slower, spinning air a car "
                    "leaves behind it. From inside the following car it has "
                    "a simpler name: dirty air.",
@@ -392,7 +392,7 @@ GLOSARIO = [
                    "holding it back, and the whole job is choosing how much "
                    "of one to buy with the other.",
      "visual": "The efficiency compromise"},
-    {"termino": "Induced drag",
+    {"termino": "Induced drag", "alias": ["drs", "tip"],
      "definicion": "The share of drag that exists only because the wing is "
                    "making downforce. Stop making downforce and this part "
                    "goes away — which is precisely what DRS does.",
