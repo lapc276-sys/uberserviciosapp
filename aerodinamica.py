@@ -283,6 +283,179 @@ MECANISMOS = [
 ]
 
 
+# ── El vocabulario ────────────────────────────────────────────────────
+# Los términos con los que se habla de esto de verdad, cada uno con la
+# frase que lo explica en una línea. No es un adorno: un canal técnico
+# que dice "el aire de detrás" en vez de "la estela" suena a alguien
+# contando de oídas, y el que sabe se va.
+#
+# La regla de uso, y es la que importa: UN término por short, dicho y
+# explicado. Un guion que suelta seis tecnicismos seguidos no enseña
+# nada — enseña que quien lo escribió se sabe la lista.
+#
+# `visual` dice con qué se ilustra:
+#   "calculado:<caso>"  → lo resuelve flujo_calculado.py (líneas de
+#                          corriente de verdad, no un dibujo)
+#   "<nombre>"           → el diagrama de ese mecanismo de MECANISMOS
+#   ""                   → todavía no tiene imagen propia
+GLOSARIO = [
+    {"termino": "Boundary layer",
+     "definicion": "The thin skin of air dragged along by the car's own "
+                   "surface, from zero speed at the paint to full speed a "
+                   "few millimetres out. Almost every aerodynamic problem "
+                   "on a car is a problem with this layer.",
+     "visual": "The boundary layer"},
+    {"termino": "Laminar flow",
+     "definicion": "Air moving in clean parallel sheets. It costs the least "
+                   "friction — and it is the first to peel away from a "
+                   "surface when the going gets difficult.",
+     "visual": "The boundary layer"},
+    {"termino": "Turbulent flow",
+     "definicion": "Air churning as it moves. It costs more friction, but "
+                   "it carries far more energy close to the surface, so it "
+                   "stays attached where laminar flow would have let go.",
+     "visual": "The boundary layer"},
+    {"termino": "Flow separation",
+     "definicion": "The moment the air stops following the surface and "
+                   "breaks away. The low pressure that was holding the car "
+                   "down disappears with it.",
+     "visual": "Flow separation and stall"},
+    {"termino": "Stall",
+     "definicion": "Separation gone total. Ask a wing for more angle than "
+                   "it can hold and the downforce does not tail off — it "
+                   "falls off a cliff, and the drag arrives instead.",
+     "visual": "Flow separation and stall"},
+    {"termino": "Angle of attack",
+     "definicion": "How steeply a wing is tilted into the oncoming air. "
+                   "More angle means more downforce, right up until the "
+                   "moment it means none at all.",
+     "visual": "calculado:angulo"},
+    {"termino": "Stagnation point",
+     "definicion": "The single spot on the nose of a wing where the air "
+                   "comes to a complete stop. Everything that happens "
+                   "further back starts from where this point sits.",
+     "visual": "calculado:estancamiento"},
+    {"termino": "Ground effect",
+     "definicion": "The floor is close enough to the road that the air "
+                   "squeezed underneath accelerates hard, pressure drops, "
+                   "and the whole car is sucked down. It is the cheapest "
+                   "downforce there is — it costs almost no drag.",
+     "visual": "Ground effect"},
+    {"termino": "Diffuser",
+     "definicion": "The upswept ramp at the back of the floor. It lets the "
+                   "fast air underneath slow down gradually on its way out, "
+                   "and that controlled exit is what keeps the suction "
+                   "working all the way along the floor.",
+     "visual": "The diffuser"},
+    {"termino": "Diffuser choke",
+     "definicion": "Push the floor too low or too hard and the air "
+                   "underneath hits its limit and cannot get out fast "
+                   "enough. The suction stops building — and then it "
+                   "collapses.",
+     "visual": "Porpoising"},
+    {"termino": "Porpoising",
+     "definicion": "The floor sucks the car down, the car gets low enough "
+                   "to stall its own floor, the downforce vanishes, the car "
+                   "springs back up — and it all starts again, several "
+                   "times a second.",
+     "visual": "Porpoising"},
+    {"termino": "Vortex",
+     "definicion": "A spinning core of air. It is low pressure in the "
+                   "middle and it holds together for a long way downstream, "
+                   "which is exactly why designers use them as invisible "
+                   "fences to steer other air around.",
+     "visual": "The Y250 vortex"},
+    {"termino": "Wingtip vortices",
+     "definicion": "At the open end of any wing, the high pressure on one "
+                   "side rolls around into the low pressure on the other. "
+                   "That roll-up is a vortex, and it is a wing paying for "
+                   "its own downforce.",
+     "visual": "Endplate vortices"},
+    {"termino": "Von Karman vortex street",
+     "definicion": "Behind a blunt body — a wheel, a roll hoop — vortices "
+                   "shed alternately, first one side then the other, in a "
+                   "regular procession. That procession is a good part of "
+                   "what a following car has to drive through.",
+     "visual": "calculado:calle"},
+    {"termino": "Wake",
+     "definicion": "The trail of disturbed, slower, spinning air a car "
+                   "leaves behind it. From inside the following car it has "
+                   "a simpler name: dirty air.",
+     "visual": "Dirty air"},
+    {"termino": "Downforce",
+     "definicion": "Aerodynamic load pressing the car onto the road. It is "
+                   "grip that costs no weight — the faster you go, the more "
+                   "of it you get.",
+     "visual": "calculado:ala"},
+    {"termino": "Drag",
+     "definicion": "The price. Every shape that pushes the car down is also "
+                   "holding it back, and the whole job is choosing how much "
+                   "of one to buy with the other.",
+     "visual": "The efficiency compromise"},
+    {"termino": "Induced drag",
+     "definicion": "The share of drag that exists only because the wing is "
+                   "making downforce. Stop making downforce and this part "
+                   "goes away — which is precisely what DRS does.",
+     "visual": "Induced drag"},
+    {"termino": "Aerodynamic balance",
+     "definicion": "Where the downforce sits, front to rear. Get it forward "
+                   "and the car bites into corners but the rear goes light; "
+                   "get it back and the car is stable and will not turn.",
+     "visual": ""},
+    {"termino": "Yaw angle",
+     "definicion": "The angle between where the car points and where the "
+                   "air is actually coming from. In a corner, or in a "
+                   "crosswind, a car spends its time aerodynamically "
+                   "sideways — and it was designed pointing straight.",
+     "visual": ""},
+    {"termino": "Coanda effect",
+     "definicion": "A moving stream of air will follow a curved surface "
+                   "rather than carry straight on. It is how flow is bent "
+                   "around a sidepod towards where it is wanted.",
+     "visual": "The Coanda effect"},
+    {"termino": "Reynolds number",
+     "definicion": "The single number that says how a flow will behave: "
+                   "size times speed against the stickiness of the air. Two "
+                   "flows with the same Reynolds number behave the same "
+                   "way — which is the only reason a scale model in a "
+                   "tunnel tells you anything about the real car.",
+     "visual": ""},
+    {"termino": "Wind tunnel",
+     "definicion": "A controlled room where a model meets moving air at a "
+                   "matched Reynolds number, and the forces on it are "
+                   "measured directly. Slow, expensive, and rationed by the "
+                   "rules — which is why teams guard their hours.",
+     "visual": ""},
+    {"termino": "CFD",
+     "definicion": "Solving the equations of the flow on a computer instead "
+                   "of building the part. It shows you things no tunnel can "
+                   "show, and it is only as good as the assumptions fed "
+                   "into it — which is why the tunnel never went away.",
+     "visual": ""},
+]
+
+
+def glosario_indice():
+    """Los términos, para ofrecérselos al guionista."""
+    return [g["termino"] for g in GLOSARIO]
+
+
+def termino(nombre):
+    """Una entrada del glosario por su término, o None."""
+    n = (nombre or "").strip().lower()
+    return next((g for g in GLOSARIO if g["termino"].lower() == n), None)
+
+
+def sin_visual():
+    """Los términos que todavía no tienen imagen propia.
+
+    Es la lista de lo que falta por dibujar, no un error: un término se
+    puede explicar hablando, y es mejor eso que ilustrarlo con un
+    diagrama que no le corresponde.
+    """
+    return [g["termino"] for g in GLOSARIO if not g["visual"]]
+
+
 def por_nombre(nombre):
     """Un mecanismo por su nombre, o None."""
     n = (nombre or "").strip().lower()

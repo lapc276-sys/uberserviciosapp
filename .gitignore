@@ -48,3 +48,6 @@ estatico/revision.png
 
 # Backtest: PNG y informes que se regeneran corriendo el script.
 backtest/
+
+# Campos de flujo calculados: se regeneran corriendo el módulo.
+flujo/
