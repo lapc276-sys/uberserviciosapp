@@ -86,35 +86,144 @@ export interface ObjectTimeCost {
 }
 
 export const OBJECT_TIME_COST: Record<string, ObjectTimeCost> = {
+  // ── Cocina ────────────────────────────────────────────────────────────────
   oven: { surface: 1.5, deep: 14 },
   stove: { surface: 2, deep: 8 },
+  cooktop: { surface: 2, deep: 8 },
+  'range hood': { surface: 1.5, deep: 8 },
   refrigerator: { surface: 1.0, deep: 12 }, // surface MEASURED (door)
   fridge: { surface: 1.0, deep: 12 }, // surface MEASURED (door)
+  freezer: { surface: 1.0, deep: 10 },
   microwave: { surface: 1.0, deep: 3.5 }, // deep MEASURED
   dishwasher: { surface: 0.7, deep: 5 }, // surface MEASURED
-  'range hood': { surface: 1.5, deep: 8 },
+  sink: { surface: 1.5, deep: 4 },
+  faucet: { surface: 0.5, deep: 1.5 },
+  backsplash: { surface: 1.5, deep: 5 },
+  cabinet: { surface: 0.6, deep: 4 }, // surface MEASURED
+  drawer: { surface: 0.5, deep: 3 },
+  pantry: { surface: 2, deep: 10 },
+  countertop: { surface: 2, deep: 4 },
+  'kitchen island': { surface: 2, deep: 5 },
+  toaster: { surface: 0.5, deep: 1.5 },
+  'toaster oven': { surface: 0.8, deep: 4 },
+  'coffee maker': { surface: 0.6, deep: 2.5 },
+  kettle: { surface: 0.4, deep: 1 },
+  blender: { surface: 0.5, deep: 2 },
+  'air fryer': { surface: 0.8, deep: 4 },
+  'stand mixer': { surface: 0.6, deep: 2 },
+  'rice cooker': { surface: 0.5, deep: 2 },
+  'slow cooker': { surface: 0.5, deep: 2 },
+  'dish rack': { surface: 0.8, deep: 2 },
+  'knife block': { surface: 0.4, deep: 1.5 },
+  'utensil holder': { surface: 0.4, deep: 1.5 },
+  'spice rack': { surface: 0.6, deep: 2 },
+  'water dispenser': { surface: 0.6, deep: 2 },
+  'wine rack': { surface: 0.6, deep: 2 },
+  'trash can': { surface: 1, deep: 3 },
+  'recycling bin': { surface: 0.8, deep: 2.5 },
+
+  // ── Baño ──────────────────────────────────────────────────────────────────
+  toilet: { surface: 2.5, deep: 6 },
+  bidet: { surface: 1.5, deep: 4 },
   bathtub: { surface: 3, deep: 10 },
   shower: { surface: 3, deep: 10 },
-  toilet: { surface: 2.5, deep: 6 },
-  sink: { surface: 1.5, deep: 4 },
-  mirror: { surface: 1.5, deep: 3 },
-  window: { surface: 1.5, deep: 4 },
-  blinds: { surface: 1.5, deep: 6 },
-  carpet: { surface: 3, deep: 8 },
-  rug: { surface: 2, deep: 5 },
+  'shower door': { surface: 1.5, deep: 5 },
+  'shower curtain': { surface: 1, deep: 3 },
+  vanity: { surface: 1.5, deep: 4 },
+  'medicine cabinet': { surface: 1, deep: 4 },
+  'towel rack': { surface: 0.5, deep: 1.5 },
+  'bath mat': { surface: 0.5, deep: 1.5 },
+  'exhaust fan': { surface: 1, deep: 3 },
+
+  // ── Habitación ────────────────────────────────────────────────────────────
+  bed: { surface: 2, deep: 4 },
+  'bunk bed': { surface: 2.5, deep: 5 },
+  mattress: { surface: 1, deep: 5 },
+  headboard: { surface: 0.8, deep: 2 },
+  nightstand: { surface: 0.8, deep: 2 },
+  dresser: { surface: 1.5, deep: 4 },
+  wardrobe: { surface: 1.5, deep: 6 },
+  closet: { surface: 1.5, deep: 8 },
+  desk: { surface: 1, deep: 3 },
+  crib: { surface: 1.5, deep: 4 },
+
+  // ── Sala y comedor ────────────────────────────────────────────────────────
   sofa: { surface: 2, deep: 6 },
   couch: { surface: 2, deep: 6 },
-  mattress: { surface: 1, deep: 5 },
-  bed: { surface: 2, deep: 4 },
-  'litter box': { surface: 3, deep: 8 },
-  'pet bed': { surface: 2, deep: 5 },
-  'trash can': { surface: 1, deep: 3 },
-  cabinet: { surface: 0.6, deep: 4 }, // surface MEASURED
+  armchair: { surface: 1.2, deep: 3 },
+  'coffee table': { surface: 1, deep: 2.5 },
+  'side table': { surface: 0.6, deep: 1.5 },
+  'dining table': { surface: 1.5, deep: 3 },
+  'dining chair': { surface: 0.6, deep: 1.5 },
+  sideboard: { surface: 1.2, deep: 3 },
+  bookshelf: { surface: 2, deep: 6 },
+  tv: { surface: 1, deep: 2 },
+  'tv stand': { surface: 1, deep: 2.5 },
+  fireplace: { surface: 2, deep: 6 },
+  piano: { surface: 1.5, deep: 4 },
+  'picture frame': { surface: 0.4, deep: 1 },
+  plant: { surface: 0.5, deep: 1.5 },
+
+  // ── Suelos y textiles ─────────────────────────────────────────────────────
+  carpet: { surface: 3, deep: 8 },
+  rug: { surface: 2, deep: 5 },
+  curtains: { surface: 1.5, deep: 5 },
+  blinds: { surface: 1.5, deep: 6 },
+
+  // ── Lavadero ──────────────────────────────────────────────────────────────
+  'washing machine': { surface: 1, deep: 5 },
+  dryer: { surface: 1, deep: 5 },
+  'laundry sink': { surface: 1.2, deep: 3 },
+  'ironing board': { surface: 0.5, deep: 1.5 },
+  'laundry basket': { surface: 0.5, deep: 1.5 },
+
+  // ── Toda la casa ──────────────────────────────────────────────────────────
+  window: { surface: 1.5, deep: 4 },
+  'window sill': { surface: 0.5, deep: 1.5 },
+  door: { surface: 0.8, deep: 2 },
+  baseboard: { surface: 1.5, deep: 5 },
+  mirror: { surface: 1.5, deep: 3 },
   'ceiling fan': { surface: 1.5, deep: 5 },
   chandelier: { surface: 2, deep: 6 },
+  'light fixture': { surface: 0.8, deep: 2 },
+  'air vent': { surface: 0.6, deep: 2 },
+  radiator: { surface: 1, deep: 3 },
+  handrail: { surface: 0.6, deep: 1.5 },
   balcony: { surface: 3, deep: 8 },
+
+  // ── Mascotas y bebés ──────────────────────────────────────────────────────
+  'litter box': { surface: 3, deep: 8 },
+  'pet bed': { surface: 2, deep: 5 },
+  'pet crate': { surface: 1.5, deep: 4 },
+  'high chair': { surface: 1, deep: 3 },
+  stroller: { surface: 1, deep: 3 },
+  playpen: { surface: 1.5, deep: 4 },
 };
 
+/**
+ * A ceiling on what objects may contribute to one room.
+ *
+ * The table above is deliberately long, and a long table has a failure mode a
+ * short one does not: a model asked to inventory a kitchen will list thirty
+ * things it can see, and thirty half-minute items silently become fifteen
+ * minutes nobody is going to spend.
+ *
+ * This is a sanity rail, not a corrective. It is scaled off the room base
+ * because a kitchen and a hallway do not carry the same plausible object load,
+ * and it is set loose enough that a genuine deep clean is never clipped —
+ * catching the absurd, not the merely generous.
+ *
+ * KNOWN OVERLAP, unresolved on purpose: `countertop` and `backsplash` are in
+ * the table, and ROOM_BASE_MINUTES almost certainly also covers wiping
+ * counters. Which of the two should own that time depends on whether the base
+ * is "the room's surfaces" or "the cost of being in the room at all" —
+ * overhead, walking, setting up, moving furniture. A stopwatch run of one job
+ * measured 6.1 minutes of counters against a 30-minute base, which says the
+ * base is mostly overhead, but a stopwatch by design never times the overhead
+ * it would need to prove that. It takes a door-to-door total to settle, and
+ * guessing in the meantime would bake the guess into every quote.
+ */
+export const MAX_OBJECT_MINUTES_MULTIPLE = 2.5;
 /**
  * Which services open things up, and which only wipe them down.
  *

@@ -14,6 +14,7 @@ import {
   objectMinutesFor,
   HOUSEHOLD_SIGNALS,
   countCapFor,
+  MAX_OBJECT_MINUTES_MULTIPLE,
   MINUTES_PER_PRO,
   SERVICE_TIME_MULTIPLIER,
   soilWeightsFor,
@@ -110,7 +111,12 @@ function roomMinutes(
     return sum + cost * count * weight;
   }, 0);
 
-  return { scalable: base + soilMinutes, objectMinutes };
+  // A long catalogue lets a model inventory thirty things in one kitchen, and
+  // thirty half-minute items quietly become fifteen minutes nobody will spend
+  // — wiping around a toaster is already inside the countertop time.
+  const cappedObjects = Math.min(objectMinutes, base * MAX_OBJECT_MINUTES_MULTIPLE);
+
+  return { scalable: base + soilMinutes, objectMinutes: cappedObjects };
 }
 
 /** Labels repeated room types as "Bedroom 2", "Bathroom 3", etc. */
