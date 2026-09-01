@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Camera, Check, ChevronRight, Minus, Plus, RotateCcw, SkipForward, Mic, AlertTriangle } from 'lucide-react';
+import { Camera, Check, ChevronLeft, ChevronRight, Minus, Plus, RotateCcw, SkipForward, Mic, AlertTriangle } from 'lucide-react';
 import { encodeToBudget, FRAME_BUDGET_CHARS, TOTAL_BUDGET_CHARS } from '@/lib/vision/frames';
 import {
   SPACE_TEMPLATES,
@@ -136,6 +136,15 @@ export function GuidedCapture({
   const [heard, setHeard] = useState('');
   const [voiceOn, setVoiceOn] = useState(false);
   const [watching, setWatching] = useState<'waiting' | 'moving' | 'settling'>('waiting');
+  /**
+   * Which step we are re-shooting, if any.
+   *
+   * Retaking one step rather than the whole walkthrough matters more than it
+   * looks: somebody who has already opened an oven, a fridge and four
+   * cupboards will not do all of it again because one frame came out blurry.
+   * They will accept the bad frame, and the estimate is then built on it.
+   */
+  const [retakeOf, setRetakeOf] = useState<number | null>(null);
   const [error, setError] = useState('');
 
   const plan = buildPlan(selection);
@@ -221,12 +230,30 @@ export function GuidedCapture({
           setError('La cámara todavía no está lista. Espera un segundo.');
           return;
         }
-        setShots((prev) => [...prev, ...frames.map((frame) => ({ step, frame }))]);
+        setShots((prev) => {
+          const fresh = frames.map((frame) => ({ step, frame }));
+          // Replace this step's previous shots, keeping walkthrough order.
+          const without = prev.filter((s) => s.step.id !== step.id);
+          const at = prev.findIndex((s) => s.step.id === step.id);
+          if (at === -1) return [...without, ...fresh];
+          const before = without.slice(0, at);
+          return [...before, ...fresh, ...without.slice(at)];
+        });
         if (typeof navigator !== 'undefined' && 'vibrate' in navigator) navigator.vibrate?.(40);
         if (step.after) speak(step.after);
       }
 
       setError('');
+
+      // A retake replaces one step's shots and returns; it does not walk on.
+      if (retakeOf !== null) {
+        setRetakeOf(null);
+        stopStream();
+        stopVoice();
+        setStage('review');
+        return;
+      }
+
       const next = index + 1;
       if (next >= steps.length) {
         stopStream();
@@ -237,7 +264,7 @@ export function GuidedCapture({
         setIndex(next);
       }
     },
-    [index, steps, grabFrame, stopStream, stopVoice],
+    [index, steps, grabFrame, stopStream, stopVoice, retakeOf],
   );
 
   advanceRef.current = advance;
@@ -424,6 +451,34 @@ export function GuidedCapture({
       captions: shots.map((s) => captionFor(s.step)),
       serviceSlug: slug,
     });
+  }
+
+  /** Re-opens the camera on one already-shot step. */
+  async function retake(stepIndex: number) {
+    setRetakeOf(stepIndex);
+    setIndex(stepIndex);
+    setError('');
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 } },
+        audio: false,
+      });
+      streamRef.current = stream;
+      setStage('guiding');
+      startVoice();
+    } catch {
+      setRetakeOf(null);
+      setError('No pude volver a abrir la cámara.');
+    }
+  }
+
+  /** Steps back one, discarding what that step captured. */
+  function goBack() {
+    if (index === 0) return;
+    const previous = steps[index - 1];
+    setShots((prev) => prev.filter((s) => s.step.id !== previous.id));
+    setIndex(index - 1);
+    setError('');
   }
 
   function setCount(key: string, delta: number) {
@@ -645,7 +700,7 @@ export function GuidedCapture({
             onClick={() => advance('capture')}
             className="inline-flex min-h-[56px] flex-1 items-center justify-center gap-2 rounded-xl bg-brand-600 text-base font-semibold text-white"
           >
-            <Camera className="h-5 w-5" /> Tomar ya
+            <Camera className="h-5 w-5" /> {retakeOf !== null ? 'Repetir esta foto' : 'Tomar ya'}
           </button>
           <button
             type="button"
@@ -655,6 +710,20 @@ export function GuidedCapture({
             <SkipForward className="h-4 w-4" /> {current?.optional ? 'No tengo' : 'Saltar'}
           </button>
         </div>
+
+        {/* Going back one step, discarding what it caught. Without this the
+            only remedy for a blurry frame is redoing the whole walkthrough,
+            which nobody does — they keep the bad frame, and the estimate is
+            built on it. */}
+        {retakeOf === null && index > 0 && (
+          <button
+            type="button"
+            onClick={goBack}
+            className="inline-flex min-h-[44px] w-full items-center justify-center gap-2 rounded-xl text-sm font-medium text-slate-500"
+          >
+            <ChevronLeft className="h-4 w-4" /> Atrás — repetir “{steps[index - 1]?.title}”
+          </button>
+        )}
 
         {!synthesisSupported() && (
           <p className="text-center text-xs text-slate-500">
@@ -669,23 +738,74 @@ export function GuidedCapture({
   return (
     <div className="space-y-4">
       <div>
-        <h3 className="font-semibold">
-          {shots.length} {shots.length === 1 ? 'foto tomada' : 'fotos tomadas'}
-        </h3>
+        <h3 className="font-semibold">¿Está todo?</h3>
         <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-          Revisa que se vea lo que hay que limpiar. Si falta algo, repite el recorrido.
+          Esto es lo que tengo. Toca cualquier foto para repetirla, o añade un espacio que falte.
         </p>
       </div>
 
-      <div className="grid grid-cols-4 gap-2">
-        {shots.map((s) => (
-          <figure key={s.step.id} className="space-y-1">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={s.frame} alt={s.step.title} className="aspect-square w-full rounded-lg object-cover" />
-            <figcaption className="truncate text-[10px] leading-tight text-slate-500">{s.step.title}</figcaption>
-          </figure>
-        ))}
-      </div>
+      {/* Grouped by space and named, because "18 fotos" tells nobody whether
+          the second bathroom was actually filmed. A list of what WAS captured
+          is the only way somebody can notice what wasn't. */}
+      {(() => {
+        const bySpace = new Map<string, typeof shots>();
+        for (const shot of shots) {
+          const list = bySpace.get(shot.step.spaceLabel) ?? [];
+          list.push(shot);
+          bySpace.set(shot.step.spaceLabel, list);
+        }
+        const skipped = steps.filter((st) => !shots.some((sh) => sh.step.id === st.id));
+
+        return (
+          <div className="space-y-4">
+            {[...bySpace.entries()].map(([label, list]) => (
+              <div key={label}>
+                <p className="mb-1.5 text-sm font-medium">
+                  {label} <span className="text-slate-400">· {list.length}</span>
+                </p>
+                <div className="grid grid-cols-4 gap-2">
+                  {list.map((shot) => (
+                    <button
+                      key={shot.step.id + shot.frame.slice(-12)}
+                      type="button"
+                      onClick={() => retake(steps.findIndex((st) => st.id === shot.step.id))}
+                      className="space-y-1 text-left"
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={shot.frame}
+                        alt={shot.step.title}
+                        className="aspect-square w-full rounded-lg object-cover"
+                      />
+                      <span className="block truncate text-[10px] leading-tight text-slate-500">
+                        {shot.step.title}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
+
+            {skipped.length > 0 && (
+              <div className="rounded-xl border border-dashed p-3">
+                <p className="text-sm font-medium">Te saltaste {skipped.length}:</p>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {skipped.map((st) => (
+                    <button
+                      key={st.id}
+                      type="button"
+                      onClick={() => retake(steps.findIndex((x) => x.id === st.id))}
+                      className="rounded-full border px-2.5 py-1 text-xs"
+                    >
+                      + {st.spaceLabel} · {st.title}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {shots.length === 0 && (
         <p className="flex items-start gap-2 rounded-xl bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-950/30 dark:text-amber-300">
@@ -704,17 +824,19 @@ export function GuidedCapture({
           >
             Continuar <ChevronRight className="h-5 w-5" />
           </button>
-          <button
-            type="button"
-            onClick={() => {
-              setShots([]);
-              setIndex(0);
-              setStage('plan');
-            }}
-            className="inline-flex min-h-[48px] w-full items-center justify-center gap-2 rounded-xl border text-sm font-medium"
-          >
-            <RotateCcw className="h-4 w-4" /> Repetir el recorrido
-          </button>
+          {!fixedPlan?.length && (
+            <button
+              type="button"
+              onClick={() => {
+                setShots([]);
+                setIndex(0);
+                setStage('plan');
+              }}
+              className="inline-flex min-h-[48px] w-full items-center justify-center gap-2 rounded-xl border text-sm font-medium"
+            >
+              <RotateCcw className="h-4 w-4" /> Falta un espacio entero — empezar de nuevo
+            </button>
+          )}
         </div>
       )}
 
