@@ -454,6 +454,118 @@ def espacio(ala, salida, titulo="The wing in space", tam=(1280, 720),
     return _guardar(img, salida)
 
 
+def barrido(angulos, b=2.6, cuerda=None, N=9):
+    """El ala a varios ángulos. Devuelve [{alfa, CL, CDi, LD}].
+
+    De aquí sale la curva del compromiso — la única cifra del canal que
+    no viene de OpenF1 sino de resolver el ala, y que se sostiene sola
+    porque el modelo es público y la cuenta es reproducible.
+    """
+    cuerda = cuerda or cuerda_rectangular(0.45)
+    fuera = []
+    for a in angulos:
+        al = Ala(b=b, cuerda=cuerda, alfa=a, N=N)
+        fuera.append({"alfa": a, "CL": al.CL, "CDi": al.CDi,
+                      "LD": al.CL / al.CDi if al.CDi > 1e-9 else 0.0})
+    return fuera
+
+
+def compromiso(salida, puntos=(), titulo="What a circuit asks of a wing",
+               tam=(1280, 720), etiqueta="Computed", pie=None,
+               angulos=None, b=2.6, cuerda=None):
+    """La curva carga-arrastre, con los circuitos marcados encima.
+
+    `puntos` = [{"nombre": "Monza", "alfa": 4.0, "color": "#..."}]. Es EL
+    gráfico del compromiso aerodinámico, y aquí sale calculado en vez de
+    ilustrado: cada punto es el ala resuelta a ese ángulo.
+
+    Lo que NO es: el reglaje real de ningún equipo. Nadie publica el
+    ángulo con el que corre, y aquí no se inventa. Lo que se enseña es
+    la FORMA de la decisión — cuánta carga cuesta cuánto arrastre — que
+    es la misma para todos y es lo que explica por qué en Monza el ala
+    se pone plana.
+    """
+    from PIL import ImageDraw
+    import diagramas as D
+    angulos = angulos or [0.5 + 0.5 * i for i in range(36)]
+    curva = barrido(angulos, b=b, cuerda=cuerda)
+    if pie is None:
+        pie = ("Lifting-line solution swept through angle, computed by us. "
+               "The shape of the trade, not any team's actual setup — "
+               "nobody publishes that, and we don't invent it.")
+    img, dib, y0, y1, m = _marco(tam, titulo, etiqueta, pie)
+    w, h = img.size
+    corto = min(tam)
+    cw, ch = w - 2 * m - int(corto * 0.10), y1 - y0 - int(corto * 0.07)
+    gx, gy = m + int(corto * 0.10), y0
+
+    xs = [c["CL"] for c in curva]
+    ys = [c["CDi"] for c in curva]
+    x0v, x1v = 0.0, max(xs) * 1.05
+    y0v, y1v = 0.0, max(ys) * 1.05
+
+    def px(cl, cdi):
+        return (gx + (cl - x0v) / (x1v - x0v) * cw,
+                gy + ch - (cdi - y0v) / (y1v - y0v) * ch)
+
+    # Rejilla
+    f_e = D._fuente(int(corto * 0.021), True)
+    for i in range(5):
+        yy = gy + ch * i / 4
+        dib.line([(gx, yy), (gx + cw, yy)], fill="#232B37", width=1)
+        D._texto(dib, (gx - int(corto * .012), yy - int(corto * .012)),
+                 f"{y1v * (1 - i / 4):.02f}", f_e, TENUE, derecha=True)
+    dib.line([(gx, gy + ch), (gx + cw, gy + ch)], fill=TENUE, width=2)
+    dib.line([(gx, gy), (gx, gy + ch)], fill=TENUE, width=2)
+
+    # La curva
+    pts = [px(c["CL"], c["CDi"]) for c in curva]
+    dib.polygon(pts + [(pts[-1][0], gy + ch), (pts[0][0], gy + ch)],
+                fill="#161C27")
+    dib.line(pts, fill=ACENTO, width=max(3, int(corto * .005)), joint="curve")
+
+    # Los circuitos, cada uno en su punto de la curva
+    f_p = D._fuente(int(corto * 0.030), True)
+    f_s = D._fuente(int(corto * 0.022), False)
+    marcados = []
+    for p in puntos:
+        al = Ala(b=b, cuerda=cuerda or cuerda_rectangular(0.45),
+                 alfa=p["alfa"])
+        cx, cy = px(al.CL, al.CDi)
+        col = p.get("color", FRIO)
+        r = int(corto * 0.012)
+        dib.ellipse([cx - r, cy - r, cx + r, cy + r], fill=col)
+        dib.line([(cx, cy), (cx, gy + ch)], fill=col, width=1)
+        dib.text((cx + r + 6, cy - int(corto * .034)), p["nombre"],
+                 font=f_p, fill=col)
+        dib.text((cx + r + 6, cy - int(corto * .006)),
+                 f"{p['alfa']:.0f}°  ·  load {al.CL:.2f}  ·  drag "
+                 f"{al.CDi:.3f}", font=f_s, fill=APAGADO)
+        marcados.append((p["nombre"], al))
+
+    D._texto(dib, (gx + cw / 2, gy + ch + int(corto * .026)),
+             "DOWNFORCE  (CL)", f_e, APAGADO, esp=int(corto * .004),
+             centro=True)
+    # El rótulo del eje vertical va DENTRO del cuadro: encima se metía
+    # debajo del título.
+    D._texto(dib, (gx + int(corto * .014), gy + int(corto * .010)),
+             "DRAG (CDi)", f_e, APAGADO, esp=int(corto * .004))
+
+    # La frase que resume el trato, con las cifras del propio cálculo
+    if len(marcados) == 2:
+        (n1, a1), (n2, a2) = marcados
+        bajo, alto = (a1, a2) if a1.CL < a2.CL else (a2, a1)
+        nb, na = (n1, n2) if a1.CL < a2.CL else (n2, n1)
+        d_carga = 100 * (1 - bajo.CL / alto.CL) if alto.CL else 0
+        d_arr = 100 * (1 - bajo.CDi / alto.CDi) if alto.CDi else 0
+        f_r = D._fuente(int(corto * 0.026), True)
+        dib.text((gx, gy + ch + int(corto * .058)),
+                 f"{nb} gives up {d_carga:.0f}% of the load to save "
+                 f"{d_arr:.0f}% of the drag.", font=f_r, fill=TINTA)
+    _pie(img, dib, pie, m)
+    return _guardar(img, salida)
+
+
 def _guardar(img, salida):
     with contextlib.suppress(Exception):
         os.makedirs(os.path.dirname(os.path.abspath(salida)), exist_ok=True)
