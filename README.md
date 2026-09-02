@@ -1,8 +1,16 @@
-# Homigo — Home services, on autopilot
+# Homigo — a quoting engine for cleaning companies
 
-The most automated home-services company, built to sell. Cleaning first, engineered from day one to scale into painting, moving, handyman, landscaping, pressure washing, junk removal and more — **without rewriting the system**.
+A cleaning company points a phone at a room and gets back a defensible price:
+how long the job takes, how many people it needs, and what it costs to fulfil.
+Sold as a hosted page they can put in an Instagram bio, or as an API.
 
-> Goal isn't technology. The goal is **customers, bookings and revenue**. Every decision here optimizes for finding customers on Google, converting them in 60 seconds, and running the back office with AI.
+> **📐 [docs/ARQUITECTURA.md](docs/ARQUITECTURA.md)** — how the engine works,
+> with diagrams. Start there.
+
+The marketplace described further down was the original plan and is still in
+the codebase. It is not the focus: a cleaning company with five staff can use a
+quoting engine on Monday, whereas a marketplace needs supply and demand in the
+same city on the same day before it is worth anything to anyone.
 
 ---
 
@@ -33,7 +41,12 @@ Deploy target: **Vercel** + Cloudflare. Data layer (Phase 2): **Supabase / Postg
 
 ---
 
-## Business model: marketplace
+## Business model: marketplace (built, not the current focus)
+
+> The engine above is what is being sold. This section describes the
+> marketplace half — real, working code, kept because the dispatch and pro
+> models are what turn an estimate into an assigned job. It is not where the
+> product is being pointed today.
 
 Homigo operates as a **marketplace**, not an employer. Pros are independent
 contractors who apply, choose their own service areas, and are **free to accept
