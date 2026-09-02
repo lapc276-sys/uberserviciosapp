@@ -1,7 +1,12 @@
 # 🚀 Guía de puesta en marcha — Homigo
 
 Esta guía te lleva de cero a un negocio **en vivo y cobrando**, paso a paso.
-Cada pieza se activa sola al pegar su variable de entorno en Vercel — no hay que tocar código.
+Cada pieza se activa sola al pegar su variable de entorno — no hay que tocar código.
+
+> **Estás en Replit.** Donde esta guía diga *"Vercel → Environment Variables"*,
+> lee **Replit → Secrets** (el candado en la barra lateral). Es lo mismo con
+> otro nombre. El Paso 1 sigue aquí por si algún día vuelves a Vercel; para
+> Replit basta importar el repo y pulsar **Deploy**.
 
 > **Regla de oro:** haz los pasos en orden. Los pasos 1–4 son el mínimo para operar y cobrar.
 > Todo lo demás se puede sumar después sin prisa.
@@ -20,23 +25,58 @@ Cada pieza se activa sola al pegar su variable de entorno en Vercel — no hay q
 
 ---
 
-## Paso 2 — Supabase (base de datos) · Gratis · ~10 min
+## Paso 2 — Base de datos · Gratis · ~10 min
 
-1. Entra a **[supabase.com](https://supabase.com)** → **Start your project** → inicia sesión con GitHub.
-2. **New project** → nombre: `homigo` → elige una contraseña de base de datos **y guárdala** → región: *East US (North Virginia)* → **Create**.
-3. Cuando termine de crear: **Project Settings (engrane) → Database → Connection string → URI**.
-4. Copia la cadena (empieza con `postgresql://…`) y reemplaza `[YOUR-PASSWORD]` por tu contraseña.
-5. En **Vercel → tu proyecto → Settings → Environment Variables** añade:
-   - `DATABASE_URL` = esa cadena
-6. En tu computadora (o en la terminal de Vercel), corre una vez:
-   ```bash
-   npm install
-   DATABASE_URL="postgresql://..." npm run db:push   # crea las tablas
-   DATABASE_URL="postgresql://..." npm run db:seed   # admin + datos de ejemplo (opcional)
+**Sin este paso la app funciona pero no guarda nada.** `lib/db.ts` decide en una
+línea: si no existe `DATABASE_URL`, todo va a memoria.
+
+En Replit eso es peor de lo que suena. El despliegue es *autoscale*, o sea que
+Replit levanta y apaga varios contenedores según la demanda. Con datos en
+memoria **cada contenedor tiene los suyos**: dos clientes cotizando a la vez
+pueden caer en contenedores distintos y ver cosas diferentes, y todo se borra
+cuando el contenedor duerme. No es "se reinicia": es que no hay una sola verdad.
+
+### Opción A — Postgres de Replit (lo más simple)
+
+1. En tu Repl, barra lateral → **Database** (o *Tools → Database*) → **Create a
+   database** → PostgreSQL.
+2. Replit crea la base y **pone `DATABASE_URL` en los Secrets él solo**. No
+   copies nada a mano.
+3. Comprueba en **Secrets** que `DATABASE_URL` aparece.
+
+### Opción B — Supabase (gratis, funciona en cualquier hosting)
+
+1. [supabase.com](https://supabase.com) → **Start your project** → entra con GitHub.
+2. **New project** → nombre `homigo` → **guarda la contraseña** → región *East US*.
+3. **Project Settings → Database → Connection string**.
+4. Elige la cadena de **Connection pooling** (puerto `6543`), **no** la directa
+   (`5432`). Autoscale abre y cierra conexiones constantemente y agota una
+   conexión directa; el pooler existe justo para eso.
+5. Reemplaza `[YOUR-PASSWORD]` por tu contraseña y **añade al final**:
    ```
-7. En Vercel: **Deployments → ⋯ → Redeploy**.
+   ?pgbouncer=true&connection_limit=1
+   ```
+   Sin eso Prisma prepara sentencias que el pooler no sabe reutilizar, y verás
+   errores intermitentes que parecen aleatorios.
+6. En Replit → **Secrets** → nueva:
+   - `DATABASE_URL` = esa cadena completa
 
-✅ **Resultado:** reservas, clientes y leads se guardan de verdad.
+### Crear las tablas (las dos opciones)
+
+En el **Shell** de Replit, una sola vez:
+
+```bash
+npm run db:push    # crea las 21 tablas
+npm run db:seed    # admin + datos de ejemplo (opcional)
+```
+
+> ⚠️ Usa `npm run db:push`, **nunca** `npx prisma db push`. `npx` se descarga
+> Prisma 7 y se lleva por delante `node_modules`; ya pasó una vez.
+
+Luego **Deploy → Redeploy**.
+
+✅ **Resultado:** reservas, clientes, inquilinos y —lo que más importa— las
+muestras de calibración de cada trabajo se guardan de verdad.
 
 ---
 
