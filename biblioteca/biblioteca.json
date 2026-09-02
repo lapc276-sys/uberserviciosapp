@@ -49,5 +49,67 @@
     "monza",
     "rear wing",
     "setup"
+  ],
+  "g_low_downforce_trade_monza.png": [
+    "monza",
+    "low downforce",
+    "downforce",
+    "drag",
+    "trade",
+    "compromise",
+    "setup",
+    "wing angle",
+    "straight",
+    "aerodynamics",
+    "italian grand prix"
+  ],
+  "g_wing_flat_monza_4deg.png": [
+    "monza",
+    "wing",
+    "front wing",
+    "rear wing",
+    "low downforce",
+    "flat wing",
+    "angle of attack",
+    "drag",
+    "straight",
+    "top speed",
+    "aerodynamics"
+  ],
+  "g_wing_steep_monaco_15deg.png": [
+    "monaco",
+    "wing",
+    "high downforce",
+    "angle of attack",
+    "downforce",
+    "steep",
+    "corners",
+    "aerodynamics",
+    "stall"
+  ],
+  "g_slipstream_wake_vortex_street.png": [
+    "slipstream",
+    "tow",
+    "wake",
+    "dirty air",
+    "vortex",
+    "vortex street",
+    "turbulence",
+    "following",
+    "overtake",
+    "monza",
+    "aerodynamics"
+  ],
+  "g_induced_drag_wing_tips_planform.png": [
+    "induced drag",
+    "drag",
+    "wingtip",
+    "tip vortex",
+    "endplate",
+    "span",
+    "efficiency",
+    "wing",
+    "aerodynamics",
+    "downforce"
   ]
 }
