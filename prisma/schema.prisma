@@ -92,6 +92,18 @@ enum ProStatus {
 model Pro {
   id              String    @id @default(cuid())
   name            String
+  /**
+   * Public handle for /p/<handle> — the address a badge QR points at.
+   * Stable for the life of the pro: a printed code cannot be reissued.
+   */
+  handle          String?   @unique
+  /**
+   * Whether this pro currently wants new work through their badge.
+   * A pro with a full book still wears the shirt. Turning intake off has to
+   * route the job elsewhere while still crediting the scan, or the rational
+   * move once you are busy is to stop wearing it.
+   */
+  acceptingWork   Boolean   @default(true)
   email           String    @unique
   phone           String?
   status          ProStatus @default(APPLIED)
@@ -345,6 +357,7 @@ model TrainingSample {
    * /**
    * /**
    * /**
+   * /**
    * /** 1 = first job of that worker's day, 2 = second, etc.
    */
   jobSequence      Int?
@@ -405,13 +418,19 @@ model OptOut {
 
 // Every quote/chat/contact intent is captured as a Lead for follow-up.
 model Lead {
-  id        String   @id @default(cuid())
-  name      String?
-  email     String?
-  phone     String?
-  source    String   @default("web") // web | chatbot | contact | voice
-  message   String?
-  createdAt DateTime @default(now())
+  /**
+   * The pro whose badge was scanned, when a lead arrived that way.
+   * Recorded even when somebody else ends up doing the job — the referral is
+   * the thing being rewarded, not the labour.
+   */
+  referredByProId String?
+  id              String   @id @default(cuid())
+  name            String?
+  email           String?
+  phone           String?
+  source          String   @default("web") // web | chatbot | contact | voice
+  message         String?
+  createdAt       DateTime @default(now())
 
   @@index([createdAt])
 }
