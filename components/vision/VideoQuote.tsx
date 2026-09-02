@@ -72,7 +72,12 @@ export function VideoQuote() {
   }
 
   /** Shared by the guided walkthrough and the saved-file path. */
-  async function analyze(extracted: string[], captions: string[] | undefined, service: string) {
+  async function analyze(
+    extracted: string[],
+    captions: string[] | undefined,
+    service: string,
+    focus?: string,
+  ) {
     setError('');
     setAnalysis(null);
     setQuote(null);
@@ -84,7 +89,7 @@ export function VideoQuote() {
       const res = await fetch('/api/vision/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ frames: extracted, captions, serviceSlug: service, city }),
+        body: JSON.stringify({ frames: extracted, captions, serviceSlug: service, city, focus }),
       });
 
       const { data, failure } = await readJson<any>(res);
@@ -181,7 +186,7 @@ export function VideoQuote() {
               <div className="mx-auto max-w-md text-left">
                 <GuidedCapture
                   serviceSlug={serviceSlug}
-                  onComplete={({ frames: shot, captions }) => analyze(shot, captions, serviceSlug)}
+                  onComplete={({ frames: shot, captions, focus }) => analyze(shot, captions, serviceSlug, focus)}
                   fallback={
                     <button
                       onClick={() => inputRef.current?.click()}

@@ -80,7 +80,12 @@ export function HostedQuote({
   const busy = stage === 'reading' || stage === 'analyzing' || stage === 'sending';
 
   /** Shared by the guided walkthrough and the saved-video fallback. */
-  async function requestQuote(frames: string[], captions: string[] | undefined, service: string) {
+  async function requestQuote(
+    frames: string[],
+    captions: string[] | undefined,
+    service: string,
+    focus?: string,
+  ) {
     setError('');
     setQuote(null);
     setServiceSlug(service);
@@ -90,7 +95,7 @@ export function HostedQuote({
       const res = await fetch(`/api/public/quote/${slug}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ frames, captions, serviceSlug: service }),
+        body: JSON.stringify({ frames, captions, serviceSlug: service, focus }),
       });
       const { data, failure } = await readJson<any>(res);
       if (failure || !data) {
@@ -196,8 +201,8 @@ export function HostedQuote({
       {stage !== 'quoted' && !busy && (
         <div className="rounded-2xl border p-5">
           <GuidedCapture
-            onComplete={({ frames, captions, serviceSlug: chosen }) =>
-              requestQuote(frames, captions, chosen)
+            onComplete={({ frames, captions, serviceSlug: chosen, focus }) =>
+              requestQuote(frames, captions, chosen, focus)
             }
             fallback={
               <label className="flex min-h-[64px] cursor-pointer items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 text-sm font-medium">

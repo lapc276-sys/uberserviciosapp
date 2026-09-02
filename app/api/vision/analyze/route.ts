@@ -18,6 +18,14 @@ const schema = z.object({
     .max(MAX_FRAMES, `Up to ${MAX_FRAMES} frames`),
   captions: z.array(z.string().max(200)).max(MAX_FRAMES).optional(),
   /**
+   * What the customer asked us to pay attention to, in their own words.
+   *
+   * Passed to the model as context, never as instruction: it says where to
+   * look carefully, not what to conclude. "La cocina está impecable" must not
+   * talk the analyzer out of the grease in front of it.
+   */
+  focus: z.string().max(400).optional(),
+  /**
    * Small copies of the frames, for the training archive. Sent separately from
    * `frames` so that what is analysed and what is retained are two decisions,
    * not one — the analyser wants the biggest image that fits, the archive
@@ -79,7 +87,7 @@ export async function POST(req: Request) {
     `[vision] start frames=${frames.length} captioned=${captions?.length ?? 0} payload=${payloadMb.toFixed(2)}MB engine=${analyzer.name}`,
   );
 
-  const { rooms, warnings } = await analyzer.analyze({ frames, captions, serviceSlug });
+  const { rooms, warnings } = await analyzer.analyze({ frames, captions, focus: parsed.data.focus, serviceSlug });
   console.log(`[vision] done in ${Date.now() - started}ms rooms=${rooms.length}`);
 
   const analysis = buildAnalysis(rooms, { serviceSlug, source: analyzer.name, warnings });

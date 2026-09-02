@@ -45,6 +45,15 @@ export interface GuidedResult {
   captions: string[];
   /** The depth of clean the person asked for, as a service slug. */
   serviceSlug: string;
+  /**
+   * What the customer wants special attention on, in their own words.
+   *
+   * Worth asking because it is the one thing the frames genuinely cannot show:
+   * two identical bathrooms carry different work when one owner cares about
+   * the grout and the other only ever looks at the mirror. It also gives the
+   * crew somewhere obvious to earn a tip.
+   */
+  focus?: string;
 }
 
 export interface GuidedCaptureProps {
@@ -145,6 +154,7 @@ export function GuidedCapture({
    * They will accept the bad frame, and the estimate is then built on it.
    */
   const [retakeOf, setRetakeOf] = useState<number | null>(null);
+  const [focus, setFocus] = useState('');
   const [error, setError] = useState('');
 
   const plan = buildPlan(selection);
@@ -450,6 +460,7 @@ export function GuidedCapture({
       frames: shots.map((s) => s.frame),
       captions: shots.map((s) => captionFor(s.step)),
       serviceSlug: slug,
+      focus: focus.trim() || undefined,
     });
   }
 
@@ -842,7 +853,24 @@ export function GuidedCapture({
 
       {stage === 'depth' && (
         <div className="space-y-2">
-          <h4 className="font-semibold">¿Qué tan a fondo lo quieres?</h4>
+          {/* Asked before the depth buttons, because those submit. A field
+              underneath a button that ends the flow is a field nobody fills. */}
+          <label className="block">
+            <span className="font-semibold">¿Hay algo en lo que quieras que nos enfoquemos?</span>
+            <span className="mt-1 block text-sm text-slate-500 dark:text-slate-400">
+              Opcional. Por ejemplo: “las juntas de la ducha”, “la cocina sobre todo”, “tengo un
+              perro y suelta mucho pelo”.
+            </span>
+            <textarea
+              value={focus}
+              onChange={(e) => setFocus(e.target.value)}
+              rows={2}
+              maxLength={400}
+              className="mt-2 w-full rounded-xl border bg-white px-3 py-2 text-sm outline-none dark:bg-white/5"
+            />
+          </label>
+
+          <h4 className="pt-2 font-semibold">¿Qué tan a fondo lo quieres?</h4>
           <p className="text-sm text-slate-500 dark:text-slate-400">
             Lo mismo de sucio da precios distintos según hasta dónde quieras llegar.
           </p>

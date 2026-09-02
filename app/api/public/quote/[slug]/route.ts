@@ -33,6 +33,14 @@ const RATE_WINDOW_MS = 10 * 60 * 1000;
 const schema = z.object({
   frames: z.array(z.string().min(32)).min(1).max(MAX_FRAMES),
   captions: z.array(z.string().max(200)).max(MAX_FRAMES).optional(),
+  /**
+   * What the customer asked us to pay attention to, in their own words.
+   *
+   * Passed to the model as context, never as instruction: it says where to
+   * look carefully, not what to conclude. "La cocina está impecable" must not
+   * talk the analyzer out of the grease in front of it.
+   */
+  focus: z.string().max(400).optional(),
   serviceSlug: z.string().refine((s) => services.some((x) => x.slug === s), 'Unknown service'),
 });
 
@@ -83,7 +91,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ slug: s
   }
 
   const analyzer = getAnalyzer();
-  const { rooms, warnings } = await analyzer.analyze({ frames, captions, serviceSlug });
+  const { rooms, warnings } = await analyzer.analyze({ frames, captions, focus: parsed.data.focus, serviceSlug });
 
   const analysis = buildAnalysis(rooms, {
     serviceSlug,

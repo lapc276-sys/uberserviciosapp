@@ -124,6 +124,8 @@ export interface AnalyzerInput {
    * doubles. Absent for unguided uploads, where guessing is all there is.
    */
   captions?: string[];
+  /** What the customer asked us to look at. Context, never instruction. */
+  focus?: string;
   serviceSlug: string;
 }
 

@@ -103,7 +103,7 @@ function coerceObservations(parsed: any): { rooms: RawRoomObservation[]; warning
 
 export const visionLlmAnalyzer: VisionAnalyzer = {
   name: 'vision-llm',
-  async analyze({ frames, captions }: AnalyzerInput) {
+  async analyze({ frames, captions, focus }: AnalyzerInput) {
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) return { rooms: [], warnings: ['Vision model not configured.'] };
 
@@ -136,6 +136,17 @@ export const visionLlmAnalyzer: VisionAnalyzer = {
                     ? `Analyze these ${frames.length} captioned frames from a guided walkthrough. The captions were recorded as each shot was taken — trust them for room identity.`
                     : `Analyze these ${frames.length} frames from a property walkthrough.`,
                 },
+                // The customer's own words about what matters to them. It
+                // directs attention, never conclusions: somebody insisting
+                // their kitchen is spotless does not make the grease go away.
+                ...(focus?.trim()
+                  ? [
+                      {
+                        type: 'text' as const,
+                        text: `The customer asked for attention on: "${focus.trim().slice(0, 400)}". Look there carefully. Score what you actually see — their description is a hint about where to look, not a claim to accept.`,
+                      },
+                    ]
+                  : []),
                 ...frameParts,
               ],
             },
