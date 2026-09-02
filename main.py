@@ -8731,6 +8731,34 @@ def _tema_tecnico_impl(prioritario):
     return elegido
 
 
+#: Lo que un short tiene que hacer para merecer los treinta segundos de
+#: alguien. Se importa de hechos.py para no tenerlo escrito dos veces.
+try:
+    import hechos as _hechos
+    _MECANISMO_EXIGIDO = _hechos.MECANISMO
+except Exception:                                  # pragma: no cover
+    _hechos = None
+    _MECANISMO_EXIGIDO = ""
+
+
+def _hechos_para(categoria):
+    """Datos públicos y ciertos que el guion SÍ puede decir.
+
+    Esto nace de un comentario de un espectador —"Inane... teaches
+    absolutely NOTHING"— que tenía razón. La instrucción de no inventar
+    cifras es correcta y sigue ahí; lo que fallaba es que, sin datos con
+    los que ser concreto, un guion de cuarenta y cinco palabras se queda
+    en una afirmación bonita y vacía. Aquí se le dan cifras REALES, con
+    fuente, para que pueda explicar en vez de insinuar.
+    """
+    if _hechos is None:
+        return ""
+    try:
+        return _hechos.bloque(categoria, n=2)
+    except Exception:
+        return ""
+
+
 def _pista_vocabulario(categoria, leccion):
     """Le ofrece al guionista UN término del glosario, con su definición.
 
@@ -8797,13 +8825,17 @@ async def generar_short(client: anthropic.AsyncAnthropic, tipo="noticia",
             f"masterclass, insane, absolutely massive. End with a question to "
             f"the viewer. Category: {cat}. Write ONLY the script, one tight "
             f"paragraph."
-            + _pista_vocabulario(cat, leccion))
+            + _pista_vocabulario(cat, leccion)
+            + _hechos_para(cat))
         system = (
             "You are a viral motorsport EXPLAINER writing 25-35 second "
             "educational Shorts that make people feel smarter. Punchy, "
             "vivid, factual. NEVER invent specific numbers, records or "
-            "quotes — speak in accurate general terms. Write only the "
-            "script.")
+            "quotes: state only figures you have been given as true, and "
+            "where you have none, explain the mechanism without one — "
+            "vagueness is not a safe fallback, it is how a script ends up "
+            "teaching nothing. Write only the script.\n\n"
+            + _MECANISMO_EXIGIDO)
         # El guion y su diagrama salen de la MISMA llamada: pedirlos por
         # separado costaría el doble y el modelo podría dibujar algo que
         # no cuadre con lo que acaba de escribir.
