@@ -1678,6 +1678,17 @@ async def panel():
 <div id="shows"></div>
 <button id="btn-carrera" data-tipo="carrera" onclick="post('/control/carrera')">🏁 Modo carrera / leaderboard</button>
 
+<h2>Ola del Gran Premio de esta semana</h2>
+<div id="olabox">
+  <input id="ola-gp" type="text" placeholder="Monza, Spa, Suzuka, Las Vegas…"
+         onkeydown="if(event.key==='Enter') sembrarOla()">
+  <div class="row">
+    <button onclick="sembrarOla()">🌊 Sembrar shorts de este circuito</button>
+  </div>
+  <div id="ola-estado" class="mini">Los shorts de ESE circuito salen antes
+    que los genéricos, intercalados para no cansar. Cámbialo cada finde.</div>
+</div>
+
 <h2>Chat de YouTube (responder al aire)</h2>
 <div id="chatbox">
   <input id="chat-url" type="text" placeholder="Pega la URL del directo de YouTube"
@@ -1735,6 +1746,24 @@ async function conectarChat(){
   if (!d.ok) document.getElementById('chat-estado').textContent =
     '⚠ ' + (d.error || 'no se pudo conectar');
   refrescar();
+}
+async function sembrarOla(){
+  const gp = document.getElementById('ola-gp').value.trim();
+  const est = document.getElementById('ola-estado');
+  if (!gp) { est.textContent = 'Escribe el circuito primero.'; return; }
+  est.textContent = 'Sembrando…';
+  const r = await postSeguro('/control/ola/' + encodeURIComponent(gp));
+  const d = await r.json();
+  // El nombre puede no existir en la lista de trazados: mejor decirlo —
+  // y decir CUÁLES valen — que dejar al dueño creyendo que la semana
+  // quedó sembrada cuando no lo está.
+  if (d.ok) {
+    est.textContent = '✅ ' + d.shorts_en_cola + ' shorts de ' + d.gp +
+      ' en cola prioritaria. Salen antes que los genéricos.';
+  } else {
+    est.textContent = '⚠ ' + (d.error || 'no se pudo sembrar') +
+      (d.opciones ? ' · Válidos: ' + d.opciones.join(', ') : '');
+  }
 }
 async function conectarChatAuto(){
   const url = document.getElementById('chat-url').value.trim();
