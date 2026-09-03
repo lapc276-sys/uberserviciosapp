@@ -39,11 +39,12 @@ import anthropic
 import httpx
 import uvicorn
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import (HTMLResponse, JSONResponse,
+from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse,
                                PlainTextResponse, Response)
 
 import articulos
 import diagramas
+import lecho
 import fuentes
 import portada
 import telegram_bot
@@ -106,6 +107,11 @@ ROTACION_MINUTOS = float(os.environ.get("ROTACION_MINUTOS", "8"))
 # un enlace directo .mp3 de una librería libre (Pixabay, YouTube Audio
 # Library descargada, etc.). Vacío = interludio sin música.
 MUSICA_URL = os.environ.get("MUSICA_URL", "")
+#: Fondo sonoro durante la carrera, además de los motores y las voces.
+#: LECHO_CARRERA=off lo apaga sin tocar código — es lo primero que se
+#: quita si en antena resulta que cansa.
+LECHO_ACTIVO = os.environ.get(
+    "LECHO_CARRERA", "on").lower() not in ("off", "0", "")
 # Circuitos de reserva para el interludio cuando no hay próxima carrera
 CIRCUITOS_RESERVA = ["Silverstone Circuit", "Monza Circuit",
                      "Circuit de Spa-Francorchamps", "Suzuka Circuit",
@@ -1937,6 +1943,11 @@ async def apex():
         "idioma": IDIOMA,
         "hay_frame": estado.frame is not None,
         "ambiente": estado.ambiente_activo,
+        # El fondo sonoro y DÓNDE está su bucle bueno. Los instantes van
+        # aquí y no fijos en el navegador porque los decide el generador:
+        # si mañana cambia la duración, la pantalla se entera sola.
+        "lecho": ({"url": "/lecho.mp3", "inicio": lecho.LOOP_INICIO,
+                   "fin": lecho.LOOP_FIN} if LECHO_ACTIVO else None),
         "proxima_sesion": _proxima_sesion_info(),
         "proximo_programa": estado.proximo_programa,
         "canal": _canal_youtube(),
@@ -2062,6 +2073,16 @@ async def ambiente_mp3():
         return Response(status_code=404)
     return Response(content=base64.b64decode(estado.ambiente_b64),
                     media_type="audio/mpeg")
+
+
+@app.get("/lecho.mp3")
+async def lecho_mp3():
+    """El fondo sonoro de la carrera. Se sintetiza la primera vez que se
+    pide y se queda en disco."""
+    ruta = await asyncio.to_thread(lecho.asegurar)
+    if not ruta:
+        return Response(status_code=404)
+    return FileResponse(ruta, media_type="audio/mpeg")
 
 
 @app.get("/audio/{seg}/{idx}")
@@ -3041,6 +3062,88 @@ async def visor():
 <script>
 let vozActiva = true, ultimoSegmento = -1, posPrevias = {};
 let reproduciendo = false, pendiente = null, amb = null;
+
+// ── El lecho: el fondo grave de la carrera ─────────────────────────────
+//
+// Va con Web Audio y no con un <audio loop> por dos razones concretas.
+//
+// La primera es el bucle. Un MP3 lleva relleno del codificador —medido:
+// 110 ms— así que <audio loop> vuelve al principio pasando por ese hueco
+// y se oye un bajón en cada vuelta. Web Audio repite entre dos instantes
+// EXACTOS del audio ya descodificado, y el generador nos dice cuáles son
+// (`d.lecho.inicio` / `.fin`), así que el empalme es continuo.
+//
+// La segunda es cómo se aparta cuando alguien habla. Cambiar `.volume`
+// de golpe es un escalón que se oye como un bombeo; con un GainNode se
+// baja con una rampa de medio segundo y no se nota que ha bajado, que es
+// justo lo que tiene que pasar.
+let lechoCtx = null, lechoGain = null, lechoFuente = null, lechoPidiendo = false;
+// Niveles. El archivo se genera a -20,7 LUFS (medido), así que estos
+// números son atenuación sobre una fuente ya normalizada.
+// Debajo de los motores (0.15) a propósito: los motores dicen que esto
+// es una carrera, el lecho solo rellena el silencio.
+const LECHO_VOL = 0.11;
+// Cuando alguien habla se aparta a un tercio. No a cero: desaparecer del
+// todo y volver se nota más que quedarse abajo.
+const LECHO_VOL_VOZ = 0.038;
+// Medio segundo de rampa: lo bastante rápido para dejar sitio a la
+// primera sílaba y lo bastante lento para que no se oiga el movimiento.
+const LECHO_RAMPA = 0.5;
+
+function lechoTick(d) {
+  const quiere = vozActiva && d.ambiente && d.lecho;
+  if (!quiere) {
+    if (lechoFuente) {
+      // Se baja antes de parar: cortar en seco un tono grave da un chasquido.
+      try {
+        lechoGain.gain.cancelScheduledValues(lechoCtx.currentTime);
+        lechoGain.gain.setTargetAtTime(0.0001, lechoCtx.currentTime, 0.25);
+        const f = lechoFuente;
+        setTimeout(() => { try { f.stop(); } catch (e) {} }, 1200);
+      } catch (e) {}
+      lechoFuente = null;
+    }
+    return;
+  }
+  if (lechoFuente) {
+    const v = reproduciendo ? LECHO_VOL_VOZ : LECHO_VOL;
+    // setTargetAtTime es una rampa exponencial: suena natural porque el
+    // oído percibe el volumen así, no en línea recta.
+    lechoGain.gain.setTargetAtTime(v, lechoCtx.currentTime, LECHO_RAMPA / 3);
+    return;
+  }
+  if (lechoPidiendo) return;
+  lechoPidiendo = true;
+  (async () => {
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return;                       // sin Web Audio, no hay lecho
+      lechoCtx = lechoCtx || new AC();
+      if (lechoCtx.state === 'suspended') await lechoCtx.resume();
+      const buf = await lechoCtx.decodeAudioData(
+        await (await fetch(d.lecho.url)).arrayBuffer());
+      const src = lechoCtx.createBufferSource();
+      src.buffer = buf;
+      src.loop = true;
+      // Aquí está todo el asunto: se repite SOLO el trozo bueno.
+      src.loopStart = d.lecho.inicio;
+      src.loopEnd = Math.min(d.lecho.fin, buf.duration);
+      lechoGain = lechoCtx.createGain();
+      lechoGain.gain.value = 0.0001;
+      src.connect(lechoGain).connect(lechoCtx.destination);
+      // Empieza dentro del bucle, no en 0: el primer segundo del archivo
+      // es el relleno que precisamente estamos evitando.
+      src.start(0, d.lecho.inicio);
+      // Entra desde el silencio en un par de segundos. Que aparezca de
+      // golpe delata que hay una pista sonando.
+      lechoGain.gain.setTargetAtTime(LECHO_VOL, lechoCtx.currentTime, 0.8);
+      lechoFuente = src;
+    } catch (e) {
+      // Sin lecho se sigue emitiendo igual: es un adorno, no la emisión.
+      console.log('lecho no disponible', e);
+    } finally { lechoPidiendo = false; }
+  })();
+}
 // Ticker de noticias: crawl continuo estilo Bloomberg. Construye una
 // tira con todas las noticias/eventos, duplicada para bucle sin costura.
 let alertas = [], alertasSig = '', ultimoStandbyIso = null;
@@ -5025,6 +5128,7 @@ async function tick() {
   }
   // sonido de pista de fondo (con la voz activada)
   if (vozActiva && d.ambiente && !amb) {
+    // (el lecho grave se monta aparte, en lechoTick)
     amb = new Audio('/ambiente.mp3');
     amb.loop = true; amb.volume = 0.15;
     amb.play().catch(e => { bloqueado(e); amb = null; });
@@ -5036,6 +5140,8 @@ async function tick() {
   if (amb && (!d.ambiente || !vozActiva)) {
     amb.pause(); amb = null;
   }
+  // El lecho: el fondo grave bajo los motores y las voces.
+  lechoTick(d);
   // incidentes
   const inc = document.getElementById('incidentes');
   inc.innerHTML = '';

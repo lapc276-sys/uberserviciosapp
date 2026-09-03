@@ -51,3 +51,8 @@ backtest/
 
 # Campos de flujo calculados: se regeneran corriendo el módulo.
 flujo/
+
+# Audio generado en el propio servidor: se sintetiza solo la primera vez
+# que hace falta y pesa. No tiene sentido llevarlo en el repositorio.
+lecho_carrera.mp3
+ambiente_f1.mp3
