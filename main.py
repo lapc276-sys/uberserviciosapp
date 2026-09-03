@@ -2612,10 +2612,17 @@ async def visor():
                  font-size: .82rem; color: var(--dim); z-index: 2; }
   /* Subtítulo estilo TV: SOLO la línea que se está narrando, abajo al
      centro; cambia cuando el audio pasa a la siguiente línea */
+  /* El diálogo sube por encima del rótulo. Los dos van anclados abajo y
+     crecen hacia arriba, así que sin esto la tarjeta (z-index 45) tapaba
+     el cuadro de subtítulos (z-index 4) entero — y con la tarjeta de
+     pelea, que es más alta, no se veía ni una línea de lo que se está
+     diciendo. La altura la pone `pintarRotulo` en --rotulo-alto, porque
+     cada tarjeta mide una cosa distinta y en CSS no se puede saber. */
   #dialogo { position: fixed; left: 50%; transform: translateX(-50%);
-             bottom: 58px; width: min(940px, 88vw); z-index: 4;
+             bottom: calc(58px + var(--rotulo-alto, 0px));
+             width: min(940px, 88vw); z-index: 4;
              opacity: 0; pointer-events: none;
-             transition: opacity .35s ease; }
+             transition: opacity .35s ease, bottom .35s ease; }
   #dialogo.on { opacity: 1; }
   .card { background: rgba(13,16,23,.86); border: 1px solid var(--line);
           border-radius: 14px; padding: 15px 24px; text-align: center;
@@ -2917,8 +2924,9 @@ async def visor():
   #voz.pedir { display: block; }
   /* El ticker fijo abajo (58px) no debe tapar el contenido ni el botón */
   body { padding-bottom: 66px; }
-  /* El subtítulo de TV sube para no chocar con el ticker */
-  #dialogo { bottom: 84px; }
+  /* El subtítulo de TV sube para no chocar con el ticker, y además por
+     encima del rótulo cuando hay una tarjeta puesta (ver --rotulo-alto). */
+  #dialogo { bottom: calc(84px + var(--rotulo-alto, 0px)); }
 </style>
 </head>
 <body>
@@ -3148,7 +3156,11 @@ function pintarRotulo(d) {
   }
   if (deg.length >= 3) cartas.push(['deg', () => cartaDegradacion(deg)]);
   if (d.pit) cartas.push(['pit', () => cartaPit(d.pit, deg)]);
-  if (!cartas.length) { caja.classList.remove('on'); rotClave = ''; return; }
+  if (!cartas.length) {
+    caja.classList.remove('on'); rotClave = '';
+    document.body.style.setProperty('--rotulo-alto', '0px');
+    return;
+  }
 
   const ahora = Date.now();
   if (!rotTs) rotTs = ahora;
@@ -3172,6 +3184,14 @@ function pintarRotulo(d) {
     caja.firstChild._actualizar(d);
   }
   caja.classList.add('on');
+  // Cuánto sitio ocupa el rótulo, para que el subtítulo se coloque
+  // ENCIMA en vez de quedar debajo. Se mide después de montar la
+  // tarjeta porque cada una tiene una altura distinta, y la de pelea
+  // —con su gráfico— es bastante más alta que las demás.
+  requestAnimationFrame(() => {
+    const alto = Math.round(caja.getBoundingClientRect().height);
+    document.body.style.setProperty('--rotulo-alto', (alto + 16) + 'px');
+  });
 }
 
 // ── El tamaño del mapa ─────────────────────────────────────────────────
@@ -3544,20 +3564,55 @@ function cartaAtasco(a, pases) {
 // en sitios distintos: las dos líneas parecían iguales. Encimadas, la
 // separación entre ellas ES la diferencia de velocidad, que es justo lo
 // que hay que leer — quién frena antes y quién sale mejor.
+// ¿Son tan parecidos estos dos colores que encimados no se distinguen?
+// Pasa SIEMPRE entre compañeros de equipo, que además es de las peleas
+// más frecuentes: dos McLaren naranjas o dos Ferrari rojos daban dos
+// trazas del mismo color y el gráfico no se podía leer.
+function colorCerca(a, b) {
+  const v = s => [1, 3, 5].map(i => parseInt(s.substr(i, 2), 16));
+  try {
+    const [r1, g1, b1] = v(a), [r2, g2, b2] = v(b);
+    return Math.abs(r1 - r2) + Math.abs(g1 - g2) + Math.abs(b1 - b2) < 90;
+  } catch (e) { return false; }
+}
+// Aclara un color hacia el blanco, para separar al compañero de equipo
+// sin inventarle un color que no es el suyo.
+function aclarar(hex, f) {
+  try {
+    const v = [1, 3, 5].map(i => parseInt(hex.substr(i, 2), 16));
+    return '#' + v.map(x => Math.round(x + (255 - x) * f)
+                    .toString(16).padStart(2, '0')).join('');
+  } catch (e) { return hex; }
+}
+
 function trazaDoble(sA, colA, sB, colB, min, max) {
   const c = document.createElement('canvas');
-  const w = 320, h = 62, r = window.devicePixelRatio || 1;
-  c.width = w * r; c.height = h * r;
-  c.style.width = '100%'; c.style.height = h + 'px';
+  // Se dibuja en coordenadas fijas (320x46) sobre un búfer 4 veces
+  // mayor, y el CSS lo estira manteniendo la proporción. Antes el búfer
+  // medía 320 de ancho y se mostraba a 700: la línea salía borrosa y
+  // aplastada. Así queda nítido a cualquier ancho y los grosores y
+  // tipografías siguen expresados en unidades legibles.
+  // Proporción ancha (unos 7:1). Con 5:1 el gráfico se comía un tercio
+  // de la pantalla en 1080p y la mayor parte era hueco: los dos coches
+  // van a tope dos tercios de la ventana, así que la franja alta sobra.
+  const w = 320, h = 46, K = 4;
+  c.width = w * K; c.height = h * K;
+  c.style.width = '100%'; c.style.height = 'auto';
+  c.style.aspectRatio = w + ' / ' + h;
   const g = c.getContext('2d');
-  g.scale(r, r);
+  g.scale(K, K);
   if (max <= min) return c;
+  // Si los dos van del mismo color (compañeros), al de delante se le
+  // aclara y se le pone de rayas. Sigue siendo su color de equipo, solo
+  // que distinguible del de su compañero.
+  let guiones = false;
+  if (colorCerca(colA, colB)) { colB = aclarar(colB, 0.55); guiones = true; }
   // Franja de dibujo con hueco arriba y abajo para las cifras de escala.
   // Sin este margen la línea del más rápido pasa POR ENCIMA del "322
   // km/h" y se leían las dos cosas a la vez, ninguna bien.
-  const ARR = 13, ABJ = 11;
+  const ARR = 11, ABJ = 9;
   const py = v => h - ABJ - (v - min) / (max - min) * (h - ARR - ABJ);
-  const traza = (s, col) => {
+  const traza = (s, col, raya) => {
     if (!s || s.length < 2) return;
     const px = i => i * (w - 2) / (s.length - 1) + 1;
     g.beginPath(); g.moveTo(px(0), h);
@@ -3566,17 +3621,19 @@ function trazaDoble(sA, colA, sB, colB, min, max) {
     g.fillStyle = col + '1E'; g.fill();
     g.beginPath();
     s.forEach((v, i) => i ? g.lineTo(px(i), py(v)) : g.moveTo(px(i), py(v)));
+    g.setLineDash(raya ? [5, 3] : []);
     g.strokeStyle = col; g.lineWidth = 2; g.lineJoin = 'round'; g.stroke();
+    g.setLineDash([]);
     // El punto de "ahora": por dónde va la lectura de la derecha.
     g.beginPath(); g.arc(px(s.length - 1), py(s[s.length - 1]), 2.8, 0, 7);
     g.fillStyle = col; g.fill();
   };
-  traza(sB, colB);   // el de delante primero, para que el de atrás
-  traza(sA, colA);   // quede por encima: es el que está atacando
+  traza(sB, colB, guiones);  // el de delante primero, para que el de
+  traza(sA, colA, false);    // atrás quede encima: es el que ataca
   // La escala, en pequeño. Sin ella dos líneas subiendo y bajando no
   // dicen si el margen son 5 km/h o 90.
-  g.fillStyle = '#8992A3'; g.font = '9px system-ui, sans-serif';
-  g.fillText(max + ' km/h', 3, 10);
+  g.fillStyle = '#8992A3'; g.font = '8px system-ui, sans-serif';
+  g.fillText(max + ' km/h', 3, 8);
   g.fillText(min + ' km/h', 3, h - 2);
   return c;
 }
@@ -3586,7 +3643,12 @@ function cartaPelea(p) {
   el.className = 'carta pelea';
   const pinta = (p) => {
     const A = p.detras || {}, B = p.delante || {};
-    const cA = '#' + (A.color || 'F5F7FA'), cB = '#' + (B.color || 'F5F7FA');
+    const cA = '#' + (A.color || 'F5F7FA');
+    let cB = '#' + (B.color || 'F5F7FA');
+    // Compañeros de equipo: mismo color. Se aclara al de delante para
+    // TODA la tarjeta —título, leyenda y traza— porque si solo se
+    // cambiara en el dibujo, la leyenda dejaría de decir cuál es cuál.
+    if (colorCerca(cA, cB)) cB = aclarar(cB, 0.55);
     const sec = s => (s.delta <= 0 ? '−' : '+') + Math.abs(s.delta).toFixed(2);
 
     // Las trazas, en ESCALA COMPARTIDA. Escalar cada una a su propio
