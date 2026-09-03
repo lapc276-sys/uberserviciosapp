@@ -103,6 +103,49 @@ def _fotograma(base, fondo, avance, zoom):
     return marco
 
 
+def desde_fotogramas(fotogramas, salida_mp4, fps=FPS, codec="libx264",
+                     ida_y_vuelta=False):
+    """Monta un MP4 a partir de PNG ya dibujados. Ruta o None.
+
+    Existe para los clips donde CADA fotograma es un cálculo distinto —
+    el ala barriendo su ángulo, la calle de vórtices desprendiéndose— y
+    no un barrido sobre una lámina fija. Ahí no hay una "spec" que
+    animar: hay una lista de imágenes que ya son la animación.
+
+    `ida_y_vuelta` repite la secuencia al revés para que el clip pueda
+    encadenarse sin dar un salto al volver al principio.
+    """
+    fotogramas = [f for f in (fotogramas or []) if f and os.path.exists(f)]
+    if len(fotogramas) < 2:
+        return None
+    if ida_y_vuelta:
+        fotogramas = fotogramas + fotogramas[-2:0:-1]
+    tmp = tempfile.mkdtemp(prefix="anim_")
+    try:
+        # Se numeran en una carpeta aparte: ffmpeg necesita una secuencia
+        # correlativa y los originales pueden venir de cualquier sitio.
+        for i, f in enumerate(fotogramas):
+            shutil.copy(f, os.path.join(tmp, f"f_{i:05d}.png"))
+        cmd = [_ffmpeg(), "-y", "-loglevel", "error",
+               "-framerate", str(fps),
+               "-i", os.path.join(tmp, "f_%05d.png"),
+               "-c:v", codec, "-pix_fmt", "yuv420p"]
+        if codec == "libx264":
+            cmd += ["-preset", "veryfast", "-crf", "20"]
+        cmd.append(salida_mp4)
+        r = subprocess.run(cmd, capture_output=True, text=True)
+        if r.returncode != 0:
+            log.info("No pude montar el clip (%s)",
+                     (r.stderr or "").strip()[:200])
+            return None
+        return salida_mp4
+    except Exception as e:
+        log.info("Clip desde fotogramas no salió (%s)", e)
+        return None
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def animar(spec, salida_mp4, segundos=SEGUNDOS, fps=FPS, tam=D.HORIZ,
            codec="libx264"):
     """Convierte una especificación de diagrama en un clip.

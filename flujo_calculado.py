@@ -337,11 +337,20 @@ def _marco(tam, titulo, etiqueta, pie):
 
 def dibujar(modelo, salida, titulo, caja=None, tam=(1280, 720),
             n_lineas=26, etiqueta="Computed", pie=None, notas=(),
-            marcar_estancamiento=False):
+            marcar_estancamiento=False, rellenar=False):
     """Dibuja el campo de un modelo. Devuelve la ruta o None.
 
     `notas` = [(x, y, "texto")] en coordenadas del MODELO, para señalar
     sitios concretos del flujo.
+
+    `rellenar` trata la caja como "esto tiene que verse" en vez de como
+    el encuadre exacto, y estira el eje que sobra hasta llenar el hueco.
+    Hace falta en vertical: un perfil mide cuatro de largo por tres de
+    alto, y en un lienzo 9:16 esa proporción deja el dibujo en una franja
+    con negro arriba y abajo. Estirando el eje Y el perfil NO se hace más
+    pequeño —la escala la fijaba el ancho— y el campo llega hasta los
+    bordes. Las líneas de fuera salen casi rectas, que es exactamente lo
+    que hace el aire lejos del ala.
     """
     from PIL import ImageDraw
     import diagramas as D
@@ -354,6 +363,15 @@ def dibujar(modelo, salida, titulo, caja=None, tam=(1280, 720),
     xmin, xmax, ymin, ymax = caja
     cw, ch = w - 2 * m, y1 - y0
     esc = min(cw / (xmax - xmin), ch / (ymax - ymin))
+    if rellenar and esc > 0:
+        # Se estira desde el centro, así lo que la caja pedía sigue
+        # centrado donde estaba; y se hace ANTES de sembrar las líneas,
+        # para que el sembrado cubra el encuadre nuevo y no queden dos
+        # bandas vacías donde antes estaba el borde.
+        cx, cy = (xmin + xmax) / 2, (ymin + ymax) / 2
+        xmin, xmax = cx - cw / esc / 2, cx + cw / esc / 2
+        ymin, ymax = cy - ch / esc / 2, cy + ch / esc / 2
+        caja = (xmin, xmax, ymin, ymax)
     ox = m + (cw - (xmax - xmin) * esc) / 2 - xmin * esc
     oy = y0 + (ch - (ymax - ymin) * esc) / 2 + ymax * esc
 
@@ -510,6 +528,73 @@ def gif(salida, cuadros, ms=90):
     except Exception as e:
         log.info("No pude escribir el GIF (%s)", e)
         return None
+
+
+def fotogramas_angulo(carpeta, desde=3.0, hasta=17.0, n=18, tam=(900, 506),
+                      titulo=None):
+    """Los PNG del barrido de ángulo, sin montar. Devuelve las rutas.
+
+    Separado del GIF a propósito: los mismos fotogramas sirven para el
+    GIF (que escribe Pillow, sin ffmpeg) y para un MP4 que el montador de
+    videos pueda intercalar como toma en movimiento.
+    """
+    with contextlib.suppress(Exception):
+        os.makedirs(carpeta, exist_ok=True)
+    try:
+        import ala_espacio as A
+    except Exception:
+        A = None
+    # El encuadre depende del formato. Un ala es ancha, así que en un
+    # lienzo vertical el mismo recuadro deja el dibujo pequeño en medio
+    # de una franja negra.
+    #
+    # La salida NO es recortar más: el perfil ocupa de x=-2 a x=+2, y
+    # recortar más cerca lo parte por el morro — un ala cortada se lee
+    # como un fallo, no como un primer plano (probado). Se pide `rellenar`
+    # y es el dibujante quien estira el eje que sobra hasta los bordes;
+    # el perfil queda del mismo tamaño y el negro desaparece.
+    vertical = tam[1] > tam[0]
+    caja = (-2.2, 2.6, -1.5, 1.5) if vertical else (-2.4, 3.2, -1.7, 1.7)
+    # Al estirar hay más alto que cubrir: con las mismas 28 líneas el
+    # campo se queda ralo justo donde se mira, pegado al perfil.
+    n_lineas = 40 if vertical else 28
+    fuera = []
+    for i in range(n):
+        a = desde + (hasta - desde) * i / max(1, n - 1)
+        cifras = ""
+        if A is not None:
+            with contextlib.suppress(Exception):
+                al = A.Ala(b=2.6, cuerda=A.cuerda_rectangular(0.45), alfa=a)
+                cifras = f"   ·   load {al.CL:.2f}   ·   drag {al.CDi:.3f}"
+        ruta = dibujar(
+            Perfil(alfa=a, invertido=True),
+            os.path.join(carpeta, f"a{i:02d}.png"),
+            titulo or "The same wing, asked for more and more",
+            caja=caja, tam=tam, n_lineas=n_lineas, rellenar=vertical,
+            etiqueta=f"{a:.0f}°{cifras}",
+            pie="Potential flow re-solved at every angle, computed by us. "
+                "Load and drag from lifting-line theory. Not a CFD "
+                "simulation.")
+        if ruta:
+            fuera.append(ruta)
+    return fuera
+
+
+def clip_angulo(salida_mp4, carpeta, fps=12, **kw):
+    """El barrido del ángulo como MP4, para intercalarlo en un video.
+
+    MP4 y no GIF porque el montador ya sabe tratar los .mp4 como tomas en
+    movimiento; un .gif no entra en su lista de extensiones de clip.
+    """
+    fot = fotogramas_angulo(carpeta, **kw)
+    if len(fot) < 2:
+        return None
+    try:
+        import animar
+    except Exception:
+        return None
+    return animar.desde_fotogramas(fot, salida_mp4, fps=fps,
+                                   ida_y_vuelta=True)
 
 
 def gif_angulo(salida, carpeta, desde=3.0, hasta=17.0, n=18,

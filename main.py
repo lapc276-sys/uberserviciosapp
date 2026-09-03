@@ -8770,6 +8770,70 @@ except Exception:                                  # pragma: no cover
     _MECANISMO_EXIGIDO = ""
 
 
+#: Cuándo un short se gana un clip calculado. Si el guion no habla de
+#: aire, un campo de flujo es decoración — y decoración que no viene a
+#: cuento es justo lo que hace que un canal técnico parezca genérico.
+_PALABRAS_FLUJO = ("wing", "downforce", "drag", "airflow", "aero",
+                   "air ", "flow", "wake", "dirty air", "slipstream",
+                   "tow ", "vortex", "diffuser", "floor", "stall",
+                   "angle of attack", "ground effect")
+
+#: Cuántos clips calculados se guardan antes de empezar a borrar los
+#: viejos. Cada uno pesa poco, pero el disco de Replit es finito.
+_CLIPS_MAX = 12
+
+
+def _clip_calculado(short):
+    """Un clip del flujo resuelto, si el short habla de aire. None si no.
+
+    Es la mitad en movimiento del híbrido: la lámina del diagrama se
+    queda para leerla, y esto le da al montador una toma donde el aire
+    se mueve de verdad — cada fotograma es el campo vuelto a resolver,
+    no una máscara pasando por encima de un dibujo quieto.
+    """
+    texto = " ".join(str(short.get(k, "")) for k in
+                     ("guion", "titulo")).lower()
+    if not any(p in texto for p in _PALABRAS_FLUJO):
+        return None
+    sid = short.get("id", "x")
+    salida = os.path.join("shorts", f"g_flujo_{sid}.mp4")
+    if os.path.exists(salida):
+        return salida
+    try:
+        import flujo_calculado as FC
+    except Exception:
+        return None
+    if not youtube_subir.ffmpeg_disponible():
+        return None
+    carpeta = os.path.join("shorts", f"_fl_{sid}")
+    try:
+        # Vertical, que es el formato del short, y pocos fotogramas: el
+        # clip dura un par de segundos en pantalla y cada uno cuesta
+        # resolver un campo entero.
+        ruta = FC.clip_angulo(salida, carpeta, desde=4.0, hasta=16.0, n=12,
+                              tam=(720, 1280), fps=10)
+    except Exception as e:
+        log.info("Clip calculado no salió (%s)", e)
+        ruta = None
+    finally:
+        shutil.rmtree(carpeta, ignore_errors=True)
+    if ruta:
+        log.info("🌀 Clip de flujo calculado añadido al short %s", sid)
+        _limpiar_clips_viejos()
+    return ruta
+
+
+def _limpiar_clips_viejos():
+    """Deja solo los últimos clips calculados: el disco de Replit no es
+    infinito y estos se regeneran solos cuando hacen falta."""
+    with contextlib.suppress(Exception):
+        viejos = sorted(glob.glob(os.path.join("shorts", "g_flujo_*.mp4")),
+                        key=os.path.getmtime, reverse=True)
+        for r in viejos[_CLIPS_MAX:]:
+            with contextlib.suppress(OSError):
+                os.remove(r)
+
+
 def _hechos_para(categoria):
     """Datos públicos y ciertos que el guion SÍ puede decir.
 
@@ -10450,6 +10514,15 @@ async def bucle_youtube():
                         log.info("📐 Diagrama '%s' añadido al short %s",
                                  short["diagrama"].get("plantilla"),
                                  short.get("id"))
+
+                # 2a-quater) Y si el short habla de aire, un CLIP calculado
+                # además de la lámina. Híbrido a propósito: la lámina se
+                # lee con calma y el clip se mira — un short entero de
+                # imágenes quietas se siente como un pase de diapositivas,
+                # y uno entero en movimiento no deja leer nada.
+                clip = _clip_calculado(short)
+                if clip:
+                    fotos.insert(min(2, len(fotos)), clip)
 
                 # 2b) Sin material visual no se publica. El armador tiene un
                 # respaldo de fondo liso para no reventar, pero un short casi
