@@ -512,6 +512,54 @@ def gif(salida, cuadros, ms=90):
         return None
 
 
+def gif_angulo(salida, carpeta, desde=3.0, hasta=17.0, n=18,
+               tam=(900, 506), ida_y_vuelta=True, titulo=None):
+    """El ala moviéndose de plana a cargada, resolviendo el flujo en cada
+    posición. Devuelve el GIF.
+
+    Esta es la diferencia entre animar y aparentar. `animar.py` hace un
+    barrido sobre una lámina ya dibujada: la imagen no cambia, solo se
+    va destapando. Aquí, en cada fotograma se VUELVE A RESOLVER el campo
+    con el ángulo nuevo — las líneas se mueven porque el aire hace otra
+    cosa, no porque una máscara avance por encima.
+
+    Y las cifras de abajo tampoco son un rótulo: la carga y el arrastre
+    salen de la línea sustentadora en ese mismo ángulo. Cuando el ala se
+    inclina, los números suben porque el ala está generando más.
+    """
+    with contextlib.suppress(Exception):
+        os.makedirs(carpeta, exist_ok=True)
+    try:
+        import ala_espacio as A
+    except Exception:
+        A = None
+    angulos = [desde + (hasta - desde) * i / (n - 1) for i in range(n)]
+    if ida_y_vuelta:
+        # Ida y vuelta para que el bucle no dé un salto al reiniciar: sin
+        # esto, el ala pasa de cargada a plana de golpe cada ciclo.
+        angulos = angulos + angulos[-2:0:-1]
+    cuadros = []
+    for i, a in enumerate(angulos):
+        cifras = ""
+        if A is not None:
+            with contextlib.suppress(Exception):
+                al = A.Ala(b=2.6, cuerda=A.cuerda_rectangular(0.45), alfa=a)
+                cifras = (f"   ·   load {al.CL:.2f}   ·   "
+                          f"drag {al.CDi:.3f}")
+        ruta = dibujar(
+            Perfil(alfa=a, invertido=True),
+            os.path.join(carpeta, f"a{i:02d}.png"),
+            titulo or "The same wing, asked for more and more",
+            caja=(-2.4, 3.2, -1.7, 1.7), tam=tam, n_lineas=28,
+            etiqueta=f"{a:.0f}°{cifras}",
+            pie="Potential flow re-solved at every angle, computed by us. "
+                "Load and drag from lifting-line theory. Not a CFD "
+                "simulation.")
+        if ruta:
+            cuadros.append(ruta)
+    return gif(salida, cuadros, ms=110)
+
+
 def gif_calle(salida, carpeta, n=16, tam=(900, 506), **kw):
     """La calle de von Kármán, desprendiéndose y viajando. Devuelve el GIF.
 
