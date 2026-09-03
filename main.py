@@ -2262,9 +2262,35 @@ async def visor():
 <style>
   :root {
     --bg: #0B0D12; --panel: #151922; --line: #232936;
-    --txt: #FFFFFF; --dim: #9AA3B2; --accent: #E10600;
+    /* --dim algo más claro que antes (#9AA3B2). El texto secundario en
+       gris apagado es lo primero que destruye la compresión de vídeo:
+       poco contraste y letra pequeña es justo la combinación que el
+       codec tira a la basura. */
+    --txt: #FFFFFF; --dim: #B3BCCB; --accent: #E10600;
     --up: #2ECC71; --down: #E10600; --amber: #FFB020;
   }
+  /* TIPOGRAFÍA DE EMISIÓN, no de escritorio.
+     ─────────────────────────────────────────
+     Esta página no se lee en un monitor a medio metro: se graba a
+     1920x1080, YouTube la comprime y se acaba viendo en un móvil o en
+     una tele desde el sofá. Medido sobre la página: la mayoría del texto
+     estaba entre 11 y 13 px, y unos cuantos a 9. A ese tamaño la
+     compresión de vídeo se come las letras y se ven emborronadas — no es
+     que la captura esté mal, es que el texto es demasiado pequeño para
+     sobrevivir al codec.
+
+     Los 117 tamaños de la hoja están en rem, así que subir la base los
+     escala todos a la vez. A 1920 de ancho sale 20px: los 11 px pasan a
+     14 y los 13 a 16.
+
+     Y va en vw, NO en px fijos. Con 20px clavados la página se rompía si
+     OBS capturaba a 1280x720 — nueve elementos fuera de pantalla,
+     comprobado. En vw el texto ocupa la misma FRACCIÓN de pantalla sea
+     cual sea la resolución de captura, que es justo lo que importa:
+     un 720p a tamaño completo se ve igual de grande que un 1080p. El
+     clamp evita que se quede diminuto en una ventana estrecha o
+     gigantesco en un monitor ancho. */
+  html { font-size: clamp(13px, 1.04vw, 22px); }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { background: var(--bg); color: var(--txt); min-height: 100vh;
          font-family: Inter, -apple-system, "SF Pro Display",
@@ -2657,12 +2683,16 @@ async def visor():
 
   /* Rótulo del duelo: ancho, sobre el ticker, como en una retransmisión.
      Va fijo para que no lo mueva el scroll de las columnas. */
+  /* Más estrecho y con menos aire que antes (760px / 15-22-17). Con la
+     tipografía de emisión todo creció un 25%, y la tarjeta de pelea
+     —que lleva gráfico— se hacía demasiado grande en pantalla. Estrechar
+     la caja encoge también el gráfico, porque mantiene su proporción. */
   #battlebar { position: fixed; left: 50%; bottom: 74px; z-index: 45;
-               width: min(760px, calc(100vw - 44px));
+               width: min(620px, calc(100vw - 44px));
                transform: translate(-50%, 14px);
                opacity: 0; pointer-events: none;
                transition: opacity .35s ease, transform .35s ease;
-               padding: 15px 22px 17px;
+               padding: 12px 18px 13px;
                background: rgba(11,13,18,.93);
                border: 1px solid var(--line);
                border-left: 3px solid var(--accent); border-radius: 12px;
@@ -2748,7 +2778,12 @@ async def visor():
   .carta.atasco .afila { display: flex; align-items: center; gap: 8px;
                          font-variant-numeric: tabular-nums; }
   .carta.atasco .afila .et { color: var(--dim); font-size: .58rem;
-                             letter-spacing: .16em; width: 86px; flex: none; }
+                             /* En rem, no en px: con la tipografía de
+                                emisión la etiqueta creció y "SPEED TRAP"
+                                se partía en dos líneas dentro de una
+                                columna que seguía midiendo 86 px. */
+                             letter-spacing: .16em; width: 6.2rem;
+                             flex: none; }
   .carta.atasco .afila b { font-size: 1rem; font-weight: 800; }
   .carta.atasco .afila u { text-decoration: none; color: var(--dim);
                            font-size: .6rem; }
@@ -2767,12 +2802,12 @@ async def visor():
   /* Pelea bajo un segundo: reutiliza las filas del atasco (misma
      retícula de etiqueta + cifras) y le añade arriba las dos trazas de
      velocidad, que es lo que no se podía enseñar hasta ahora. */
-  .carta.pelea .acab { display: flex; align-items: baseline; gap: 9px;
-                       margin-bottom: 9px; }
-  .carta.pelea .acab b { font-size: 1.45rem; font-weight: 800; }
+  .carta.pelea .acab { display: flex; align-items: baseline; gap: 8px;
+                       margin-bottom: 7px; }
+  .carta.pelea .acab b { font-size: 1.2rem; font-weight: 800; }
   .carta.pelea .acab span { color: var(--dim); font-size: .68rem;
                             letter-spacing: .12em; text-transform: uppercase; }
-  .carta.pelea .trazas { margin-bottom: 11px; }
+  .carta.pelea .trazas { margin-bottom: 8px; }
   .carta.pelea .trazas canvas { display: block; width: 100%;
                                 border-radius: 6px;
                                 background: rgba(255,255,255,.02); }
@@ -2795,11 +2830,12 @@ async def visor():
   .carta.pelea .win { margin-left: auto; font-size: .55rem;
                       letter-spacing: .12em; color: var(--dim);
                       text-transform: uppercase; }
-  .carta.pelea .agrid { display: flex; flex-direction: column; gap: 7px; }
+  .carta.pelea .agrid { display: flex; flex-direction: column; gap: 5px; }
   .carta.pelea .afila { display: flex; align-items: center; gap: 8px;
                         font-variant-numeric: tabular-nums; }
   .carta.pelea .afila .et { color: var(--dim); font-size: .58rem;
-                            letter-spacing: .16em; width: 86px; flex: none; }
+                            letter-spacing: .16em; width: 6.2rem;
+                            flex: none; }
   .carta.pelea .afila b { font-size: 1rem; font-weight: 800; }
   .carta.pelea .afila u { text-decoration: none; color: var(--dim);
                           font-size: .6rem; }
@@ -3090,14 +3126,21 @@ function neuChip(n) {
     (NEU_COLOR[c] || '#8992A3') + '">' + c[0] + '</span>';
 }
 // Un casco pequeño en su color de equipo, con el mismo dibujo del mapa.
+// El casco se pintaba en un lienzo de 34 px y el CSS lo estiraba a 52:
+// un 53% de aumento, o sea borroso, y hay cascos por todo el mapa y en
+// cada duelo. Ahora el búfer se calcula del tamaño REAL al que se
+// muestra. Y no se queda en el mínimo justo: se dibuja al doble, para
+// que siga nítido si mañana el CSS lo agranda o si OBS captura en 4K.
+const CASCO_CSS = 52;   // el mismo número que usa `.vs canvas.casco`
 function cascoMini(color) {
   const cv = document.createElement('canvas');
   cv.className = 'casco';
-  const dpr = Math.min(window.devicePixelRatio || 1, 3);
-  cv.width = 34 * dpr; cv.height = 34 * dpr;
+  const k = Math.min(window.devicePixelRatio || 1, 3) * 2;
+  cv.width = CASCO_CSS * k; cv.height = CASCO_CSS * k;
   const ctx = cv.getContext('2d');
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  dibujarCasco(ctx, 17, 17, 13, '#' + (color || '8992A3'));
+  ctx.setTransform(k, 0, 0, k, 0, 0);
+  const m = CASCO_CSS / 2;
+  dibujarCasco(ctx, m, m, m * 0.76, '#' + (color || '8992A3'));
   return cv;
 }
 function ladoHTML(p, der) {
@@ -3587,15 +3630,15 @@ function aclarar(hex, f) {
 
 function trazaDoble(sA, colA, sB, colB, min, max) {
   const c = document.createElement('canvas');
-  // Se dibuja en coordenadas fijas (320x46) sobre un búfer 4 veces
+  // Se dibuja en coordenadas fijas (320x40) sobre un búfer 4 veces
   // mayor, y el CSS lo estira manteniendo la proporción. Antes el búfer
   // medía 320 de ancho y se mostraba a 700: la línea salía borrosa y
   // aplastada. Así queda nítido a cualquier ancho y los grosores y
   // tipografías siguen expresados en unidades legibles.
-  // Proporción ancha (unos 7:1). Con 5:1 el gráfico se comía un tercio
+  // Proporción ancha (unos 8:1). Con 5:1 el gráfico se comía un tercio
   // de la pantalla en 1080p y la mayor parte era hueco: los dos coches
   // van a tope dos tercios de la ventana, así que la franja alta sobra.
-  const w = 320, h = 46, K = 4;
+  const w = 320, h = 40, K = 4;
   c.width = w * K; c.height = h * K;
   c.style.width = '100%'; c.style.height = 'auto';
   c.style.aspectRatio = w + ' / ' + h;
@@ -3610,7 +3653,7 @@ function trazaDoble(sA, colA, sB, colB, min, max) {
   // Franja de dibujo con hueco arriba y abajo para las cifras de escala.
   // Sin este margen la línea del más rápido pasa POR ENCIMA del "322
   // km/h" y se leían las dos cosas a la vez, ninguna bien.
-  const ARR = 11, ABJ = 9;
+  const ARR = 10, ABJ = 8;
   const py = v => h - ABJ - (v - min) / (max - min) * (h - ARR - ABJ);
   const traza = (s, col, raya) => {
     if (!s || s.length < 2) return;
