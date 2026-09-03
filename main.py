@@ -597,6 +597,7 @@ async def lifespan(app: FastAPI):
               asyncio.create_task(bucle_programas_video()),
               asyncio.create_task(bucle_temas()),
               asyncio.create_task(bucle_mapa()),
+              asyncio.create_task(bucle_duelo()),
               asyncio.create_task(bucle_comentarios()),
               asyncio.create_task(bucle_metricas()),
               asyncio.create_task(bucle_microshorts()),
@@ -703,6 +704,12 @@ class Estado:
         # siluetas cuestan lo mismo aunque no haya llegado ni una vuelta.
         self.velocidades: list = []
         self.velocidades_ts: float = 0.0
+        # El duelo de ahora mismo por debajo de un segundo, con las
+        # trazas de velocidad de los dos coches. Se refresca en su propio
+        # bucle porque /car_data no viene en el stream: hay que pedirlo, y
+        # solo se pide para ESTE par.
+        self.duelo: dict | None = None
+        self.duelo_ts: float = 0.0
         # El último adelantamiento con su dibujo listo para pantalla.
         self.pase_destacado: dict | None = None
         self.pases_total: int = 0        # incluidos los que no caen en curva
@@ -1911,6 +1918,12 @@ async def apex():
         # los huecos que quedan son la clasificación final.
         "atascos": (t.atascos()[:3]
                     if t and time.time() - estado.mapa_ts < 30 else []),
+        # El duelo bajo un segundo con las trazas de velocidad de ambos.
+        # Caduca solo: si el bucle deja de refrescarlo es que ya no hay
+        # pelea, y una tarjeta de duelo congelada es peor que ninguna.
+        "duelo": (estado.duelo
+                  if estado.duelo and time.time() - estado.duelo_ts < 15
+                  else None),
         "pit": t.perdida_pit() if t else None,
         "degradacion": _degradacion_pista(t),
         "alertas": t.alertas() if t else [],
@@ -2744,6 +2757,54 @@ async def visor():
      control, no de la emisión. */
   .carta.atasco .bien { color: var(--up); }
   .carta.atasco .mal { color: var(--down); }
+  /* Pelea bajo un segundo: reutiliza las filas del atasco (misma
+     retícula de etiqueta + cifras) y le añade arriba las dos trazas de
+     velocidad, que es lo que no se podía enseñar hasta ahora. */
+  .carta.pelea .acab { display: flex; align-items: baseline; gap: 9px;
+                       margin-bottom: 9px; }
+  .carta.pelea .acab b { font-size: 1.45rem; font-weight: 800; }
+  .carta.pelea .acab span { color: var(--dim); font-size: .68rem;
+                            letter-spacing: .12em; text-transform: uppercase; }
+  .carta.pelea .trazas { margin-bottom: 11px; }
+  .carta.pelea .trazas canvas { display: block; width: 100%;
+                                border-radius: 6px;
+                                background: rgba(255,255,255,.02); }
+  /* Se envuelve: la tarjeta cambia de ancho entre el panel y la emisión,
+     y sin esto la ventana ("last 12s") se salía por el borde derecho. */
+  .carta.pelea .pies { display: flex; align-items: baseline; gap: 6px 14px;
+                       flex-wrap: wrap; margin-top: 6px;
+                       font-variant-numeric: tabular-nums; }
+  .carta.pelea .pt { display: inline-flex; align-items: baseline; gap: 5px; }
+  .carta.pelea .pt b { font-size: .74rem; font-weight: 800; }
+  /* Ancho fijo en las cifras: sin esto el número salta de sitio en cada
+     refresco y la tarjeta parece que vibra. */
+  .carta.pelea .pt .kmh { font-size: 1.02rem; font-weight: 800;
+                          min-width: 52px; text-align: right; }
+  .carta.pelea .pt .kmh i, .carta.pelea .pt .dv i {
+      font-style: normal; font-size: .55rem; color: var(--dim);
+      margin-left: 2px; letter-spacing: .04em; }
+  .carta.pelea .pt .dv { font-size: .7rem; font-weight: 700;
+                         color: var(--dim); white-space: nowrap; }
+  .carta.pelea .win { margin-left: auto; font-size: .55rem;
+                      letter-spacing: .12em; color: var(--dim);
+                      text-transform: uppercase; }
+  .carta.pelea .agrid { display: flex; flex-direction: column; gap: 7px; }
+  .carta.pelea .afila { display: flex; align-items: center; gap: 8px;
+                        font-variant-numeric: tabular-nums; }
+  .carta.pelea .afila .et { color: var(--dim); font-size: .58rem;
+                            letter-spacing: .16em; width: 86px; flex: none; }
+  .carta.pelea .afila b { font-size: 1rem; font-weight: 800; }
+  .carta.pelea .afila u { text-decoration: none; color: var(--dim);
+                          font-size: .6rem; }
+  .carta.pelea .afila em { font-style: normal; color: var(--dim);
+                           font-size: .6rem; letter-spacing: .08em; }
+  .carta.pelea .sx { font-size: .84rem; font-weight: 800;
+                     padding: 1px 7px; border-radius: 5px;
+                     background: rgba(255,255,255,.05); }
+  .carta.pelea .dl { font-size: .8rem; font-weight: 800; margin-left: 2px; }
+  .carta.pelea .ed { color: var(--dim); font-size: .68rem; }
+  .carta.pelea .bien { color: var(--up); }
+  .carta.pelea .mal { color: var(--down); }
   /* Tarjeta del adelantamiento: el dibujo manda, el texto acompaña */
   .carta.pase .cab { display: flex; align-items: center; gap: 9px;
                      margin-bottom: 9px; }
@@ -3005,8 +3066,15 @@ function _chapa(ctx, x, y, w, h, r) {
 // de imagen detrás, y el canal no se juega eso.
 // ── Duelo cara a cara ──────────────────────────────────────────────────
 // Colores de los compuestos, como los pinta la propia F1 en pantalla.
+// Con la inicial ADEMÁS del nombre entero. La telemetría guarda el
+// compuesto como `compound[:1]`, o sea "S"/"M"/"H", así que buscar por
+// SOFT/MEDIUM/HARD no encontraba nunca nada y TODOS los chips salían en
+// el gris de respaldo — el blando y el duro, del mismo color, en una
+// tarjeta cuyo tema es precisamente quién lleva mejor goma.
 const NEU_COLOR = { SOFT: '#EF3B2D', MEDIUM: '#F2C94C', HARD: '#EDEDED',
-                    INTERMEDIATE: '#43B02A', WET: '#0067AD' };
+                    INTERMEDIATE: '#43B02A', WET: '#0067AD',
+                    S: '#EF3B2D', M: '#F2C94C', H: '#EDEDED',
+                    I: '#43B02A', W: '#0067AD' };
 function neuChip(n) {
   const c = (n || '').toUpperCase();
   if (!c) return '';
@@ -3060,6 +3128,14 @@ function pintarRotulo(d) {
   // leaderboard (pintarPase). Antes se colaba el primero en esta
   // rotación y echaba al duelo que estuviera puesto; ahora los dos caben
   // en pantalla a la vez, cada uno en su columna.
+  // La pelea bajo un segundo va PRIMERA: es la única tarjeta que enseña
+  // la velocidad de los dos coches en este instante, y mientras dos van
+  // pegados no hay nada en pantalla que valga más que eso.
+  const pel = d.duelo;
+  if (pel && pel.detras && pel.delante) {
+    cartas.push(['pelea:' + pel.detras.acr + pel.delante.acr,
+                 () => cartaPelea(pel)]);
+  }
   for (const dl of duelos) {
     if (dl && dl.score >= 55)
       cartas.push(['duelo:' + dl.entre, () => cartaDuelo(dl)]);
@@ -3450,6 +3526,145 @@ function cartaAtasco(a, pases) {
     const nuevo = (d.atascos || []).find(
       x => x.detras.acr === a.detras.acr && x.delante.acr === a.delante.acr);
     if (nuevo) pinta(nuevo, d.pases);
+  };
+  return el;
+}
+
+// ── Tarjeta: la pelea de ahora mismo, con telemetría de los dos ───────
+//
+// Es la que faltaba. El duelo dice a cuánto están; el atasco dice por qué
+// no pasa, pero solo después de tres vueltas pegado. Esta sale en cuanto
+// bajan de un segundo y enseña las dos cosas a la vez: la velocidad de
+// cada coche AHORA (traza de los últimos doce segundos) y dónde es
+// fuerte cada uno (medianas de sus últimas vueltas limpias).
+// Las dos trazas SUPERPUESTAS en un solo lienzo, no una debajo de otra.
+//
+// Primero salieron en cajas separadas, cada una con su recuadro. Aunque
+// compartían la escala numérica, el ojo no compara dos dibujos que están
+// en sitios distintos: las dos líneas parecían iguales. Encimadas, la
+// separación entre ellas ES la diferencia de velocidad, que es justo lo
+// que hay que leer — quién frena antes y quién sale mejor.
+function trazaDoble(sA, colA, sB, colB, min, max) {
+  const c = document.createElement('canvas');
+  const w = 320, h = 62, r = window.devicePixelRatio || 1;
+  c.width = w * r; c.height = h * r;
+  c.style.width = '100%'; c.style.height = h + 'px';
+  const g = c.getContext('2d');
+  g.scale(r, r);
+  if (max <= min) return c;
+  // Franja de dibujo con hueco arriba y abajo para las cifras de escala.
+  // Sin este margen la línea del más rápido pasa POR ENCIMA del "322
+  // km/h" y se leían las dos cosas a la vez, ninguna bien.
+  const ARR = 13, ABJ = 11;
+  const py = v => h - ABJ - (v - min) / (max - min) * (h - ARR - ABJ);
+  const traza = (s, col) => {
+    if (!s || s.length < 2) return;
+    const px = i => i * (w - 2) / (s.length - 1) + 1;
+    g.beginPath(); g.moveTo(px(0), h);
+    s.forEach((v, i) => g.lineTo(px(i), py(v)));
+    g.lineTo(px(s.length - 1), h); g.closePath();
+    g.fillStyle = col + '1E'; g.fill();
+    g.beginPath();
+    s.forEach((v, i) => i ? g.lineTo(px(i), py(v)) : g.moveTo(px(i), py(v)));
+    g.strokeStyle = col; g.lineWidth = 2; g.lineJoin = 'round'; g.stroke();
+    // El punto de "ahora": por dónde va la lectura de la derecha.
+    g.beginPath(); g.arc(px(s.length - 1), py(s[s.length - 1]), 2.8, 0, 7);
+    g.fillStyle = col; g.fill();
+  };
+  traza(sB, colB);   // el de delante primero, para que el de atrás
+  traza(sA, colA);   // quede por encima: es el que está atacando
+  // La escala, en pequeño. Sin ella dos líneas subiendo y bajando no
+  // dicen si el margen son 5 km/h o 90.
+  g.fillStyle = '#8992A3'; g.font = '9px system-ui, sans-serif';
+  g.fillText(max + ' km/h', 3, 10);
+  g.fillText(min + ' km/h', 3, h - 2);
+  return c;
+}
+
+function cartaPelea(p) {
+  const el = document.createElement('div');
+  el.className = 'carta pelea';
+  const pinta = (p) => {
+    const A = p.detras || {}, B = p.delante || {};
+    const cA = '#' + (A.color || 'F5F7FA'), cB = '#' + (B.color || 'F5F7FA');
+    const sec = s => (s.delta <= 0 ? '−' : '+') + Math.abs(s.delta).toFixed(2);
+
+    // Las trazas, en ESCALA COMPARTIDA. Escalar cada una a su propio
+    // mínimo y máximo las haría parecer iguales aunque uno fuera 40 km/h
+    // más lento: sería un gráfico que miente, que es justo lo que este
+    // canal no hace.
+    let trazas = '';
+    const tz = p.trazas;
+    if (tz) {
+      // La flecha en vez de un signo con color: frenar NO es malo, y el
+      // rojo de esta pantalla significa perder tiempo. Pintar de rojo a
+      // los dos coches por llegar a una curva era decir otra cosa.
+      const pie = (r, acr, col) => {
+        const ch = Math.round(r.cambio);
+        const fl = ch > 3 ? '▲' : ch < -3 ? '▼' : '■';
+        return '<span class="pt"><b style="color:' + col + '">' + esc(acr)
+          + '</b><span class="kmh">' + r.v + '<i>km/h</i></span>'
+          + '<span class="dv">' + fl + ' ' + Math.abs(ch)
+          + '<i>km/h/s</i></span></span>';
+      };
+      trazas = '<div class="trazas"><span class="sp"></span>'
+        + '<div class="pies">' + pie(tz.delante, B.acr || '', cB)
+        + pie(tz.detras, A.acr || '', cA)
+        + '<span class="win">last ' + Math.round(tz.segundos || 12)
+        + 's</span></div></div>';
+    }
+
+    let filas = '';
+    if (p.trampa) {
+      const d = p.trampa.delta;
+      filas += '<div class="afila"><span class="et">SPEED TRAP</span>'
+        + '<b style="color:' + cA + '">' + p.trampa.detras + '</b>'
+        + '<u>vs</u><b style="color:' + cB + '">' + p.trampa.delante + '</b>'
+        + '<em>km/h</em>'
+        + '<span class="dl ' + (d >= 0 ? 'bien' : 'mal') + '">'
+        + (d >= 0 ? '+' : '') + d + '</span></div>';
+    }
+    if (p.gana && p.pierde && p.gana.n !== p.pierde.n) {
+      filas += '<div class="afila"><span class="et">SECTORS</span>'
+        + '<span class="sx bien">S' + p.gana.n + ' ' + sec(p.gana) + '</span>'
+        + '<span class="sx mal">S' + p.pierde.n + ' ' + sec(p.pierde)
+        + '</span><em>s per lap</em></div>';
+    }
+    const na = (p.neumaticos || {}).detras, nb = (p.neumaticos || {}).delante;
+    if (na && nb && (na.c || nb.c)) {
+      filas += '<div class="afila"><span class="et">TYRES</span>'
+        + neuChip(na.c) + '<span class="ed">' + na.v + 'L</span>'
+        + '<u>vs</u>' + neuChip(nb.c) + '<span class="ed">' + nb.v + 'L</span>'
+        + '</div>';
+    }
+    const pegado = p.vueltas >= 2 ? ' · ' + p.vueltas + ' LAPS' : '';
+    el.innerHTML = '<div class="cab"><span class="et">FIGHT</span>'
+      + '<span class="pn">' + (p.gap || 0).toFixed(2) + 's'
+      + pegado + '</span></div>'
+      + '<div class="acab"><b style="color:' + cA + '">' + esc(A.acr || '')
+      + '</b><span>vs</span><b style="color:' + cB + '">'
+      + esc(B.acr || '') + '</b></div>'
+      + trazas
+      + '<div class="agrid">' + filas + '</div>'
+      + '<div class="razon">' + esc(p.lectura || '') + '</div>';
+
+    // El canvas va después del innerHTML, como los cascos del duelo.
+    if (tz) {
+      const hueco = el.querySelector('.trazas > .sp');
+      const lo = Math.min(tz.detras.vmin, tz.delante.vmin);
+      const hi = Math.max(tz.detras.vmax, tz.delante.vmax);
+      if (hueco) hueco.replaceWith(trazaDoble(tz.detras.serie, cA,
+                                              tz.delante.serie, cB, lo, hi));
+    }
+  };
+  pinta(p);
+  el._actualizar = (d) => {
+    const n = d.duelo;
+    // Solo si sigue siendo LA MISMA pelea. Si cambió la pareja, la
+    // rotación monta una tarjeta nueva; repintar esta con otros dos
+    // pilotos dejaría los acrónimos viejos medio segundo en pantalla.
+    if (n && n.detras && n.detras.acr === (p.detras || {}).acr
+        && n.delante && n.delante.acr === (p.delante || {}).acr) pinta(n);
   };
   return el;
 }
@@ -5297,6 +5512,36 @@ async def narrar_datos(client: anthropic.AsyncAnthropic, eventos):
         if estrategia:
             contexto += (f"\nMEASURED STRATEGY DATA (real, quotable): "
                          f"{estrategia}")
+        # La pelea que está EN PANTALLA ahora mismo, con sus cifras. El
+        # narrador tiene que poder decir lo mismo que el espectador está
+        # viendo: si la tarjeta dice que uno va 8 km/h más rápido en la
+        # recta y lo devuelve en el sector 2, comentar "están muy
+        # igualados" es contradecir al gráfico que hay al lado.
+        pel = estado.duelo if (estado.duelo
+                               and time.time() - estado.duelo_ts < 15) else None
+        if pel:
+            A = (pel.get("detras") or {}).get("acr", "?")
+            B = (pel.get("delante") or {}).get("acr", "?")
+            trozos = [f"{A} is {pel['gap']:.2f}s behind {B}"]
+            if pel.get("vueltas", 0) >= 2:
+                trozos.append(f"for {pel['vueltas']} laps now")
+            tz = pel.get("trazas")
+            if tz:
+                trozos.append(f"right now {A} {tz['detras']['v']} km/h vs "
+                              f"{B} {tz['delante']['v']} km/h")
+            if pel.get("trampa"):
+                trozos.append(f"speed trap {pel['trampa']['detras']} vs "
+                              f"{pel['trampa']['delante']} km/h")
+            if pel.get("gana") and pel.get("pierde"):
+                trozos.append(
+                    f"{A} gains {abs(pel['gana']['delta']):.2f}s in sector "
+                    f"{pel['gana']['n']} and loses "
+                    f"{pel['pierde']['delta']:.2f}s in sector "
+                    f"{pel['pierde']['n']}")
+            contexto += (
+                "\nTHE FIGHT ON SCREEN RIGHT NOW (measured, quotable — the "
+                "viewer is looking at these exact numbers, so do not "
+                "contradict them): " + ", ".join(trozos) + ".")
         # DÓNDE se ha adelantado en los últimos minutos. La curva sale de
         # cruzar el GPS del pase con la geometría del circuito, así que es
         # un hecho medido y se puede decir al aire. Sin esto lo único que
@@ -11422,6 +11667,101 @@ async def bucle_telegram():
                 with contextlib.suppress(Exception):
                     await telegram_bot.enviar(m["chat_id"],
                                               f"Se me atragantó: {e}")
+
+
+#: Cada cuánto se refresca el duelo en vivo. Cuatro segundos: la ventana
+#: que se pide son doce, así que cada refresco solapa con el anterior y
+#: la traza no da saltos; y son 2 consultas cada 4 s, muy por debajo de
+#: lo que ya gasta el mapa.
+DUELO_CADA = 4.0
+#: Ventana de telemetría que se pide, en segundos. Doce entran una recta
+#: y su frenada, que es donde se decide si pasa o no.
+DUELO_VENTANA = 12.0
+#: Por debajo de este hueco hay pelea. Un segundo es también donde se
+#: abre el DRS, así que es el número que el espectador ya conoce.
+DUELO_UMBRAL = 1.0
+
+
+async def bucle_duelo():
+    """El duelo de ahora mismo, con la telemetría de LOS DOS coches.
+
+    Lo que ya había se quedaba corto por los dos lados. `battle_scores`
+    dice quién pelea con quién y a cuánto, pero nada de por qué. Y
+    `atascos` sí mide el por qué —sectores, trampa, neumáticos— solo que
+    exige llevar tres vueltas pegado, así que la mitad de las peleas se
+    resuelven antes de que aparezca.
+
+    Esto llena el hueco: en cuanto dos están a menos de un segundo, se
+    junta la comparación medida (dónde es fuerte cada uno) con las
+    trazas de velocidad de los últimos doce segundos (qué está haciendo
+    cada uno AHORA). Las trazas hay que pedirlas —/car_data no viene en
+    el stream— y por eso se piden solo para este par.
+
+    DUELO_VIVO=off lo apaga si algún día pesa.
+    """
+    if os.environ.get("DUELO_VIVO", "on").lower() in ("off", "0", ""):
+        return
+    while True:
+        await asyncio.sleep(DUELO_CADA)
+        t = estado.tele
+        # Misma caducidad que los duelos del panel: sin posiciones nuevas
+        # en 30 s la sesión no está rodando y lo que queda son los huecos
+        # de la clasificación final, que no son una pelea.
+        if t is None or time.time() - estado.mapa_ts > 30:
+            if estado.duelo:
+                estado.duelo = None
+            continue
+        try:
+            d = t.duelo_cercano(DUELO_UMBRAL)
+        except Exception as e:
+            log.info("Duelo no se pudo elegir (%s)", e)
+            continue
+        if not d:
+            estado.duelo = None
+            continue
+        try:
+            trazas = await t.trazas_par(d["n_detras"], d["n_delante"],
+                                        DUELO_VENTANA)
+        except Exception as e:
+            log.info("Trazas del duelo sin datos (%s)", e)
+            trazas = None
+        # Sin trazas la tarjeta SIGUE saliendo: la comparación por
+        # sectores ya vale por sí sola, y en las sesiones donde
+        # /car_data no responde es lo único que habrá. Lo que no se
+        # hace nunca es rellenar la velocidad con una estimación.
+        d["trazas"] = trazas
+        d["lectura"] = _lectura_duelo(d)
+        estado.duelo = d
+        estado.duelo_ts = time.time()
+
+
+def _lectura_duelo(d):
+    """La frase del duelo, armada SOLO con los números que la acompañan.
+
+    Se redacta aquí y no en el navegador para que el narrador pueda
+    decir exactamente lo mismo que se está viendo en pantalla. Cada rama
+    se apoya en una cifra que está en la tarjeta: si el dato no está, esa
+    frase no se dice.
+    """
+    tr = d.get("trampa") or {}
+    dt_ = tr.get("delta")
+    pierde, gana = d.get("pierde"), d.get("gana")
+    a = (d.get("detras") or {}).get("acr", "")
+    b = (d.get("delante") or {}).get("acr", "")
+    if dt_ is not None and dt_ >= 2 and pierde and pierde["delta"] > 0.05:
+        return (f"{a} is quicker down the straight but hands it back in "
+                f"sector {pierde['n']}. The pass has to be set up in the "
+                f"corners, not on the straight.")
+    if dt_ is not None and dt_ <= -2:
+        return (f"{a} is {abs(dt_)} km/h down at the trap. The straight "
+                f"alone will not do it.")
+    if gana and pierde and gana["n"] != pierde["n"]:
+        return (f"{a} gains {abs(gana['delta']):.2f}s in sector "
+                f"{gana['n']} and loses {pierde['delta']:.2f}s in sector "
+                f"{pierde['n']}. That is the whole fight.")
+    if d.get("sentido") == "closing":
+        return f"{a} is reeling {b} in."
+    return ""
 
 
 async def bucle_mapa():

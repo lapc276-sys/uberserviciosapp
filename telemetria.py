@@ -78,6 +78,47 @@ def _seg(valor):
     return f"{s:.1f} seconds"
 
 
+#: Sobre cuántos segundos del final se mide el CAMBIO de velocidad. Con
+#: dos muestras sueltas el número baila (el coche manda a 3,7 Hz y hay
+#: ruido); con toda la ventana se promedia una recta con una frenada y
+#: sale casi cero. Segundo y medio es una frenada o una salida de curva
+#: entera, que es justo lo que se quiere leer.
+VENTANA_CAMBIO = 1.5
+
+
+def _resumen_traza(muestras, puntos=40):
+    """Qué está haciendo un coche, a partir de sus muestras de /car_data.
+
+    Devuelve la velocidad de ahora, el máximo y el mínimo de la ventana,
+    a cuántos km/h por segundo está cambiando, y cuánto de la ventana
+    lleva a fondo o frenando. La serie sale submuestreada porque el
+    dibujo tiene ciento y pico píxeles de ancho y no le caben trescientas
+    muestras.
+    """
+    if len(muestras) < 4:
+        return None
+    t0 = muestras[0]["t"]
+    seg = [( (m["t"] - t0).total_seconds(), m) for m in muestras]
+    fin = seg[-1][0]
+    # El cambio, solo con la cola: ver más arriba por qué segundo y medio.
+    cola = [(s, m["v"]) for s, m in seg if s >= fin - VENTANA_CAMBIO]
+    cambio = _pendiente(cola) if len(cola) >= 3 else 0.0
+    vs = [m["v"] for m in muestras]
+    n = len(vs)
+    paso = max(1, n // puntos)
+    return {
+        "v": round(vs[-1]),
+        "vmax": round(max(vs)),
+        "vmin": round(min(vs)),
+        # km/h por segundo. Positivo = acelerando.
+        "cambio": round(cambio, 1),
+        "gas": round(100 * sum(1 for m in muestras if m["gas"] >= 90) / n),
+        "freno": round(100 * sum(1 for m in muestras if m["freno"]) / n),
+        "serie": [round(v) for v in vs[::paso]][:puntos],
+        "muestras": n,
+    }
+
+
 def _pendiente(puntos):
     """Pendiente por mínimos cuadrados de [(x, y)] — s por vuelta."""
     n = len(puntos)
@@ -960,6 +1001,115 @@ class Telemetria:
             v -= 1
         return n
 
+    def comparar(self, detras, delante, cuantas=5):
+        """Lo MEDIBLE entre dos coches: dónde gana cada uno y por cuánto.
+
+        Estaba metido dentro de `atascos`, que solo mira a quien lleva
+        tres vueltas pegado. Pero la comparación no depende de eso: en
+        cuanto dos están a menos de un segundo ya hay algo que enseñar, y
+        el espectador quiere verlo en la primera vuelta que se juntan, no
+        a la cuarta. Sacarlo aquí permite usarlo en los dos sitios sin
+        tener dos implementaciones que se van separando con el tiempo.
+
+        Todo son medianas de las últimas vueltas limpias de cada uno.
+        Nada es una opinión y nada se rellena: si a un dato le faltan
+        vueltas, ese dato sale vacío.
+
+        El signo, siempre igual para no equivocarse al leerlo: NEGATIVO
+        es que el de ATRÁS va mejor.
+        """
+        va = self._ultimas_limpias(detras, cuantas)
+        vb = self._ultimas_limpias(delante, cuantas)
+        sectores = []
+        if len(va) >= 3 and len(vb) >= 3:
+            for k in range(3):
+                ma = self._mediana([v.get("s") and v["s"][k] for v in va])
+                mb = self._mediana([v.get("s") and v["s"][k] for v in vb])
+                if ma is not None and mb is not None:
+                    sectores.append({"n": k + 1, "delta": round(ma - mb, 3)})
+
+        trampa = None
+        ta = self._mediana((self.velocidades.get(detras) or [])[-5:])
+        tb = self._mediana((self.velocidades.get(delante) or [])[-5:])
+        if ta is not None and tb is not None:
+            trampa = {"detras": round(ta), "delante": round(tb),
+                      "delta": round(ta - tb)}
+
+        neu_a = self.neumaticos.get(detras) or {}
+        neu_b = self.neumaticos.get(delante) or {}
+        return {
+            "sectores": sectores,
+            # El sector donde más gana y donde más pierde, ya elegidos
+            # aquí: la pantalla no tiene por qué saber de medianas.
+            "gana": min(sectores, key=lambda s: s["delta"], default=None),
+            "pierde": max(sectores, key=lambda s: s["delta"], default=None),
+            "trampa": trampa,
+            "neumaticos": {
+                "detras": {"c": neu_a.get("compuesto", ""),
+                           "v": neu_a.get("vueltas", 0)},
+                "delante": {"c": neu_b.get("compuesto", ""),
+                            "v": neu_b.get("vueltas", 0)},
+            },
+        }
+
+    def duelo_cercano(self, umbral=1.0):
+        """El duelo más caliente por debajo de `umbral`, ya comparado.
+
+        A diferencia de `atascos`, aquí NO se exige llevar vueltas
+        pegado. Un segundo es la distancia a la que la pelea empieza a
+        existir —es también donde se abre el DRS— y esperar tres vueltas
+        para enseñar algo es llegar tarde a la mitad de las peleas, que
+        se resuelven antes.
+
+        Devuelve None si no hay ninguno: la pantalla no dibuja la tarjeta
+        y no pasa nada. Un duelo inventado es peor que ningún duelo.
+        """
+        nums = {p: n for n, p in self.posiciones.items()}
+        for r in self.battle_scores():
+            if r["gap"] > umbral:
+                continue
+            a = nums.get(r["pos_detras"])
+            b = nums.get(r["pos_delante"])
+            if not (a and b):
+                continue
+            return {"detras": r["detras"], "delante": r["delante"],
+                    "n_detras": a, "n_delante": b,
+                    "gap": r["gap"], "sentido": r["sentido"],
+                    "delta_gap": r["delta"],
+                    # Vueltas pegado: si son varias la historia cambia de
+                    # "se acaba de poner ahí" a "no consigue pasar".
+                    "vueltas": self.vueltas_pegado(a, umbral),
+                    **self.comparar(a, b)}
+        return None
+
+    async def trazas_par(self, detras, delante, segundos=12.0):
+        """Qué está haciendo AHORA MISMO cada uno de los dos coches.
+
+        Es la mitad que faltaba. `comparar` dice quién es mejor dónde,
+        pero con medianas de vueltas enteras: es el resumen del duelo, no
+        el duelo. Esto trae las muestras del coche de los últimos segundos
+        y con eso se ve la velocidad de cada uno y hacia dónde va —
+        quién está acelerando y quién frenando en este instante.
+
+        Se pide solo para UN par y una ventana corta. /car_data manda
+        3,7 muestras por segundo y por coche: doce segundos de dos coches
+        son unas noventa filas. Traerlo para toda la parrilla en cada
+        refresco sí sería un abuso, y por eso el bucle que llama aquí lo
+        hace únicamente con el duelo más caliente.
+        """
+        fin = self.reloj() or self.fecha_actual
+        if not fin:
+            return None
+        ini = fin - dt.timedelta(seconds=segundos)
+        ta = await self.datos_coche(detras, ini, fin)
+        tb = await self.datos_coche(delante, ini, fin)
+        ra, rb = _resumen_traza(ta), _resumen_traza(tb)
+        if not (ra and rb):
+            return None
+        return {"detras": ra, "delante": rb,
+                "delta": round(ra["v"] - rb["v"]),
+                "segundos": segundos}
+
     def atascos(self, minimo=3, umbral=1.2):
         """Coches que llevan varias vueltas pegados y no consiguen pasar,
         con lo que se puede MEDIR de por qué.
@@ -987,41 +1137,10 @@ class Telemetria:
             if vueltas < minimo:
                 continue
 
-            va = self._ultimas_limpias(detras)
-            vb = self._ultimas_limpias(delante)
-            sectores = []
-            if len(va) >= 3 and len(vb) >= 3:
-                for k in range(3):
-                    ma = self._mediana([v.get("s") and v["s"][k] for v in va])
-                    mb = self._mediana([v.get("s") and v["s"][k] for v in vb])
-                    if ma is not None and mb is not None:
-                        # Negativo = el de ATRÁS es más rápido en ese sector
-                        sectores.append({"n": k + 1, "delta": round(ma - mb, 3)})
-
-            trampa = None
-            ta = self._mediana((self.velocidades.get(detras) or [])[-5:])
-            tb = self._mediana((self.velocidades.get(delante) or [])[-5:])
-            if ta is not None and tb is not None:
-                trampa = {"detras": round(ta), "delante": round(tb),
-                          "delta": round(ta - tb)}
-
-            neu_a = self.neumaticos.get(detras) or {}
-            neu_b = self.neumaticos.get(delante) or {}
             fuera.append({
                 "delante": delante_f, "detras": detras_f,
                 "vueltas": vueltas, "gap": round(gap, 3),
-                "sectores": sectores,
-                # El sector donde más gana y donde más pierde, ya elegidos
-                # aquí: la pantalla no tiene por qué saber de medianas.
-                "gana": min(sectores, key=lambda s: s["delta"], default=None),
-                "pierde": max(sectores, key=lambda s: s["delta"], default=None),
-                "trampa": trampa,
-                "neumaticos": {
-                    "detras": {"c": neu_a.get("compuesto", ""),
-                               "v": neu_a.get("vueltas", 0)},
-                    "delante": {"c": neu_b.get("compuesto", ""),
-                                "v": neu_b.get("vueltas", 0)},
-                },
+                **self.comparar(detras, delante),
             })
         fuera.sort(key=lambda a: -a["vueltas"])
         return fuera
