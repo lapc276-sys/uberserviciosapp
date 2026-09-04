@@ -1205,7 +1205,7 @@ async def control_velocidades(year: int = 0, gp: str = "", tipo: str = "Race",
 
 
 @app.get("/control/retencion")
-async def control_retencion(dias: int = 28, clave: str = ""):
+async def control_retencion(request: Request, dias: int = 28, clave: str = ""):
     """Retención de los videos del canal y qué separa a los que despegaron.
 
     Necesita el permiso yt-analytics.readonly: si no lo tienes, vuelve a
@@ -1216,10 +1216,19 @@ async def control_retencion(dias: int = 28, clave: str = ""):
     candado general solo cubre los POST (los GET los usa la propia
     pantalla sin clave), de ahí que este se lo ponga él mismo.
     """
-    if PANEL_CLAVE and not pysecrets.compare_digest(clave, PANEL_CLAVE):
-        return JSONResponse(
-            {"ok": False, "error": "Añade ?clave=<PANEL_CLAVE> a la URL"},
-            status_code=401)
+    # La clave vale por la URL o por la cabecera X-Clave. La cabecera es
+    # la que usa el panel, que ya la tiene guardada: así el botón funciona
+    # sin que nadie escriba una clave dentro de una URL —donde se queda en
+    # el historial del navegador y en los registros del servidor.
+    if PANEL_CLAVE:
+        dada = clave or request.headers.get("X-Clave", "")
+        if not pysecrets.compare_digest(dada, PANEL_CLAVE):
+            return JSONResponse(
+                {"ok": False,
+                 "error": "Falta la clave del panel. Úsalo desde /panel "
+                          "(botón RETENCIÓN) o añade &clave=<PANEL_CLAVE> "
+                          "a la URL."},
+                status_code=401)
     filas = await asyncio.to_thread(youtube_subir.retencion, dias)
     if filas is None:
         # Dos causas distintas y el mensaje decía solo una. Faltaba la que
@@ -1681,6 +1690,16 @@ async def panel():
     font-size:.95rem; border:1px solid var(--line); border-radius:10px;
     background:var(--panel); color:var(--txt); }
   .mini { color:var(--dim); font-size:.78rem; margin-top:6px; }
+  table.ret { width:100%; border-collapse:collapse; margin-top:10px;
+    font-size:.82rem; font-variant-numeric:tabular-nums; }
+  table.ret th { text-align:left; color:var(--dim); font-size:.66rem;
+    letter-spacing:.12em; text-transform:uppercase; padding:4px 6px;
+    border-bottom:1px solid var(--line); }
+  table.ret td { padding:5px 6px; border-bottom:1px solid var(--line); }
+  /* Las dos últimas columnas son cifras: a la derecha se comparan de un
+     vistazo, alineadas a la izquierda hay que leerlas una a una. */
+  table.ret td:nth-child(n+2), table.ret th:nth-child(n+2) {
+    text-align:right; width:70px; }
   .mini b { color:var(--on); }
 </style></head><body>
 <h1>🕹️ Control del canal</h1>
@@ -1712,6 +1731,19 @@ async def panel():
   </div>
   <div id="ola-estado" class="mini">Los shorts de ESE circuito salen antes
     que los genéricos, intercalados para no cansar. Cámbialo cada finde.</div>
+</div>
+
+<h2>Retención de los shorts</h2>
+<div id="retbox">
+  <div class="row">
+    <button onclick="verRetencion(28)">📊 Últimos 28 días</button>
+    <button onclick="verRetencion(7)">📊 Últimos 7 días</button>
+  </div>
+  <div id="ret-estado" class="mini">Cuánto se ve de cada short antes de que
+    la gente se vaya. Es lo único que distingue uno que enganchó de uno que
+    se quedó en la puerta — y no está en la API normal de YouTube, hace
+    falta el permiso de Analytics.</div>
+  <div id="ret-tabla"></div>
 </div>
 
 <h2>Chat de YouTube (responder al aire)</h2>
@@ -1762,6 +1794,50 @@ async function postSeguro(u){
   return r;
 }
 async function post(u){ await postSeguro(u); refrescar(); }
+// La retención va por GET (para poder abrirla también a mano), así que
+// necesita su propia función: `postSeguro` manda POST. Reutiliza la misma
+// clave guardada y la pide si hace falta, igual que los demás botones.
+async function verRetencion(dias){
+  const est = document.getElementById('ret-estado');
+  const tab = document.getElementById('ret-tabla');
+  est.textContent = 'Consultando…'; tab.innerHTML = '';
+  const pedir = (c) => fetch('/control/retencion?dias=' + dias,
+                             {headers: c ? {'X-Clave': c} : {}});
+  let c = localStorage.getItem('panel_clave') || '';
+  let r = await pedir(c);
+  if (r.status === 401){
+    c = prompt('Clave del panel (Secret PANEL_CLAVE):') || '';
+    if (!c){ est.textContent = 'Cancelado.'; return; }
+    localStorage.setItem('panel_clave', c);
+    r = await pedir(c);
+    if (r.status === 401){
+      localStorage.removeItem('panel_clave');
+      est.textContent = 'Clave incorrecta.'; return;
+    }
+  }
+  let d; try { d = await r.json(); } catch(e){ d = null; }
+  if (!d || !d.ok){
+    // El 403 trae la lista de qué revisar: se enseña entera, porque
+    // adivinar cuál de las dos causas es sin verlas es perder la tarde.
+    est.innerHTML = '⚠ ' + escP((d && d.error) || 'no se pudo consultar')
+      + ((d && d.revisa) ? '<br>' + d.revisa.map(escP).join('<br>') : '');
+    return;
+  }
+  if (!d.videos){ est.textContent = d.estado || 'Sin datos todavía.'; return; }
+  est.textContent = d.videos + ' videos en ' + d.dias + ' días';
+  // Los que menos aguantan primero: son los que hay que mirar.
+  const filas = (d.peor_retencion || []).map(f =>
+    '<tr><td>' + escP(f.titulo) + '</td><td>' + f.retencion_pct
+    + '%</td><td>' + f.vistas + '</td></tr>');
+  tab.innerHTML = filas.length
+    ? '<table class="ret"><tr><th>Peor retención</th><th>Se ve</th>'
+      + '<th>Vistas</th></tr>' + filas.join('') + '</table>'
+    : '';
+}
+function escP(s){
+  return String(s == null ? '' : s)
+    .replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+}
 async function conectarChat(){
   const url = document.getElementById('chat-url').value.trim();
   if (!url) return;
