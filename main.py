@@ -1825,10 +1825,12 @@ async function verRetencion(dias){
   }
   let d; try { d = await r.json(); } catch(e){ d = null; }
   if (!d || !d.ok){
-    // El 403 trae la lista de qué revisar: se enseña entera, porque
-    // adivinar cuál de las dos causas es sin verlas es perder la tarde.
-    est.innerHTML = '⚠ ' + escP((d && d.error) || 'no se pudo consultar')
-      + ((d && d.revisa) ? '<br>' + d.revisa.map(escP).join('<br>') : '');
+    // El error ya viene traducido a UNA instrucción concreta. Si trae un
+    // enlace —Google da el de activar la API en el proyecto correcto— se
+    // vuelve pulsable: copiar a mano una URL de cien caracteres desde un
+    // mensaje de error es justo donde la gente se equivoca de proyecto.
+    est.innerHTML = '⚠ ' + enlazar(escP((d && d.error)
+                                        || 'no se pudo consultar'));
     return;
   }
   if (!d.videos){ est.textContent = d.estado || 'Sin datos todavía.'; return; }
@@ -1845,6 +1847,13 @@ async function verRetencion(dias){
 function escP(s){
   return String(s == null ? '' : s)
     .replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+}
+// Convierte las URLs de un texto YA ESCAPADO en enlaces. Se aplica
+// después de escapar, nunca antes: al revés, un error que contuviera
+// HTML acabaría inyectado en la página.
+function enlazar(html){
+  return html.replace(/https?:\/\/[^\s<]+/g, u =>
+    '<a href="' + u + '" target="_blank" rel="noopener">' + u + '</a>');
 }
 async function conectarChat(){
   const url = document.getElementById('chat-url').value.trim();

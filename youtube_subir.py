@@ -24,6 +24,7 @@ import datetime as dt
 import logging
 import os
 import random
+import re
 import shutil
 import subprocess
 import tempfile
@@ -1421,14 +1422,32 @@ def _porque_falla(e):
     Tirar esa información y luego pedirle a alguien que pruebe las dos
     cosas es hacerle perder la tarde con el dato en la mano.
     """
-    t = f"{e}".lower()
+    crudo = f"{e}"
+    t = crudo.lower()
     if "accessnotconfigured" in t or "has not been used in project" in t \
             or "is disabled" in t:
+        # Google dice EN QUÉ PROYECTO, y da el enlace para activarla ahí.
+        # Ese número es lo único que resuelve el caso más habitual: tener
+        # varios proyectos y haber activado la API en uno mientras el
+        # Client ID pertenece a otro. En la consola los dos se ven
+        # "activados" y no hay forma de notar la diferencia a ojo.
+        proyecto = re.search(r"project[ =](\d{6,})", crudo)
+        enlace = re.search(
+            r"https://console\.(?:developers|cloud)\.google\.com/[^\s\"'>]+",
+            crudo)
+        detalle = ""
+        if proyecto:
+            detalle += (f" OJO: el proyecto de tus credenciales es el "
+                        f"{proyecto.group(1)} — tiene que estar activada "
+                        f"EN ESE, no en otro.")
+        if enlace:
+            detalle += (f" Enlace directo al proyecto correcto: "
+                        f"{enlace.group(0).rstrip('.')}")
         return ("api_apagada",
-                "La 'YouTube Analytics API' está APAGADA en tu proyecto de "
-                "Google Cloud. Actívala en console.cloud.google.com → APIs y "
-                "servicios → Biblioteca (es distinta de 'YouTube Data API "
-                "v3'). Tarda un par de minutos en hacer efecto.")
+                "La 'YouTube Analytics API' está APAGADA en el proyecto de "
+                "Google Cloud al que pertenecen tus credenciales (es "
+                "distinta de 'YouTube Data API v3'). Si acabas de "
+                "activarla, tarda un par de minutos." + detalle)
     if "insufficient" in t and ("scope" in t or "permission" in t):
         return ("falta_permiso",
                 "El token NO tiene el permiso yt-analytics.readonly. Corre "
