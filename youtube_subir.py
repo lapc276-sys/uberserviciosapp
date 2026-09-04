@@ -1412,19 +1412,67 @@ def _retencion_sync(desde, hasta, maximo):
     return fuera
 
 
-def retencion(dias=28, maximo=200):
-    """Envoltura segura. None si falta el permiso (hay que re-autorizar)."""
+def _porque_falla(e):
+    """Traduce el error de Google a QUÉ hay que hacer.
+
+    Antes esto se descartaba y el panel enseñaba las dos causas posibles
+    para que el dueño adivinara cuál era. Pero Google SÍ lo dice: la API
+    apagada y el permiso que falta dan errores distintos y reconocibles.
+    Tirar esa información y luego pedirle a alguien que pruebe las dos
+    cosas es hacerle perder la tarde con el dato en la mano.
+    """
+    t = f"{e}".lower()
+    if "accessnotconfigured" in t or "has not been used in project" in t \
+            or "is disabled" in t:
+        return ("api_apagada",
+                "La 'YouTube Analytics API' está APAGADA en tu proyecto de "
+                "Google Cloud. Actívala en console.cloud.google.com → APIs y "
+                "servicios → Biblioteca (es distinta de 'YouTube Data API "
+                "v3'). Tarda un par de minutos en hacer efecto.")
+    if "insufficient" in t and ("scope" in t or "permission" in t):
+        return ("falta_permiso",
+                "El token NO tiene el permiso yt-analytics.readonly. Corre "
+                "autorizar_youtube.py otra vez en tu Mac, acepta los CUATRO "
+                "permisos, y pega el YOUTUBE_REFRESH_TOKEN nuevo en Secrets. "
+                "Después reinicia el Repl.")
+    if "invalid_grant" in t or "token has been expired" in t \
+            or "revoked" in t:
+        return ("token_caducado",
+                "El token ha caducado o fue revocado. Corre "
+                "autorizar_youtube.py otra vez y actualiza el Secret. Si te "
+                "pasa cada semana, publica la app: Google Cloud → Pantalla "
+                "de consentimiento de OAuth → PUBLICAR APLICACIÓN.")
+    if "forbidden" in t or "403" in t:
+        return ("sin_acceso",
+                "Google respondió 403. Lo más común: la cuenta que "
+                "autorizaste no es la DUEÑA del canal. Vuelve a correr "
+                "autorizar_youtube.py y elige la cuenta del canal.")
+    return ("desconocido", f"Google respondió: {e}")
+
+
+def retencion(dias=28, maximo=200, con_motivo=False):
+    """Métricas de retención. None si no se pudo.
+
+    Con `con_motivo=True` devuelve (filas, motivo): `motivo` es None si
+    fue bien, o (código, explicación) diciendo exactamente qué arreglar.
+    """
+    def salida(filas, motivo):
+        return (filas, motivo) if con_motivo else filas
+
     if not oauth_configurado():
-        return None
+        return salida(None, ("sin_oauth",
+                             "Faltan los Secrets de YouTube "
+                             "(YOUTUBE_CLIENT_ID / CLIENT_SECRET / "
+                             "REFRESH_TOKEN)."))
     hoy = dt.date.today()
     try:
-        return _retencion_sync((hoy - dt.timedelta(days=dias)).isoformat(),
-                               hoy.isoformat(), maximo)
+        filas = _retencion_sync((hoy - dt.timedelta(days=dias)).isoformat(),
+                                hoy.isoformat(), maximo)
+        return salida(filas, None)
     except Exception as e:
-        log.warning("Sin datos de retención (¿falta el permiso "
-                    "yt-analytics.readonly? re-autoriza con "
-                    "autorizar_youtube.py) — %s", e)
-        return None
+        motivo = _porque_falla(e)
+        log.warning("Sin datos de retención [%s]: %s", motivo[0], motivo[1])
+        return salida(None, motivo)
 
 
 # ---------------------- comentarios del canal ----------------------

@@ -1229,7 +1229,15 @@ async def control_retencion(request: Request, dias: int = 28, clave: str = ""):
                           "(botón RETENCIÓN) o añade &clave=<PANEL_CLAVE> "
                           "a la URL."},
                 status_code=401)
-    filas = await asyncio.to_thread(youtube_subir.retencion, dias)
+    filas, motivo = await asyncio.to_thread(
+        youtube_subir.retencion, dias, 200, True)
+    if filas is None and motivo:
+        # QUÉ falla exactamente, no las dos cosas que podrían fallar.
+        # Google distingue la API apagada del permiso que falta; el
+        # panel enseñaba las dos y tocaba adivinar.
+        codigo, arreglo = motivo
+        return JSONResponse({"ok": False, "causa": codigo,
+                             "error": arreglo}, status_code=403)
     if filas is None:
         # Dos causas distintas y el mensaje decía solo una. Faltaba la que
         # más despista: el permiso puede estar perfectamente concedido y
