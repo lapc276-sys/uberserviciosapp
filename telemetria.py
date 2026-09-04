@@ -106,6 +106,13 @@ def _resumen_traza(muestras, puntos=40):
     vs = [m["v"] for m in muestras]
     n = len(vs)
     paso = max(1, n // puntos)
+    # Se recorta desde el FINAL, no desde el principio. `vs[::paso][:puntos]`
+    # se quedaba con las primeras 40 muestras y tiraba las últimas: la línea
+    # terminaba un segundo largo antes que la cifra de km/h que va al lado,
+    # así que el gráfico y el número no coincidían. Aquí se recorren los
+    # índices hacia atrás desde la última muestra, con lo que el punto de
+    # "ahora" ES la última lectura, que es justo lo que dice ser.
+    idx = list(range(n - 1, -1, -paso))[:puntos][::-1]
     return {
         "v": round(vs[-1]),
         "vmax": round(max(vs)),
@@ -114,7 +121,7 @@ def _resumen_traza(muestras, puntos=40):
         "cambio": round(cambio, 1),
         "gas": round(100 * sum(1 for m in muestras if m["gas"] >= 90) / n),
         "freno": round(100 * sum(1 for m in muestras if m["freno"]) / n),
-        "serie": [round(v) for v in vs[::paso]][:puntos],
+        "serie": [round(vs[i]) for i in idx],
         "muestras": n,
     }
 

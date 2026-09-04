@@ -3090,6 +3090,12 @@ let reproduciendo = false, pendiente = null, amb = null;
 // baja con una rampa de medio segundo y no se nota que ha bajado, que es
 // justo lo que tiene que pasar.
 let lechoCtx = null, lechoGain = null, lechoFuente = null, lechoPidiendo = false;
+// Cuántas veces ha fallado y hasta cuándo no se vuelve a intentar. Sin
+// esto, un /lecho.mp3 que devuelve 404 —porque el servidor no tiene
+// ffmpeg— se pedía CADA DOS SEGUNDOS para siempre, desde cada navegador
+// abierto. Y donde el 404 es en realidad un fallo de codificación, cada
+// petición lanzaba un ffmpeg con 180 s de tiempo límite.
+let lechoFallos = 0, lechoReintentar = 0;
 // Niveles. El archivo se genera a -20,7 LUFS (medido), así que estos
 // números son atenuación sobre una fuente ya normalizada.
 // Debajo de los motores (0.15) a propósito: los motores dicen que esto
@@ -3124,16 +3130,17 @@ function lechoTick(d) {
     lechoGain.gain.setTargetAtTime(v, lechoCtx.currentTime, LECHO_RAMPA / 3);
     return;
   }
-  if (lechoPidiendo) return;
+  if (lechoPidiendo || Date.now() < lechoReintentar) return;
   lechoPidiendo = true;
   (async () => {
     try {
       const AC = window.AudioContext || window.webkitAudioContext;
-      if (!AC) return;                       // sin Web Audio, no hay lecho
+      if (!AC) { lechoReintentar = Infinity; return; }   // sin Web Audio
       lechoCtx = lechoCtx || new AC();
       if (lechoCtx.state === 'suspended') await lechoCtx.resume();
-      const buf = await lechoCtx.decodeAudioData(
-        await (await fetch(d.lecho.url)).arrayBuffer());
+      const resp = await fetch(d.lecho.url);
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      const buf = await lechoCtx.decodeAudioData(await resp.arrayBuffer());
       const src = lechoCtx.createBufferSource();
       src.buffer = buf;
       src.loop = true;
@@ -3150,9 +3157,16 @@ function lechoTick(d) {
       // golpe delata que hay una pista sonando.
       lechoGain.gain.setTargetAtTime(LECHO_VOL, lechoCtx.currentTime, 0.8);
       lechoFuente = src;
+      lechoFallos = 0;
     } catch (e) {
       // Sin lecho se sigue emitiendo igual: es un adorno, no la emisión.
-      console.log('lecho no disponible', e);
+      // Se espera cada vez más antes de reintentar (30 s, 1 min, 2, 4…
+      // hasta media hora) y a los seis fallos se deja de intentar. Un
+      // servidor sin ffmpeg no va a tener ffmpeg dentro de dos segundos.
+      lechoFallos++;
+      const espera = Math.min(30000 * Math.pow(2, lechoFallos - 1), 1800000);
+      lechoReintentar = lechoFallos >= 6 ? Infinity : Date.now() + espera;
+      console.log('lecho no disponible (' + lechoFallos + ')', e);
     } finally { lechoPidiendo = false; }
   })();
 }
@@ -3743,7 +3757,7 @@ function aclarar(hex, f) {
   } catch (e) { return hex; }
 }
 
-function trazaDoble(sA, colA, sB, colB, min, max) {
+function trazaDoble(sA, colA, sB, colB, min, max, guiones) {
   const c = document.createElement('canvas');
   // Se dibuja en coordenadas fijas (320x40) sobre un búfer 4 veces
   // mayor, y el CSS lo estira manteniendo la proporción. Antes el búfer
@@ -3760,11 +3774,13 @@ function trazaDoble(sA, colA, sB, colB, min, max) {
   const g = c.getContext('2d');
   g.scale(K, K);
   if (max <= min) return c;
-  // Si los dos van del mismo color (compañeros), al de delante se le
-  // aclara y se le pone de rayas. Sigue siendo su color de equipo, solo
-  // que distinguible del de su compañero.
-  let guiones = false;
-  if (colorCerca(colA, colB)) { colB = aclarar(colB, 0.55); guiones = true; }
+  // `guiones` lo decide quien llama, NO se vuelve a mirar aquí. Antes se
+  // comprobaba `colorCerca` en este punto, pero la tarjeta ya había
+  // aclarado el color antes de llamar — así que los colores ya no se
+  // parecían, la comprobación daba false y la línea de rayas no se
+  // dibujaba NUNCA. El aclarado tapaba el fallo: parecía que funcionaba
+  // porque los dos coches sí se distinguían, pero por una sola de las
+  // dos señales previstas.
   // Franja de dibujo con hueco arriba y abajo para las cifras de escala.
   // Sin este margen la línea del más rápido pasa POR ENCIMA del "322
   // km/h" y se leían las dos cosas a la vez, ninguna bien.
@@ -3806,7 +3822,10 @@ function cartaPelea(p) {
     // Compañeros de equipo: mismo color. Se aclara al de delante para
     // TODA la tarjeta —título, leyenda y traza— porque si solo se
     // cambiara en el dibujo, la leyenda dejaría de decir cuál es cuál.
-    if (colorCerca(cA, cB)) cB = aclarar(cB, 0.55);
+    // El resultado se guarda: `trazaDoble` ya no lo puede recalcular,
+    // porque para cuando lo recibe los colores ya son distintos.
+    const companeros = colorCerca(cA, cB);
+    if (companeros) cB = aclarar(cB, 0.55);
     const sec = s => (s.delta <= 0 ? '−' : '+') + Math.abs(s.delta).toFixed(2);
 
     // Las trazas, en ESCALA COMPARTIDA. Escalar cada una a su propio
@@ -3874,7 +3893,8 @@ function cartaPelea(p) {
       const lo = Math.min(tz.detras.vmin, tz.delante.vmin);
       const hi = Math.max(tz.detras.vmax, tz.delante.vmax);
       if (hueco) hueco.replaceWith(trazaDoble(tz.detras.serie, cA,
-                                              tz.delante.serie, cB, lo, hi));
+                                              tz.delante.serie, cB, lo, hi,
+                                              companeros));
     }
   };
   pinta(p);
@@ -9242,9 +9262,19 @@ except Exception:                                  # pragma: no cover
 #: aire, un campo de flujo es decoración — y decoración que no viene a
 #: cuento es justo lo que hace que un canal técnico parezca genérico.
 _PALABRAS_FLUJO = ("wing", "downforce", "drag", "airflow", "aero",
-                   "air ", "flow", "wake", "dirty air", "slipstream",
-                   "tow ", "vortex", "diffuser", "floor", "stall",
+                   "air", "flow", "wake", "dirty air", "slipstream",
+                   "tow", "vortex", "diffuser", "floor", "stall",
                    "angle of attack", "ground effect")
+
+#: La misma lista, pero exigiendo PALABRA ENTERA.
+#:
+#: Buscándolas como subcadena, "wing" aparecía dentro de showing, drawing
+#: y allowing, y "stall" dentro de install. Comprobado: "Showing the data"
+#: disparaba el clip de flujo. Eso son varios segundos de cálculo y un
+#: campo aerodinámico encima de un short que no habla de aire — que es
+#: justo la decoración fuera de sitio que este filtro existía para evitar.
+_RE_FLUJO = re.compile(
+    r"\b(?:" + "|".join(re.escape(p) for p in _PALABRAS_FLUJO) + r")\b")
 
 #: Cuántos clips calculados se guardan antes de empezar a borrar los
 #: viejos. Cada uno pesa poco, pero el disco de Replit es finito.
@@ -9261,10 +9291,16 @@ def _clip_calculado(short):
     """
     texto = " ".join(str(short.get(k, "")) for k in
                      ("guion", "titulo")).lower()
-    if not any(p in texto for p in _PALABRAS_FLUJO):
+    if not _RE_FLUJO.search(texto):
         return None
     sid = short.get("id", "x")
-    salida = os.path.join("shorts", f"g_flujo_{sid}.mp4")
+    # OJO CON EL NOMBRE. El montador clasifica por prefijo: `g_*` y `card_*`
+    # son LÁMINAS fijas, y a una lámina la copia con extensión .png y la
+    # valida como imagen. Un MP4 llamado `g_flujo_x.mp4` acababa siendo
+    # `g_3.png`, no pasaba la validación y se descartaba EN SILENCIO: la
+    # primera versión de esto no llegó nunca a un video. Cualquier prefijo
+    # que no sea g_/card_ con extensión de video entra como clip.
+    salida = os.path.join("shorts", f"clip_flujo_{sid}.mp4")
     if os.path.exists(salida):
         return salida
     try:
@@ -9295,7 +9331,7 @@ def _limpiar_clips_viejos():
     """Deja solo los últimos clips calculados: el disco de Replit no es
     infinito y estos se regeneran solos cuando hacen falta."""
     with contextlib.suppress(Exception):
-        viejos = sorted(glob.glob(os.path.join("shorts", "g_flujo_*.mp4")),
+        viejos = sorted(glob.glob(os.path.join("shorts", "clip_flujo_*.mp4")),
                         key=os.path.getmtime, reverse=True)
         for r in viejos[_CLIPS_MAX:]:
             with contextlib.suppress(OSError):
@@ -10983,15 +11019,6 @@ async def bucle_youtube():
                                  short["diagrama"].get("plantilla"),
                                  short.get("id"))
 
-                # 2a-quater) Y si el short habla de aire, un CLIP calculado
-                # además de la lámina. Híbrido a propósito: la lámina se
-                # lee con calma y el clip se mira — un short entero de
-                # imágenes quietas se siente como un pase de diapositivas,
-                # y uno entero en movimiento no deja leer nada.
-                clip = _clip_calculado(short)
-                if clip:
-                    fotos.insert(min(2, len(fotos)), clip)
-
                 # 2b) Sin material visual no se publica. El armador tiene un
                 # respaldo de fondo liso para no reventar, pero un short casi
                 # negro en el canal es peor que no publicar: se POSPONE y se
@@ -11070,6 +11097,25 @@ async def bucle_youtube():
                         fotos = _colocar_clips(fotos, stock)
                         log.info("🎞️  %d clip(s) de stock en el short %s "
                                  "(grupo CON vídeo)", len(stock), sid)
+
+                    # 2e) Y si el short habla de aire, un CLIP CALCULADO
+                    # junto a la lámina. Híbrido a propósito: la lámina se
+                    # lee con calma y el clip se mira — un short entero de
+                    # imágenes quietas se siente como un pase de diapositivas,
+                    # y uno entero en movimiento no deja leer nada.
+                    #
+                    # Va aquí, DESPUÉS del mínimo de imágenes, por la misma
+                    # razón que las animaciones: si contara como foto, un
+                    # short sin material real pasaría el filtro gracias al
+                    # clip. Estaba antes del mínimo y eso era exactamente
+                    # el agujero que el comentario de 2c advierte.
+                    #
+                    # Y en un hilo: resolver doce campos de flujo a 720x1280
+                    # más ffmpeg son varios segundos, y aquí dentro dejaban
+                    # la página en vivo congelada mientras tanto.
+                    calc = await asyncio.to_thread(_clip_calculado, short)
+                    if calc:
+                        fotos = _colocar_clips(fotos, [calc])
 
                 # 3) Armar video vertical: rótulo grande estilo F1 Shorts (solo
                 # el gancho limpio, sin hashtags), chip de serie arriba y

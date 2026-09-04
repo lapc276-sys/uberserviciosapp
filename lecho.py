@@ -50,11 +50,18 @@ Web Audio API, que sabe repetir entre dos instantes exactos; un
 <audio loop> normal no puede, porque siempre reproduce el archivo entero.
 """
 
+import contextlib
 import logging
 import os
 import subprocess
+import threading
 
 log = logging.getLogger("lecho")
+
+#: Un solo hilo puede estar sintetizando. Sin esto, dos peticiones a la
+#: vez lanzaban DOS ffmpeg escribiendo el mismo archivo, y FileResponse
+#: podía servir un MP3 a medio escribir.
+_CERROJO = threading.Lock()
 
 #: Dónde se guarda. Se genera UNA vez y se reutiliza siempre.
 ARCHIVO = "lecho_carrera.mp3"
@@ -130,12 +137,20 @@ def generar(destino=ARCHIVO):
         # LO IMPORTANTE: el lecho se queda por debajo de la voz.
         f"lowpass=f={CORTE_HZ},highpass=f=45"
     )
+    # Se escribe a un archivo aparte y se renombra al final. El renombrado
+    # es atómico, así que nadie puede leer un MP3 a medio escribir: o está
+    # entero o todavía no está.
+    # `-f mp3` explícito: ffmpeg deduce el formato de la extensión, y
+    # ".parcial" no le dice nada — sin esto responde "Invalid argument"
+    # y no genera nada.
+    parcial = destino + ".parcial"
     args += ["-filter_complex", filtro,
-             "-c:a", "libmp3lame", "-b:a", "128k", destino]
+             "-c:a", "libmp3lame", "-b:a", "128k", "-f", "mp3", parcial]
     try:
         r = subprocess.run(args, capture_output=True, timeout=180)
-        if r.returncode == 0 and os.path.exists(destino) \
-                and os.path.getsize(destino) > 0:
+        if r.returncode == 0 and os.path.exists(parcial) \
+                and os.path.getsize(parcial) > 0:
+            os.replace(parcial, destino)
             log.info("🎵 Lecho de carrera generado (%d KB)",
                      os.path.getsize(destino) // 1024)
             return destino
@@ -143,11 +158,25 @@ def generar(destino=ARCHIVO):
                  (r.stderr or b"")[-200:].decode("utf-8", "ignore"))
     except Exception as e:
         log.info("Fallo generando el lecho (%s)", e)
+    finally:
+        if os.path.exists(parcial):
+            with contextlib.suppress(OSError):
+                os.remove(parcial)
     return None
 
 
 def asegurar(destino=ARCHIVO):
-    """La ruta del lecho, generándolo si aún no existe. None si no se pudo."""
+    """La ruta del lecho, generándolo si aún no existe. None si no se pudo.
+
+    Con cerrojo: si llegan varias peticiones a la vez —y llegan, porque
+    cada espectador pide el archivo— solo una sintetiza y las demás
+    esperan y se encuentran el trabajo hecho.
+    """
     if os.path.exists(destino) and os.path.getsize(destino) > 0:
         return destino
-    return generar(destino)
+    with _CERROJO:
+        # Se vuelve a mirar DENTRO del cerrojo: puede que el que iba
+        # delante ya lo haya dejado listo mientras esperábamos.
+        if os.path.exists(destino) and os.path.getsize(destino) > 0:
+            return destino
+        return generar(destino)
