@@ -45,6 +45,7 @@ from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse,
 import articulos
 import curva
 import diagramas
+import informe
 import lecho
 import prioridad
 import fuentes
@@ -1393,6 +1394,88 @@ async def control_curva(request: Request, video: str = "", clave: str = ""):
         "nota": ("El montaje solo existe en los videos armados desde que "
                  "esto se instaló; en los de antes se ve la curva pero no "
                  "qué había en pantalla.") if not montaje else "",
+    })
+
+
+@app.get("/control/informe")
+async def control_informe(request: Request, dias: int = 90,
+                          curvas: int = 20, clave: str = ""):
+    """Qué tienen en común los videos que aguantan. Sobre TODOS a la vez.
+
+    Cruza la retención medida de cada video publicado con las decisiones
+    que quedaron apuntadas al armarlo (si llevaba diagrama, de qué
+    temática era, si entró en el grupo con metraje, cómo era el título) y
+    dice en qué se diferencian los que retuvieron.
+
+    `curvas` = de cuántos videos se baja además la curva completa, para
+    ver DÓNDE se va la gente. Es una consulta por video, así que se
+    limita: se cogen los más vistos, que son los que tienen curva.
+    """
+    if PANEL_CLAVE:
+        dada = clave or request.headers.get("X-Clave", "")
+        if not pysecrets.compare_digest(dada, PANEL_CLAVE):
+            return JSONResponse({"ok": False, "error": "Falta la clave"},
+                                status_code=401)
+    filas, motivo = await asyncio.to_thread(
+        youtube_subir.retencion, dias, 200, True)
+    if filas is None:
+        codigo, arreglo = motivo or ("desconocido", "sin datos")
+        return JSONResponse({"ok": False, "causa": codigo, "error": arreglo},
+                            status_code=403)
+    if not filas:
+        return JSONResponse({"ok": True, "videos": 0,
+                             "estado": f"Sin datos en {dias} días"})
+
+    # Cada video con las decisiones que se tomaron al armarlo.
+    por_id = {}
+    for ruta in glob.glob(os.path.join("shorts", "short_*.json")):
+        with contextlib.suppress(Exception):
+            with open(ruta, encoding="utf-8") as f:
+                sh = json.load(f)
+            if sh.get("youtube_id"):
+                por_id[sh["youtube_id"]] = sh
+    muestras = []
+    for f in filas:
+        sh = por_id.get(f.get("id")) or {}
+        muestras.append({
+            "id": f.get("id"),
+            "retencion": f.get("retencion_pct") or 0.0,
+            "vistas": f.get("vistas") or 0,
+            "ctr": f.get("ctr_pct"),
+            "categoria": sh.get("categoria"),
+            "diagrama": bool(sh.get("diagrama")),
+            "serie": sh.get("serie"),
+            "video_stock": bool(sh.get("video_stock")),
+            "fuente_titulares": bool(sh.get("fuente_titulares")),
+            "tipo": sh.get("tipo"),
+            "titulo": sh.get("titulo") or "",
+            "nuestro": bool(sh),
+        })
+    res = informe.hallazgos([m for m in muestras if m["nuestro"]])
+
+    # Las curvas de los más vistos: para ver DÓNDE se va la gente.
+    top = sorted(filas, key=lambda f: -(f.get("vistas") or 0))[
+        :max(0, min(60, curvas))]
+    cs = []
+    for f in top:
+        c = await asyncio.to_thread(youtube_subir.curva_retencion,
+                                    f["id"], dias)
+        if c:
+            cs.append(c)
+    perf = informe.perfil(cs)
+
+    return JSONResponse({
+        "ok": True, "dias": dias,
+        "videos_totales": len(filas),
+        "videos_nuestros": sum(1 for m in muestras if m["nuestro"]),
+        "curvas_leidas": len(cs), "curvas_pedidas": len(top),
+        "analisis": res,
+        "perfil": perf,
+        "lectura_perfil": informe.lectura_perfil(perf),
+        "nota": ("Estas diferencias son PISTAS, no causas demostradas: que "
+                 "los videos con diagrama retengan más puede ser por el "
+                 "diagrama o porque los temas que piden diagrama ya son "
+                 "más interesantes de por sí."),
     })
 
 
