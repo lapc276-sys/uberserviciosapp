@@ -941,7 +941,7 @@ TITULO_EN_VIDEO = os.environ.get("TITULO_EN_VIDEO", "off").strip().lower() in (
 
 async def armar_video(audio_path, fotos_urls, titulo, salida_mp4,
                       horizontal=False, con_musica=False, cta_texto=None,
-                      chip=None, capitulos=()):
+                      chip=None, capitulos=(), montaje=None):
     """Construye el MP4 y, si es un short vertical con `cta_texto`, le añade
     una píldora de suscripción en los últimos segundos (segunda pasada
     aislada: si falla, el video queda igual). `chip` = nombre de serie que se
@@ -950,7 +950,8 @@ async def armar_video(audio_path, fotos_urls, titulo, salida_mp4,
         titulo = ""      # el chip de serie sí se mantiene
     ok = await _armar_video_base(audio_path, fotos_urls, titulo, salida_mp4,
                                  horizontal=horizontal, con_musica=con_musica,
-                                 chip=chip, capitulos=capitulos)
+                                 chip=chip, capitulos=capitulos,
+                                 montaje=montaje)
     if ok and cta_texto and not horizontal:
         dur = _duracion_audio(audio_path) or 25.0
         with contextlib.suppress(Exception):
@@ -1106,7 +1107,7 @@ def _imagen_valida(path):
 
 async def _armar_video_base(audio_path, fotos_urls, titulo, salida_mp4,
                             horizontal=False, con_musica=False, chip=None,
-                            capitulos=()):
+                            capitulos=(), montaje=None):
     """Construye el MP4 (vertical para shorts; 16:9 para VODs de sesión).
     Devuelve True si se creó.
 
@@ -1214,6 +1215,23 @@ async def _armar_video_base(audio_path, fotos_urls, titulo, salida_mp4,
             dur, imgs, es_chart, es_clip, horizontal, capitulos)
         if not imgs:
             return False
+
+        # El MONTAJE: qué se ve en cada segundo del video.
+        #
+        # Se guarda porque es la mitad que falta para entender una curva
+        # de retención. YouTube dice DÓNDE se va la gente —en el segundo
+        # 47— pero no QUÉ había ahí. Nosotros montamos el video, así que
+        # sí lo sabemos, y cruzar las dos cosas convierte "se van al 40%"
+        # en "se van cuando entra la cuarta foto de archivo seguida".
+        if montaje is not None:
+            t0 = 0.0
+            for ruta, ch, cl, d in zip(imgs, es_chart, es_clip, pers):
+                montaje.append({
+                    "desde": round(t0, 2), "hasta": round(t0 + d, 2),
+                    "tipo": ("clip" if cl else "grafico" if ch else "foto"),
+                    "archivo": os.path.basename(str(ruta)),
+                })
+                t0 += d
 
         # Normalizar los clips de la biblioteca a su duración de toma,
         # w×h y mudos. Un clip que falle se cae de la lista y el video
@@ -1469,6 +1487,57 @@ def _retencion_sync(desde, hasta, maximo):
                         is not None else None),
         })
     return fuera
+
+
+def _curva_sync(video_id, desde, hasta):
+    """La curva de retención de UN video: cuánta gente seguía viendo en
+    cada punto. Devuelve [{"ratio", "visto", "relativo"}] ordenado.
+
+    `ratio` va de 0 a 1 (posición dentro del video), `visto` es la
+    proporción de espectadores que seguían ahí, y `relativo` compara con
+    otros videos de YouTube de duración parecida.
+    """
+    from googleapiclient.discovery import build
+    ya = build("youtubeAnalytics", "v2",
+               credentials=_credenciales(SCOPES_ANALITICA),
+               cache_discovery=False)
+    r = ya.reports().query(
+        ids="channel==MINE", startDate=desde, endDate=hasta,
+        metrics="audienceWatchRatio,relativeRetentionPerformance",
+        dimensions="elapsedVideoTimeRatio",
+        filters=f"video=={video_id}").execute()
+    cols = [c["name"] for c in r.get("columnHeaders", [])]
+    fuera = []
+    for fila in r.get("rows", []):
+        d = dict(zip(cols, fila))
+        fuera.append({
+            "ratio": float(d.get("elapsedVideoTimeRatio") or 0.0),
+            "visto": float(d.get("audienceWatchRatio") or 0.0),
+            "relativo": (float(d["relativeRetentionPerformance"])
+                         if d.get("relativeRetentionPerformance") is not None
+                         else None),
+        })
+    fuera.sort(key=lambda p: p["ratio"])
+    return fuera
+
+
+def curva_retencion(video_id, dias=90):
+    """La curva de un video, o None si no se puede.
+
+    Solo la hay cuando el video acumuló bastantes reproducciones: con
+    cuatro visitas YouTube no publica la curva, y hace bien — sería el
+    recorrido de cuatro personas, no una tendencia.
+    """
+    if not (video_id and oauth_configurado()):
+        return None
+    hoy = dt.date.today()
+    try:
+        return _curva_sync(video_id,
+                           (hoy - dt.timedelta(days=dias)).isoformat(),
+                           hoy.isoformat()) or None
+    except Exception as e:
+        log.info("Sin curva de retención de %s (%s)", video_id, f"{e}"[:120])
+        return None
 
 
 def _porque_falla(e):

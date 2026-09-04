@@ -43,6 +43,7 @@ from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse,
                                PlainTextResponse, Response)
 
 import articulos
+import curva
 import diagramas
 import lecho
 import prioridad
@@ -1339,6 +1340,59 @@ async def control_prioridad(request: Request, clave: str = ""):
                         "videos": d["n"]} for c, d in h.destacadas()]
                       if h else [],
         "categorias": filas,
+    })
+
+
+@app.get("/control/curva")
+async def control_curva(request: Request, video: str = "", clave: str = ""):
+    """Dónde se fue la gente en un video, y qué había en pantalla.
+
+    AVISO que conviene tener claro: esto NO sirve para arreglar el video
+    que se analiza. YouTube no deja sustituir el archivo de algo ya
+    publicado — solo borrarlo y subir otro, que es un video nuevo sin sus
+    visitas ni su historial. Sirve para el SIGUIENTE video.
+    """
+    if PANEL_CLAVE:
+        dada = clave or request.headers.get("X-Clave", "")
+        if not pysecrets.compare_digest(dada, PANEL_CLAVE):
+            return JSONResponse({"ok": False, "error": "Falta la clave"},
+                                status_code=401)
+    if not video:
+        return JSONResponse({"ok": False,
+                             "error": "Añade ?video=<id de YouTube>"},
+                            status_code=400)
+    pts = await asyncio.to_thread(youtube_subir.curva_retencion, video)
+    if not pts:
+        return JSONResponse(
+            {"ok": False,
+             "error": "Sin curva para ese video. Lo normal es que aún no "
+                      "tenga bastantes reproducciones: YouTube no publica "
+                      "la curva de un video con pocas visitas, y hace "
+                      "bien — sería el recorrido de cuatro personas."},
+            status_code=404)
+    # El montaje y la duración, del short que lo generó (si fue nuestro).
+    montaje, duracion = None, None
+    for ruta in glob.glob(os.path.join("shorts", "short_*.json")):
+        with contextlib.suppress(Exception):
+            with open(ruta, encoding="utf-8") as f:
+                sh = json.load(f)
+            if sh.get("youtube_id") == video:
+                montaje = sh.get("montaje")
+                duracion = sh.get("duracion_segundos")
+                if montaje:
+                    duracion = max(t["hasta"] for t in montaje)
+                break
+    return JSONResponse({
+        "ok": True, "video": video, "puntos": len(pts),
+        "duracion": duracion,
+        "con_montaje": bool(montaje),
+        "veredicto": curva.veredicto(pts, montaje, duracion),
+        "por_tipo": curva.por_tipo(pts, montaje, duracion),
+        "fugas": curva.fugas(pts, montaje, duracion),
+        "curva": pts,
+        "nota": ("El montaje solo existe en los videos armados desde que "
+                 "esto se instaló; en los de antes se ve la curva pero no "
+                 "qué había en pantalla.") if not montaje else "",
     })
 
 
@@ -11331,11 +11385,20 @@ async def bucle_youtube():
                 # ya traen su propio texto → sin rótulo ni chip encima.
                 video_ruta = f"shorts/short_{sid}.mp4"
                 sin_ov = short.get("sin_overlay")
+                # El montaje: qué se ve en cada segundo. Se guarda con el
+                # short para poder cruzarlo luego con la curva de
+                # retención — YouTube dice DÓNDE se va la gente, y esto
+                # es lo que dice QUÉ había ahí.
+                montaje = []
                 ok = await youtube_subir.armar_video(
                     audio_ruta, fotos,
                     "" if sin_ov else _texto_overlay_short(short), video_ruta,
                     cta_texto=_cta_visual(),
-                    chip=None if sin_ov else _chip_serie(short))
+                    chip=None if sin_ov else _chip_serie(short),
+                    montaje=montaje)
+                if montaje:
+                    short["montaje"] = montaje
+                    _guardar_short(sid, short)
                 if not ok:
                     short["yt_intentos"] = short.get("yt_intentos", 0) + 1
                     _guardar_short(sid, short)
