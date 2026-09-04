@@ -1437,9 +1437,20 @@ def _porque_falla(e):
             crudo)
         detalle = ""
         if proyecto:
-            detalle += (f" OJO: el proyecto de tus credenciales es el "
-                        f"{proyecto.group(1)} — tiene que estar activada "
-                        f"EN ESE, no en otro.")
+            n = proyecto.group(1)
+            # El número de proyecto es el prefijo del propio Client ID
+            # (716150359787-xxxx.apps.googleusercontent.com), así que se
+            # puede comprobar desde Secrets sin entrar en Google. Y si al
+            # abrir el enlace Google dice que no tienes acceso a ese
+            # proyecto, no es un problema de permisos de la API: es que
+            # estás en el navegador con OTRA cuenta de Google.
+            detalle += (f" OJO: el proyecto de tus credenciales es el {n} "
+                        f"— tiene que estar activada EN ESE, no en otro. "
+                        f"Tu YOUTUBE_CLIENT_ID debe empezar por '{n}-'; si "
+                        f"no, las credenciales son de otro proyecto. Y si "
+                        f"Google dice que no tienes acceso al {n}, estás "
+                        f"usando otra cuenta de Google: cámbiala arriba a "
+                        f"la derecha en la consola.")
         if enlace:
             detalle += (f" Enlace directo al proyecto correcto: "
                         f"{enlace.group(0).rstrip('.')}")
