@@ -6,7 +6,12 @@ Se corre UNA sola vez, en una máquina con navegador (tu Mac).
 
 Antes de correrlo:
   1. En https://console.cloud.google.com crea un proyecto (o usa el que ya
-     tienes para la YouTube API) y activa "YouTube Data API v3".
+     tienes para la YouTube API) y activa DOS APIs, no una:
+       · "YouTube Data API v3"      — subir videos, comentarios, miniaturas
+       · "YouTube Analytics API"    — la RETENCIÓN
+     Son productos distintos en la consola. Conceder el permiso de
+     analytics aquí NO sirve de nada si esa segunda API está apagada en el
+     proyecto: la autorización sale bien y luego la consulta responde 403.
   2. En "Credenciales" crea un "ID de cliente de OAuth" de tipo
      "Aplicación de escritorio" (Desktop app).
   3. Copia el Client ID y el Client Secret.
@@ -159,6 +164,10 @@ def main():
           "console.cloud.google.com →")
     print("   APIs y servicios → Pantalla de consentimiento de OAuth,")
     print("   si pone «Prueba»/«Testing», pulsa PUBLICAR APLICACIÓN.")
+    print("\n📊 Y para que funcione la RETENCIÓN, comprueba que en ese mismo")
+    print("   proyecto está activada «YouTube Analytics API» (es distinta")
+    print("   de «YouTube Data API v3»). Sin ella el permiso está concedido")
+    print("   pero la consulta responde 403.")
 
 
 if __name__ == "__main__":

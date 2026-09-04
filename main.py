@@ -1222,10 +1222,22 @@ async def control_retencion(dias: int = 28, clave: str = ""):
             status_code=401)
     filas = await asyncio.to_thread(youtube_subir.retencion, dias)
     if filas is None:
+        # Dos causas distintas y el mensaje decía solo una. Faltaba la que
+        # más despista: el permiso puede estar perfectamente concedido y
+        # aun así fallar, porque "YouTube Analytics API" es un producto
+        # aparte de "YouTube Data API v3" y hay que activarlo por separado
+        # en el proyecto de Google Cloud.
         return JSONResponse(
-            {"ok": False, "error": "Sin permiso de Analytics. Corre "
-             "autorizar_youtube.py otra vez (ya pide el permiso nuevo) y "
-             "actualiza el Secret YOUTUBE_REFRESH_TOKEN."}, status_code=403)
+            {"ok": False,
+             "error": "No pude leer Analytics. Dos causas posibles:",
+             "revisa": [
+                 "1) En console.cloud.google.com → APIs y servicios → "
+                 "Biblioteca, que 'YouTube Analytics API' esté ACTIVADA "
+                 "(es distinta de 'YouTube Data API v3').",
+                 "2) Que el token tenga el permiso yt-analytics.readonly: "
+                 "corre autorizar_youtube.py otra vez, acepta los CUATRO "
+                 "permisos y actualiza el Secret YOUTUBE_REFRESH_TOKEN.",
+             ]}, status_code=403)
     if not filas:
         return JSONResponse({"ok": True, "videos": 0,
                              "estado": f"Sin datos en los últimos {dias} días"})
