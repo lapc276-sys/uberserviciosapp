@@ -1367,6 +1367,40 @@ def _listar_mis_videos_sync(max_n):
     return videos
 
 
+def _titulos_sync(ids):
+    """Los títulos de unos IDs concretos, en tandas de 50."""
+    from googleapiclient.discovery import build
+    yt = build("youtube", "v3", credentials=_credenciales(SCOPES_LECTURA),
+               cache_discovery=False)
+    fuera = {}
+    ids = [i for i in ids if i]
+    for k in range(0, len(ids), 50):
+        r = yt.videos().list(part="snippet",
+                             id=",".join(ids[k:k + 50])).execute()
+        for it in r.get("items", []):
+            fuera[it["id"]] = it["snippet"].get("title", "")
+    return fuera
+
+
+def titulos_de(ids):
+    """{id: título} de los videos que se pidan. {} si no se puede.
+
+    Existe porque `listar_mis_videos` trae los N más RECIENTES, y para
+    poner nombre a una tabla de retención eso no sirve: un canal que
+    publica varios shorts al día pasa de los doscientos vídeos enseguida,
+    y entonces la mitad de la tabla salía con el identificador crudo en
+    vez del título. Aquí se piden exactamente los que hacen falta.
+    """
+    ids = list(dict.fromkeys(ids or []))
+    if not ids or not oauth_configurado():
+        return {}
+    try:
+        return _titulos_sync(ids)
+    except Exception as e:
+        log.info("No se pudieron leer los títulos (%s)", e)
+        return {}
+
+
 def listar_mis_videos(max_n=50):
     """Envoltura segura: None si no se puede listar (sin lanzar)."""
     if not oauth_configurado():

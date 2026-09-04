@@ -1205,7 +1205,8 @@ async def control_velocidades(year: int = 0, gp: str = "", tipo: str = "Race",
 
 
 @app.get("/control/retencion")
-async def control_retencion(request: Request, dias: int = 28, clave: str = ""):
+async def control_retencion(request: Request, dias: int = 28,
+                            min_vistas: int = 30, clave: str = ""):
     """Retención de los videos del canal y qué separa a los que despegaron.
 
     Necesita el permiso yt-analytics.readonly: si no lo tienes, vuelve a
@@ -1258,21 +1259,40 @@ async def control_retencion(request: Request, dias: int = 28, clave: str = ""):
     if not filas:
         return JSONResponse({"ok": True, "videos": 0,
                              "estado": f"Sin datos en los últimos {dias} días"})
-    # Los títulos, para que el veredicto se lea con nombres y no con ids
-    titulos = {}
-    with contextlib.suppress(Exception):
-        vids = await asyncio.to_thread(youtube_subir.listar_mis_videos, 200)
-        titulos = {v["id"]: v["titulo"] for v in (vids or [])}
+    # Los títulos DE ESTOS videos. Antes se pedían los 200 más recientes
+    # del canal y se cruzaban: con varios shorts al día eso deja fuera a
+    # la mitad, y la tabla salía con identificadores crudos.
+    titulos = await asyncio.to_thread(
+        youtube_subir.titulos_de, [f["id"] for f in filas])
     comparacion = metricas.comparar_retencion(filas, titulos)
-    peores = sorted(filas, key=lambda f: f.get("retencion_pct") or 0)[:5]
+
+    # Un ranking de retención SIN mínimo de vistas no dice nada: entre 155
+    # videos, los cinco peores van a ser siempre tres que tuvieron una
+    # visita y alguien cerró al segundo. Eso no es una lección sobre el
+    # contenido, es ruido de muestra pequeña. Con el mínimo, los que salen
+    # son los que de verdad vio gente y aun así abandonó.
+    utiles = [f for f in filas if (f.get("vistas") or 0) >= min_vistas]
+    poca_muestra = len(utiles) < 5
+    if poca_muestra:
+        # Canal nuevo o ventana corta: mejor enseñar lo que hay y AVISAR
+        # de que es poco, que no enseñar nada.
+        utiles = list(filas)
+    por_ret = sorted(utiles, key=lambda f: f.get("retencion_pct") or 0)
+
+    def fila(f):
+        return {"titulo": titulos.get(f["id"]) or f["id"],
+                "retencion_pct": round(f.get("retencion_pct") or 0, 1),
+                "vistas": f.get("vistas") or 0}
+
     return JSONResponse({
         "ok": True, "dias": dias, "videos": len(filas),
+        "min_vistas": min_vistas, "muestra_corta": poca_muestra,
+        "comparados": len(utiles),
         "comparacion": comparacion,
-        # Los que menos aguantan: son los que hay que mirar primero.
-        "peor_retencion": [
-            {"titulo": titulos.get(f["id"], f["id"]),
-             "retencion_pct": round(f.get("retencion_pct") or 0, 1),
-             "vistas": f["vistas"]} for f in peores],
+        # Los peores para arreglar, y los MEJORES para copiar: saber qué
+        # funciona es la mitad accionable, y solo estaba la otra.
+        "peor_retencion": [fila(f) for f in por_ret[:5]],
+        "mejor_retencion": [fila(f) for f in reversed(por_ret[-5:])],
         "filas": [{**f, "titulo": titulos.get(f["id"], "")} for f in filas],
     })
 
@@ -1698,6 +1718,9 @@ async def panel():
     font-size:.95rem; border:1px solid var(--line); border-radius:10px;
     background:var(--panel); color:var(--txt); }
   .mini { color:var(--dim); font-size:.78rem; margin-top:6px; }
+  .lectura { margin-top:8px; padding:9px 11px; background:#10141c;
+    border-left:3px solid var(--accent); border-radius:6px;
+    color:var(--txt); font-size:.82rem; line-height:1.45; }
   table.ret { width:100%; border-collapse:collapse; margin-top:10px;
     font-size:.82rem; font-variant-numeric:tabular-nums; }
   table.ret th { text-align:left; color:var(--dim); font-size:.66rem;
@@ -1834,15 +1857,33 @@ async function verRetencion(dias){
     return;
   }
   if (!d.videos){ est.textContent = d.estado || 'Sin datos todavía.'; return; }
-  est.textContent = d.videos + ' videos en ' + d.dias + ' días';
-  // Los que menos aguantan primero: son los que hay que mirar.
-  const filas = (d.peor_retencion || []).map(f =>
-    '<tr><td>' + escP(f.titulo) + '</td><td>' + f.retencion_pct
-    + '%</td><td>' + f.vistas + '</td></tr>');
-  tab.innerHTML = filas.length
-    ? '<table class="ret"><tr><th>Peor retención</th><th>Se ve</th>'
-      + '<th>Vistas</th></tr>' + filas.join('') + '</table>'
+  // La LECTURA primero: es la única línea que dice qué hacer. Se calculaba
+  // desde el principio y no se enseñaba en ninguna parte.
+  const cmp = d.comparacion || {};
+  let cab = d.videos + ' videos en ' + d.dias + ' días';
+  if (d.muestra_corta) {
+    cab += ' · pocos con vistas suficientes: la tabla es orientativa';
+  } else {
+    cab += ' · ranking entre los ' + d.comparados
+        + ' que pasaron de ' + d.min_vistas + ' vistas';
+  }
+  est.innerHTML = escP(cab)
+    + (cmp.lectura ? '<div class="lectura">' + escP(cmp.lectura) + '</div>'
+                   : (cmp.suficiente === false
+                      ? '<div class="lectura">Aún no hay bastantes videos con '
+                        + 'vistas para comparar (hacen falta '
+                        + (cmp.hacen_falta || '?') + ').</div>' : ''));
+  const tabla = (titulo, filas) => filas.length
+    ? '<table class="ret"><tr><th>' + titulo + '</th><th>Se ve</th>'
+      + '<th>Vistas</th></tr>'
+      + filas.map(f => '<tr><td>' + escP(f.titulo) + '</td><td>'
+          + f.retencion_pct + '%</td><td>' + f.vistas + '</td></tr>').join('')
+      + '</table>'
     : '';
+  // Los mejores PRIMERO: lo que hay que repetir pesa más que lo que hay
+  // que arreglar, y estaba solo la mitad de arreglar.
+  tab.innerHTML = tabla('Lo que más aguanta', d.mejor_retencion || [])
+                + tabla('Lo que menos aguanta', d.peor_retencion || []);
 }
 function escP(s){
   return String(s == null ? '' : s)
