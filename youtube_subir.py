@@ -1427,12 +1427,26 @@ def _retencion_sync(desde, hasta, maximo):
     ya = build("youtubeAnalytics", "v2",
                credentials=_credenciales(SCOPES_ANALITICA),
                cache_discovery=False)
-    r = ya.reports().query(
-        ids="channel==MINE", startDate=desde, endDate=hasta,
-        metrics=("views,estimatedMinutesWatched,averageViewDuration,"
-                 "averageViewPercentage"),
-        dimensions="video", sort="-views",
-        maxResults=max(1, min(200, maximo))).execute()
+    base = ("views,estimatedMinutesWatched,averageViewDuration,"
+            "averageViewPercentage")
+    # El CTR de la miniatura existe en la API desde enero de 2026. Se pide
+    # aparte y con red: si la cuenta no lo tiene, o si son Shorts —donde
+    # no hay miniatura que pulsar, se entra deslizando— la consulta falla
+    # entera. Perder el CTR es aceptable; perder la retención por pedirlo
+    # no lo es, así que se reintenta sin él.
+    def consultar(metricas):
+        return ya.reports().query(
+            ids="channel==MINE", startDate=desde, endDate=hasta,
+            metrics=metricas, dimensions="video", sort="-views",
+            maxResults=max(1, min(200, maximo))).execute()
+
+    try:
+        r = consultar(base + ",videoThumbnailImpressions"
+                             ",videoThumbnailImpressionsClickRate")
+    except Exception as e:
+        log.info("Sin CTR de miniatura (%s) — sigo solo con retención",
+                 f"{e}"[:120])
+        r = consultar(base)
     cols = [c["name"] for c in r.get("columnHeaders", [])]
     fuera = []
     for fila in r.get("rows", []):
@@ -1443,6 +1457,16 @@ def _retencion_sync(desde, hasta, maximo):
             "minutos": float(d.get("estimatedMinutesWatched") or 0.0),
             "duracion_media_s": float(d.get("averageViewDuration") or 0.0),
             "retencion_pct": float(d.get("averageViewPercentage") or 0.0),
+            # None y no 0.0 cuando no viene: en un Short no hay miniatura
+            # que pulsar, así que un cero ahí NO significa "nadie pulsó",
+            # significa "esta métrica no aplica". Promediarlo como cero
+            # hundiría el CTR de todo lo que sea vertical.
+            "impresiones": (int(d["videoThumbnailImpressions"])
+                            if d.get("videoThumbnailImpressions") is not None
+                            else None),
+            "ctr_pct": (float(d["videoThumbnailImpressionsClickRate"])
+                        if d.get("videoThumbnailImpressionsClickRate")
+                        is not None else None),
         })
     return fuera
 

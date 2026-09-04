@@ -45,6 +45,7 @@ from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse,
 import articulos
 import diagramas
 import lecho
+import prioridad
 import fuentes
 import portada
 import telegram_bot
@@ -602,6 +603,7 @@ async def lifespan(app: FastAPI):
               asyncio.create_task(bucle_resumen()),
               asyncio.create_task(bucle_programas_video()),
               asyncio.create_task(bucle_temas()),
+              asyncio.create_task(bucle_rendimiento()),
               asyncio.create_task(bucle_mapa()),
               asyncio.create_task(bucle_duelo()),
               asyncio.create_task(bucle_comentarios()),
@@ -714,6 +716,9 @@ class Estado:
         # trazas de velocidad de los dos coches. Se refresca en su propio
         # bucle porque /car_data no viene en el stream: hay que pedirlo, y
         # solo se pide para ESTE par.
+        # Lo que cada temática rinde de verdad (retención medida). Lo
+        # mantiene bucle_rendimiento y lo consulta el elector de temas.
+        self.rendimiento = None
         self.duelo: dict | None = None
         self.duelo_ts: float = 0.0
         # El último adelantamiento con su dibujo listo para pantalla.
@@ -1294,6 +1299,46 @@ async def control_retencion(request: Request, dias: int = 28,
         "peor_retencion": [fila(f) for f in por_ret[:5]],
         "mejor_retencion": [fila(f) for f in reversed(por_ret[-5:])],
         "filas": [{**f, "titulo": titulos.get(f["id"], "")} for f in filas],
+    })
+
+
+@app.get("/control/prioridad")
+async def control_prioridad(request: Request, clave: str = ""):
+    """Por qué el canal elige los temas que elige, ahora mismo.
+
+    Sin esto el sistema es una caja negra: si un día publica seis shorts
+    de neumáticos seguidos, hay que poder ver si fue el peso de partida,
+    la ventana del calendario o los números medidos.
+    """
+    if PANEL_CLAVE:
+        dada = clave or request.headers.get("X-Clave", "")
+        if not pysecrets.compare_digest(dada, PANEL_CLAVE):
+            return JSONResponse({"ok": False, "error": "Falta la clave"},
+                                status_code=401)
+    h = _historial_rendimiento()
+    dias = _dias_al_gp()
+    cats = sorted({c[0] for c in _TEMAS_TECNICOS} | set(prioridad.PESOS))
+    filas = [{"categoria": c,
+              "puntuacion": round(prioridad.puntuar(c, h, dias), 3),
+              "peso": prioridad.PESOS.get(c, prioridad.PESO_POR_DEFECTO),
+              "ventana": prioridad.factor_ventana(c, dias),
+              "medido": round(h.ajuste(c), 3) if h else None,
+              "videos": (h.cats.get(c, {}) or {}).get("n", 0) if h else 0,
+              "retencion": (h.cats.get(c, {}) or {}).get("retencion")
+                           if h else None,
+              "explicacion": prioridad.explicacion(c, h, dias)}
+             for c in cats]
+    filas.sort(key=lambda f: -f["puntuacion"])
+    return JSONResponse({
+        "ok": True,
+        "fase": prioridad.fase(dias), "dias_al_gp": dias,
+        "con_datos": bool(h),
+        "retencion_canal": round(h.retencion_canal(), 1) if h and
+                           h.retencion_canal() else None,
+        "destacadas": [{"categoria": c, "retencion": d["retencion"],
+                        "videos": d["n"]} for c, d in h.destacadas()]
+                      if h else [],
+        "categorias": filas,
     })
 
 
@@ -9233,8 +9278,10 @@ def _angulos_trazado(nombre, query, n=8):
     """n ángulos técnicos DISTINTOS enfocados en UN circuito: toma conceptos
     base variados (aero, motor, neumáticos, estrategia, historia) y les fuerza
     la lente del trazado. Así un GP rinde una tanda de shorts oportunos."""
-    conceptos = random.sample(_TEMAS_TECNICOS,
-                              k=min(n, len(_TEMAS_TECNICOS)))
+    # Priorizados, no al azar: si esta tanda sale en semana de carrera,
+    # la ventana ya empuja telemetría y estrategia por delante de historia.
+    conceptos = prioridad.elegir(_TEMAS_TECNICOS, _historial_rendimiento(),
+                                 _dias_al_gp(), n=min(n, len(_TEMAS_TECNICOS)))
     return [[cat, f"{base} — and why it matters most at {nombre}", query]
             for cat, base, _q in conceptos]
 
@@ -9351,8 +9398,35 @@ except ValueError:
     PESO_BANNED = 0.35
 
 
+def _historial_rendimiento():
+    """Lo medido por temática, del estado o del disco. Nunca lanza."""
+    h = getattr(estado, "rendimiento", None)
+    if h is None:
+        with contextlib.suppress(Exception):
+            h = prioridad.Historial.cargar()
+            estado.rendimiento = h
+    return h if (h and h.cats) else None
+
+
 def _concepto_ponderado():
-    """Concepto base del sorteo, con preferencia por la serie que más rinde."""
+    """Concepto base del sorteo, priorizado en vez de al azar.
+
+    Tres cosas deciden: el peso de partida de la temática, la ventana del
+    calendario (si hay carrera esta semana manda el circuito) y —cuando
+    ya hay— la retención MEDIDA de esa temática en este canal.
+
+    Mientras no haya datos se conserva el sorteo de antes, con su
+    PESO_BANNED escrito a mano. Ese 35% no es un capricho: salió de ver
+    que la serie de tecnología prohibida rendía. Sustituirlo por una
+    tabla de pesos teórica ANTES de tener con qué comprobarlo sería
+    cambiar una observación real por una suposición. En cuanto el bucle
+    de rendimiento junta muestras, los números toman el relevo.
+    """
+    h = _historial_rendimiento()
+    if h:
+        elegidos = prioridad.elegir(_TEMAS_TECNICOS, h, _dias_al_gp(), n=1)
+        if elegidos:
+            return elegidos[0]
     prohibidos = [c for c in _TEMAS_TECNICOS if c[0] == "Banned tech"]
     if prohibidos and random.random() < PESO_BANNED:
         return random.choice(prohibidos)
@@ -13716,6 +13790,111 @@ async def _rellenar_cola_temas(client):
     cola["temas"] = temas
     _guardar_cola_temas(cola)
     log.info("🧩 Cola de temas rellenada: +%d temas nuevos (IA)", len(nuevos))
+
+
+def _dias_al_gp():
+    """Días hasta la próxima carrera (negativo) o desde la última
+    (positivo). None si no se sabe.
+
+    De aquí sale la "ventana de oportunidad": el sábado de un Gran Premio
+    lo que interesa es telemetría del circuito que está rodando, y el
+    martes siguiente, degradación y decisiones de comisarios. Publicar un
+    documental de historia en mitad de un fin de semana de carrera es
+    competir contra lo que el espectador ha venido a ver.
+    """
+    ahora = dt.datetime.now(dt.timezone.utc)
+    carreras = [s["inicio"] for s in (estado.horario or [])
+                if (s.get("sesion") or "").lower() == "race"]
+    if not carreras:
+        return None
+    futuras = [c for c in carreras if c > ahora]
+    pasadas = [c for c in carreras if c <= ahora]
+    # La MÁS CERCANA en cualquiera de los dos sentidos: a tres días de la
+    # próxima ya es semana de carrera, y a dos de la anterior todavía se
+    # está hablando de ella.
+    cand = []
+    if futuras:
+        cand.append(-(min(futuras) - ahora).total_seconds() / 86400.0)
+    if pasadas:
+        cand.append((ahora - max(pasadas)).total_seconds() / 86400.0)
+    return round(min(cand, key=abs)) if cand else None
+
+
+def _muestras_rendimiento(filas):
+    """Cruza lo que midió YouTube con la temática de la que salió cada
+    short. Devuelve [{"categoria", "retencion", "ctr", "vistas"}].
+
+    El enlace existe porque al generar un short se guarda su `categoria`,
+    y al publicarlo se guarda su `youtube_id`. Sin ese cruce, la
+    retención es un número suelto: dice que un video aguantó poco, no
+    QUÉ TIPO de video aguanta poco, que es lo único accionable.
+    """
+    por_id = {}
+    for ruta in glob.glob(os.path.join("shorts", "short_*.json")):
+        with contextlib.suppress(Exception):
+            with open(ruta, encoding="utf-8") as f:
+                s = json.load(f)
+            vid = s.get("youtube_id")
+            if vid:
+                por_id[vid] = s
+    muestras = []
+    for f in (filas or []):
+        s = por_id.get(f.get("id"))
+        if not s:
+            continue           # publicado a mano o de antes de esto
+        cat = (s.get("categoria") or "").strip()
+        if not cat:
+            continue           # short genérico: no enseña nada de temática
+        muestras.append({"categoria": cat,
+                         "retencion": f.get("retencion_pct") or 0.0,
+                         "ctr": f.get("ctr_pct"),
+                         "vistas": f.get("vistas") or 0})
+    return muestras
+
+
+#: Cada cuánto se recalcula el rendimiento por temática. Seis horas: los
+#: datos de Analytics tardan en consolidarse y preguntar más a menudo no
+#: adelanta nada, solo gasta cuota.
+RENDIMIENTO_CADA_H = 6.0
+
+
+async def bucle_rendimiento():
+    """Mantiene al día lo que cada temática rinde de verdad.
+
+    Es el bucle de retroalimentación: baja la retención de los videos
+    publicados, la cruza con la temática de cada uno, y guarda las medias.
+    A partir de ahí el elector de temas deja de sortear a ciegas.
+
+    RENDIMIENTO=off lo apaga.
+    """
+    if os.environ.get("RENDIMIENTO", "on").lower() in ("off", "0", ""):
+        return
+    await asyncio.sleep(300)      # dejar arrancar el resto
+    while True:
+        try:
+            if youtube_subir.oauth_configurado():
+                filas, motivo = await asyncio.to_thread(
+                    youtube_subir.retencion, 90, 200, True)
+                if filas:
+                    muestras = _muestras_rendimiento(filas)
+                    if muestras:
+                        h = prioridad.Historial()
+                        h.recalcular(muestras)
+                        h.guardar()
+                        estado.rendimiento = h
+                        mejor = h.destacadas()
+                        log.info("📈 Rendimiento por temática al día "
+                                 "(%d videos con tema, %d temáticas)%s",
+                                 len(muestras), len(h.cats),
+                                 (" — destaca: " +
+                                  ", ".join(f"{c} {d['retencion']:.0f}%"
+                                            for c, d in mejor[:3]))
+                                 if mejor else "")
+                elif motivo:
+                    log.info("Rendimiento sin datos [%s]", motivo[0])
+        except Exception as e:
+            log.info("Bucle de rendimiento falló (%s)", e)
+        await asyncio.sleep(RENDIMIENTO_CADA_H * 3600)
 
 
 async def bucle_temas():
