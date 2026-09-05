@@ -9318,6 +9318,26 @@ DURACION_SHORT_MIN = 1  # Duración objetivo de un short (minutos)
 
 # Corazón del canal: mini-lecciones EVERGREEN (no envejecen). Cada tema es
 # (categoría, gancho de la lección, consulta de fotos). Se rota sin repetir.
+#: Cómo cerrar para que alguien conteste.
+#:
+#: Antes decía solo "End with a question to the viewer", y de ahí salen
+#: preguntas de compromiso: "¿a que es increíble?", "¿tú qué opinas?".
+#: Nadie contesta a eso, porque no piden nada que el espectador tenga.
+#:
+#: Un short que explica bien una cosa DEJA SATISFECHO, y el satisfecho no
+#: comenta: no le queda nada que añadir. Los comentarios salen de tener
+#: una opinión, de poder elegir bando, o de saber algo que el video no
+#: dijo. Así que la pregunta tiene que pedir eso y no un aplauso.
+_CIERRE_QUE_PIDE_RESPUESTA = (
+    "End with a question the viewer can actually ANSWER from their own "
+    "opinion or memory — a side to take, a choice between two things, or "
+    "something they know that the script did not say. Never a rhetorical "
+    "one: 'isn't that amazing?', 'what do you think?' and 'crazy, right?' "
+    "are closing noises, not questions, and nobody replies to them. Good: "
+    "'Would you take the V10 noise back if it cost you two seconds a lap?' "
+    "Bad: 'Pretty wild, right?'"
+)
+
 _TEMAS_TECNICOS = [
     # Aerodinámica
     ("Aero", "how the front wing steers airflow around the whole car",
@@ -9863,8 +9883,9 @@ async def generar_short(client: anthropic.AsyncAnthropic, tipo="noticia",
             f"picture, then the bit that makes them go 'wait, really?'. "
             f"Everyday words, contractions, nothing stiff and nothing crude. "
             f"Do not use these worn-out words: payoff, game-changer, "
-            f"masterclass, insane, absolutely massive. End with a question to "
-            f"the viewer. Category: {cat}. Write ONLY the script, one tight "
+            f"masterclass, insane, absolutely massive. "
+            + _CIERRE_QUE_PIDE_RESPUESTA
+            + f" Category: {cat}. Write ONLY the script, one tight "
             f"paragraph."
             + _pista_vocabulario(cat, leccion)
             + _hechos_para(cat))
@@ -13376,7 +13397,7 @@ SYSTEM_SHORT_TEC = ("You are a viral motorsport DATA analyst writing a "
                     "ONLY the script (max 45 words), one tight paragraph. "
                     "Never invent specific numbers, gaps or lap times — the "
                     "on-screen graph shows the exact data; you set it up and "
-                    "explain what it MEANS. End with a question to the viewer.")
+                    "explain what it MEANS. ") + _CIERRE_QUE_PIDE_RESPUESTA
 
 
 async def _generar_short_tecnico(client, resumen):
