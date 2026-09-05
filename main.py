@@ -3009,8 +3009,20 @@ async def visor():
              text-transform: uppercase; display: none;
              text-shadow: 0 1px 8px rgba(0,0,0,.7); }
   body.programa main { grid-template-columns: 1fr; }
+  /* Durante un PROGRAMA se esconde el mobiliario de sesión. El mapa
+     faltaba en esta lista, y por eso salía encima de un documental de
+     historia —tapando su propio título— sin que hubiera ni clasificación
+     ni carrera. El mapa pertenece a una sesión y a la previa; en un
+     capítulo sobre Fangio compite con la foto, que ahí ES el contenido.
+     Se esconde con !important porque `pintarMapa` decide su display
+     desde JavaScript y si no, se lo vuelve a poner en el siguiente
+     refresco. */
   body.programa #panel-board,
   body.programa #right-col { display: none; }
+  body.programa #mapabox,
+  body.programa #panel-mapa,
+  body.interludio #mapabox,
+  body.standby #mapabox { display: none !important; }
   body.programa #centro { max-width: 820px; margin: 0 auto; }
   #credito { position: fixed; right: 12px; bottom: 10px; z-index: 2;
              font-size: .62rem; color: var(--dim); opacity: .7;
