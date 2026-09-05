@@ -1959,6 +1959,24 @@ async def panel():
   <div id="ret-tabla"></div>
 </div>
 
+<h2>Qué temas elige el canal, y por qué</h2>
+<div id="pribox">
+  <div class="row"><button onclick="verPrioridad()">🎯 Ver prioridad de temas</button></div>
+  <div id="pri-estado" class="mini">Peso de partida, ventana del calendario
+    y retención medida. Si un día el canal publica seis shorts de lo mismo,
+    aquí se ve si fue la hipótesis, el calendario o los números.</div>
+  <div id="pri-tabla"></div>
+</div>
+
+<h2>Informe: en qué se diferencian los que aguantan</h2>
+<div id="infbox">
+  <div class="row"><button onclick="verInforme()">🔎 Analizar todos los videos</button></div>
+  <div id="inf-estado" class="mini">Cruza la retención de cada video con las
+    decisiones con las que se armó (diagrama, serie, metraje, título) y dice
+    qué tienen en común los que retienen. Tarda un poco.</div>
+  <div id="inf-tabla"></div>
+</div>
+
 <h2>Chat de YouTube (responder al aire)</h2>
 <div id="chatbox">
   <input id="chat-url" type="text" placeholder="Pega la URL del directo de YouTube"
@@ -2010,25 +2028,36 @@ async function post(u){ await postSeguro(u); refrescar(); }
 // La retención va por GET (para poder abrirla también a mano), así que
 // necesita su propia función: `postSeguro` manda POST. Reutiliza la misma
 // clave guardada y la pide si hace falta, igual que los demás botones.
-async function verRetencion(dias){
-  const est = document.getElementById('ret-estado');
-  const tab = document.getElementById('ret-tabla');
-  est.textContent = 'Consultando…'; tab.innerHTML = '';
-  const pedir = (c) => fetch('/control/retencion?dias=' + dias,
-                             {headers: c ? {'X-Clave': c} : {}});
+// Pide un GET del panel con la clave guardada, y la pide una vez si
+// hace falta. Estaba escrito a mano DENTRO de verRetencion, y por eso al
+// añadir /control/informe y /control/prioridad se quedaron sin forma de
+// mandar la clave: no había botón, solo se podían abrir por URL, y ahí
+// no viaja la cabecera. Sacarlo aquí es lo que impide que vuelva a pasar.
+async function getConClave(url){
+  const pedir = (c) => fetch(url, {headers: c ? {'X-Clave': c} : {}});
   let c = localStorage.getItem('panel_clave') || '';
   let r = await pedir(c);
   if (r.status === 401){
     c = prompt('Clave del panel (Secret PANEL_CLAVE):') || '';
-    if (!c){ est.textContent = 'Cancelado.'; return; }
+    if (!c) return {cancelado: true};
     localStorage.setItem('panel_clave', c);
     r = await pedir(c);
     if (r.status === 401){
       localStorage.removeItem('panel_clave');
-      est.textContent = 'Clave incorrecta.'; return;
+      return {mala: true};
     }
   }
-  let d; try { d = await r.json(); } catch(e){ d = null; }
+  try { return {datos: await r.json()}; } catch(e){ return {datos: null}; }
+}
+
+async function verRetencion(dias){
+  const est = document.getElementById('ret-estado');
+  const tab = document.getElementById('ret-tabla');
+  est.textContent = 'Consultando…'; tab.innerHTML = '';
+  const res = await getConClave('/control/retencion?dias=' + dias);
+  if (res.cancelado){ est.textContent = 'Cancelado.'; return; }
+  if (res.mala){ est.textContent = 'Clave incorrecta.'; return; }
+  const d = res.datos;
   if (!d || !d.ok){
     // El error ya viene traducido a UNA instrucción concreta. Si trae un
     // enlace —Google da el de activar la API en el proyecto correcto— se
@@ -2067,6 +2096,64 @@ async function verRetencion(dias){
   tab.innerHTML = tabla('Lo que más aguanta', d.mejor_retencion || [])
                 + tabla('Lo que menos aguanta', d.peor_retencion || []);
 }
+async function verPrioridad(){
+  const est = document.getElementById('pri-estado');
+  const tab = document.getElementById('pri-tabla');
+  est.textContent = 'Consultando…'; tab.innerHTML = '';
+  const res = await getConClave('/control/prioridad');
+  if (res.cancelado){ est.textContent = 'Cancelado.'; return; }
+  if (res.mala){ est.textContent = 'Clave incorrecta.'; return; }
+  const d = res.datos;
+  if (!d || !d.ok){ est.textContent = '⚠ ' + ((d&&d.error)||'no se pudo'); return; }
+  est.textContent = 'Fase: ' + d.fase
+    + (d.dias_al_gp === null ? ' (sin carrera cerca)'
+                             : ' (' + d.dias_al_gp + ' días respecto al GP)')
+    + (d.con_datos ? ' · retención del canal ' + d.retencion_canal + '%'
+                   : ' · aún sin datos medidos');
+  tab.innerHTML = '<table class="ret"><tr><th>Temática</th><th>Puntos</th>'
+    + '<th>Videos</th></tr>'
+    + (d.categorias||[]).slice(0, 10).map(f =>
+        '<tr><td>' + escP(f.categoria) + '</td><td>'
+        + f.puntuacion.toFixed(2) + '</td><td>'
+        + (f.videos || '—') + '</td></tr>').join('') + '</table>';
+}
+
+async function verInforme(){
+  const est = document.getElementById('inf-estado');
+  const tab = document.getElementById('inf-tabla');
+  est.textContent = 'Analizando… (baja la curva de 20 videos, tarda)';
+  tab.innerHTML = '';
+  const res = await getConClave('/control/informe?dias=90&curvas=20');
+  if (res.cancelado){ est.textContent = 'Cancelado.'; return; }
+  if (res.mala){ est.textContent = 'Clave incorrecta.'; return; }
+  const d = res.datos;
+  if (!d || !d.ok){ est.textContent = '⚠ ' + ((d&&d.error)||'no se pudo'); return; }
+  const a = d.analisis || {};
+  if (a.suficiente === false){
+    est.textContent = 'Aún no hay bastantes videos con vistas para comparar ('
+      + a.videos + ' de ' + a.hacen_falta + ').';
+    return;
+  }
+  est.innerHTML = escP(a.videos + ' videos analizados · retención mediana '
+      + a.retencion_mediana + '% · ' + d.curvas_leidas + ' curvas leídas')
+    + (d.lectura_perfil ? '<div class="lectura">' + escP(d.lectura_perfil)
+                          + '</div>' : '');
+  const hs = (a.hallazgos || []);
+  tab.innerHTML = (hs.length
+      ? '<table class="ret"><tr><th>Lo que cambia</th><th>Puntos</th></tr>'
+        + hs.map(h => '<tr><td>' + escP(h.frase) + '</td><td>+'
+            + h.diferencia + '</td></tr>').join('') + '</table>'
+      : '<div class="mini">Ninguna diferencia pasa el filtro: con estos '
+        + 'videos, ninguna de las decisiones comparadas explica la '
+        + 'retención. No inventar un patrón también es un resultado.</div>')
+    + ((a.por_categoria||[]).length
+      ? '<table class="ret"><tr><th>Temática</th><th>Retiene</th>'
+        + '<th>Videos</th></tr>'
+        + a.por_categoria.map(c => '<tr><td>' + escP(c.categoria)
+            + '</td><td>' + c.retencion + '%</td><td>' + c.n
+            + '</td></tr>').join('') + '</table>' : '');
+}
+
 function escP(s){
   return String(s == null ? '' : s)
     .replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
