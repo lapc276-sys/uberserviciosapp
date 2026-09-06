@@ -71,6 +71,11 @@ INTERVALO_NARRACION = 10   # segundos entre narraciones con eventos
 LIVE_BUFFER = float(os.environ.get("LIVE_BUFFER", "25"))
 # Sin eventos, cada cuánto considerar rellenar (configurable por Secret)
 RELLENO_SEGUNDOS = float(os.environ.get("RELLENO_SEGUNDOS", "90"))
+# Caída la bandera a cuadros, el análisis va SEGUIDO, no cada minuto y
+# medio: son los minutos en los que la gente sigue delante de la pantalla
+# esperando la lectura de la carrera. Empieza en cuanto se acaba, sin
+# esperar el hueco de relleno normal.
+RESUMEN_SEGUNDOS = float(os.environ.get("RESUMEN_SEGUNDOS", "30"))
 # Fuera de vivo: cada cuánto anuncia el dúo la próxima sesión (segundos)
 ANUNCIO_SEGUNDOS = float(os.environ.get("ANUNCIO_SEGUNDOS", "600"))
 # Por defecto el canal NO narra el calendario en voz cuando no hay carrera
@@ -6428,17 +6433,25 @@ async def narrar_datos(client: anthropic.AsyncAnthropic, eventos):
         # callar. Cada intervención UN ángulo nuevo distinto a la memoria.
         pedido = (
             "THE SESSION IS OVER — the result is final and won't change. "
-            "This is calm post-race analysis, NOT live action. Do NOT keep "
-            "repeating the result or the top three — say it once, then move "
-            "on. Each time pick ONE FRESH angle NOT already in the memory:\n"
+            "The podium is on screen and THIS post-race analysis is now the "
+            "show: it is what the audience stayed for, so keep it going and "
+            "do not trail off. It is calm and conversational, NOT live "
+            "commentary. Do NOT keep repeating the result or the top three "
+            "— say it once, then move on. Each time pick ONE FRESH angle NOT "
+            "already in the memory:\n"
             "  • driver of the day and why (from the data);\n"
             "  • what this result means for the championship fight;\n"
             "  • a strategy call that decided it, a tyre or pace read;\n"
+            "  • the fight for the last podium step, or for the points;\n"
             "  • a disappointment or a surprise, someone who recovered;\n"
+            "  • the best overtake of the day and where on the lap it came;\n"
+            "  • how the two team-mates compared across the race;\n"
+            "  • what the midfield order says about the last upgrade;\n"
+            "  • what this track rewarded, and how the next one differs;\n"
             "  • a look ahead to the next round.\n"
-            "One to three short lines. If you've already covered the "
-            "interesting angles, return an EMPTY lineas array and let it "
-            "breathe — do NOT loop. Silence is fine here.")
+            "Two to three short lines. Only if every angle above is already "
+            "in the memory, return an EMPTY lineas array and let it breathe "
+            "— but that should take a good while to happen.")
     elif prerace:
         # PRE-CARRERA: los coches aún no salen. Hay que ANIMAR el ambiente
         # como una previa de TV, sin quedarse callados y sin repetir.
@@ -14885,6 +14898,29 @@ def _sigue_rodando():
     return True
 
 
+def _analisis_final():
+    """¿Estamos ya en el resumen de después de la bandera a cuadros?
+
+    Se mira por DOS caminos y basta con uno:
+
+    • el reloj — la sesión entró en su ventana de post-show;
+    • las vueltas — se dio la última, que es lo que ve el espectador.
+
+    Hace falta el segundo porque la hora de fin llega tarde: la sesión se
+    da por cerrada minutos después de que el ganador cruce la meta, y en
+    ese hueco el dúo seguía narrando como si la carrera continuara.
+    """
+    t = estado.tele
+    if t is None:
+        return False
+    if estado.postsesion:
+        return True
+    with contextlib.suppress(Exception):
+        if t.total_vueltas and t.vuelta and t.vuelta >= t.total_vueltas:
+            return True
+    return False
+
+
 def sesion_en_ventana(ahora, sesiones, antes_min=30, despues_min=0):
     """Decisión pura: ¿qué sesión debería estar al aire ahora? Devuelve la
     sesión (o None). La ventana va desde `antes_min` antes del inicio (pre-
@@ -14969,14 +15005,22 @@ async def _correr_sesion(clave):
             estado.tele = tele
             estado.tele_cargando = False
             estado.programa = None
-            # Sesión nueva: la parrilla y los resúmenes ya dados son de la
-            # anterior y no valen para esta.
-            estado.parrilla, estado.recaps = {}, set()
-            estado.podio = None
-            estado.hist_pos, estado.pase_destacado = {}, None
             # Carrera de la parrilla = evento en vivo real → calidad máxima
             estado.carrera_en_vivo = True
             if primera_vez:
+                # Sesión NUEVA: la parrilla y los resúmenes ya dados son de
+                # la anterior y no valen para esta.
+                #
+                # Y esto va DENTRO del "primera vez" a propósito. Abajo, al
+                # agotarse los datos descargados, se vuelve a este punto
+                # para recargar la MISMA sesión cada 20 s. Cuando el borrado
+                # estaba fuera, esa recarga barría el podio recién armado
+                # —desaparecía de pantalla a los veinte segundos de salir—
+                # y vaciaba los resúmenes ya dados, con lo que los del 25,
+                # 50 y 75% podían repetirse.
+                estado.parrilla, estado.recaps = {}, set()
+                estado.podio = None
+                estado.hist_pos, estado.pase_destacado = {}, None
                 # Bienvenida solo si NO estamos retomando tras un reinicio
                 estado.apertura_pendiente = not reanudado
                 estado.ultimo_cta = time.time()    # 1ª invitación en ~20 min
@@ -15091,7 +15135,8 @@ async def bucle_programacion():
     prox_rotacion = 0.0
     en_standby = False
     tarea_carrera = None
-    cierre_hecho_para = None  # session_key ya despedida (evita repetir)
+    cierre_hecho_para = None   # session_key con el post-show ya montado
+    despedida_hecha_para = None  # session_key ya despedida (evita repetir)
     while True:
         ahora = dt.datetime.now(dt.timezone.utc)
         s = sesion_en_ventana(ahora, _horario_en_vivo(), PRESHOW_MINUTOS,
@@ -15105,6 +15150,7 @@ async def bucle_programacion():
                 estado.show_manual = None   # la carrera real toma el control
                 en_standby = False
                 cierre_hecho_para = None
+                despedida_hecha_para = None
                 estado.postsesion = False
                 estado.sesion_meta = {"sesion": s["sesion"],
                                       "pais": s["pais"],
@@ -15131,7 +15177,6 @@ async def bucle_programacion():
                                              f"{p['pos']}. {p['nombre']}"
                                              for p in
                                              estado.podio["pilotos"]))
-                    estado.cierre_pendiente = True
                     # Guardar el resumen de la sesión (tele aún vive) para
                     # que se genere el video-reseña con el dúo debatiendo
                     _guardar_resumen_sesion(s)
@@ -15147,6 +15192,19 @@ async def bucle_programacion():
                         _generar_short_velocidades(
                             {"circuito": s.get("circuito"),
                              "sesion": s.get("sesion")})
+                # La despedida va al FINAL del post-show, no nada más cruzar
+                # la meta. Antes se lanzaba en el mismo instante en que se
+                # daba la sesión por terminada: lo primero que se oía tras
+                # la bandera era "hasta la próxima", y después venían veinte
+                # minutos de análisis con el podio en pantalla. Ahora se
+                # dice cuando de verdad se va a cortar, con margen para que
+                # dé tiempo a decirla antes de pasar a los documentales.
+                fin_ventana = s["fin"] + dt.timedelta(
+                    minutes=POSTSHOW_MINUTOS)
+                if (despedida_hecha_para != s["session_key"]
+                        and ahora >= fin_ventana - dt.timedelta(seconds=120)):
+                    despedida_hecha_para = s["session_key"]
+                    estado.cierre_pendiente = True
         else:
             # Se acabó la cortesía del post-show: el podio se retira. Si no,
             # se quedaba encima de los documentales que vienen después.
@@ -15681,10 +15739,21 @@ async def bucle_narracion():
     ultimo_frame_narrado = 0.0
     ultimo_relleno = 0.0
     pausa_api_hasta = 0.0   # si Claude falla por créditos, pausar hasta aquí
+    en_resumen = False      # ya arrancó el análisis de después de la meta
     while True:
         await asyncio.sleep(2)
         ahora = time.time()
         desde_ultima = ahora - estado.narracion_ts
+        # Bandera a cuadros: el resumen empieza AHÍ, no cuando toque el
+        # siguiente relleno. Se suelta el contador para que la primera
+        # lectura de la carrera salga en el acto.
+        if _analisis_final():
+            if not en_resumen:
+                en_resumen = True
+                ultimo_relleno = 0.0
+                log.info("🏁 Se acabó — arranca el análisis de la carrera")
+        elif en_resumen:
+            en_resumen = False
         # La parrilla se guarda ANTES de cualquier corte: es un dato, no un
         # segmento, no cuesta una llamada y solo hay una oportunidad de
         # tomarla. Con el canal en espera en la vuelta 1 se habría perdido
@@ -15738,6 +15807,12 @@ async def bucle_narracion():
                 relleno_int = RELLENO_SEGUNDOS
                 if estado.tele.vuelta < 1:
                     relleno_int = min(RELLENO_SEGUNDOS, 20)
+                elif en_resumen:
+                    # Terminada la carrera, el análisis va seguido: con los
+                    # 90 s de siempre el resumen tardaba minuto y medio en
+                    # empezar y salían cuatro frases sueltas en veinte
+                    # minutos, con la gente marchándose entre una y otra.
+                    relleno_int = RESUMEN_SEGUNDOS
                 if estado.eventos and desde_ultima >= INTERVALO_NARRACION:
                     lote = estado.eventos[:6]
                     del estado.eventos[:6]
