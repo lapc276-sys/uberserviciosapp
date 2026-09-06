@@ -3236,17 +3236,19 @@ async def visor():
                  font-size: .82rem; color: var(--dim); z-index: 2; }
   /* Subtítulo estilo TV: SOLO la línea que se está narrando, abajo al
      centro; cambia cuando el audio pasa a la siguiente línea */
-  /* El diálogo sube por encima del rótulo. Los dos van anclados abajo y
-     crecen hacia arriba, así que sin esto la tarjeta (z-index 45) tapaba
-     el cuadro de subtítulos (z-index 4) entero — y con la tarjeta de
-     pelea, que es más alta, no se veía ni una línea de lo que se está
-     diciendo. La altura la pone `pintarRotulo` en --rotulo-alto, porque
-     cada tarjeta mide una cosa distinta y en CSS no se puede saber. */
+  /* El subtítulo NO se mueve. Estuvo un tiempo subiendo por encima del
+     rótulo (con una variable --rotulo-alto que ponía el JavaScript), y
+     eso trajo dos problemas peores que el que resolvía: con una tarjeta
+     alta el subtítulo acababa metido en el mapa, y como la altura cambia
+     al rotar las tarjetas, el cuadro SE MOVÍA solo en pantalla.
+     Ahora el sitio del subtítulo es fijo y es el rótulo el que se aparta
+     —queda anclado por encima— con una altura acotada. Que no se mueva
+     nada es más importante que aprovechar cada píxel. */
   #dialogo { position: fixed; left: 50%; transform: translateX(-50%);
-             bottom: calc(58px + var(--rotulo-alto, 0px));
+             bottom: 58px;
              width: min(940px, 88vw); z-index: 4;
              opacity: 0; pointer-events: none;
-             transition: opacity .35s ease, bottom .35s ease; }
+             transition: opacity .35s ease; }
   #dialogo.on { opacity: 1; }
   .card { background: rgba(13,16,23,.86); border: 1px solid var(--line);
           border-radius: 14px; padding: 15px 24px; text-align: center;
@@ -3285,12 +3287,17 @@ async def visor():
      tipografía de emisión todo creció un 25%, y la tarjeta de pelea
      —que lleva gráfico— se hacía demasiado grande en pantalla. Estrechar
      la caja encoge también el gráfico, porque mantiene su proporción. */
-  #battlebar { position: fixed; left: 50%; bottom: 74px; z-index: 45;
-               width: min(620px, calc(100vw - 44px));
+  /* Anclado por encima del subtítulo (84px + su alto + aire) y con TOPE
+     de altura: una tarjeta que crece hasta comerse el mapa es lo que
+     pasaba con la de pelea. Si el contenido no cabe, se recorta — antes
+     eso que taparlo todo. */
+  #battlebar { position: fixed; left: 50%; bottom: 211px; z-index: 45;
+               max-height: 232px; overflow: hidden;
+               width: min(560px, calc(100vw - 44px));
                transform: translate(-50%, 14px);
                opacity: 0; pointer-events: none;
                transition: opacity .35s ease, transform .35s ease;
-               padding: 12px 18px 13px;
+               padding: 9px 15px 10px;
                background: rgba(11,13,18,.93);
                border: 1px solid var(--line);
                border-left: 3px solid var(--accent); border-radius: 12px;
@@ -3400,12 +3407,12 @@ async def visor():
   /* Pelea bajo un segundo: reutiliza las filas del atasco (misma
      retícula de etiqueta + cifras) y le añade arriba las dos trazas de
      velocidad, que es lo que no se podía enseñar hasta ahora. */
-  .carta.pelea .acab { display: flex; align-items: baseline; gap: 8px;
-                       margin-bottom: 7px; }
-  .carta.pelea .acab b { font-size: 1.2rem; font-weight: 800; }
+  .carta.pelea .acab { display: flex; align-items: baseline; gap: 7px;
+                       margin-bottom: 5px; }
+  .carta.pelea .acab b { font-size: .98rem; font-weight: 800; }
   .carta.pelea .acab span { color: var(--dim); font-size: .68rem;
                             letter-spacing: .12em; text-transform: uppercase; }
-  .carta.pelea .trazas { margin-bottom: 8px; }
+  .carta.pelea .trazas { margin-bottom: 6px; }
   .carta.pelea .trazas canvas { display: block; width: 100%;
                                 border-radius: 6px;
                                 background: rgba(255,255,255,.02); }
@@ -3418,8 +3425,8 @@ async def visor():
   .carta.pelea .pt b { font-size: .74rem; font-weight: 800; }
   /* Ancho fijo en las cifras: sin esto el número salta de sitio en cada
      refresco y la tarjeta parece que vibra. */
-  .carta.pelea .pt .kmh { font-size: 1.02rem; font-weight: 800;
-                          min-width: 52px; text-align: right; }
+  .carta.pelea .pt .kmh { font-size: .88rem; font-weight: 800;
+                          min-width: 46px; text-align: right; }
   .carta.pelea .pt .kmh i, .carta.pelea .pt .dv i {
       font-style: normal; font-size: .55rem; color: var(--dim);
       margin-left: 2px; letter-spacing: .04em; }
@@ -3428,19 +3435,19 @@ async def visor():
   .carta.pelea .win { margin-left: auto; font-size: .55rem;
                       letter-spacing: .12em; color: var(--dim);
                       text-transform: uppercase; }
-  .carta.pelea .agrid { display: flex; flex-direction: column; gap: 5px; }
+  .carta.pelea .agrid { display: flex; flex-direction: column; gap: 3px; }
   .carta.pelea .afila { display: flex; align-items: center; gap: 8px;
                         font-variant-numeric: tabular-nums; }
   .carta.pelea .afila .et { color: var(--dim); font-size: .58rem;
                             letter-spacing: .16em; width: 6.2rem;
                             flex: none; }
-  .carta.pelea .afila b { font-size: 1rem; font-weight: 800; }
+  .carta.pelea .afila b { font-size: .86rem; font-weight: 800; }
   .carta.pelea .afila u { text-decoration: none; color: var(--dim);
                           font-size: .6rem; }
   .carta.pelea .afila em { font-style: normal; color: var(--dim);
                            font-size: .6rem; letter-spacing: .08em; }
-  .carta.pelea .sx { font-size: .84rem; font-weight: 800;
-                     padding: 1px 7px; border-radius: 5px;
+  .carta.pelea .sx { font-size: .74rem; font-weight: 800;
+                     padding: 0 6px; border-radius: 5px;
                      background: rgba(255,255,255,.05); }
   .carta.pelea .dl { font-size: .8rem; font-weight: 800; margin-left: 2px; }
   .carta.pelea .ed { color: var(--dim); font-size: .68rem; }
@@ -3558,9 +3565,9 @@ async def visor():
   #voz.pedir { display: block; }
   /* El ticker fijo abajo (58px) no debe tapar el contenido ni el botón */
   body { padding-bottom: 66px; }
-  /* El subtítulo de TV sube para no chocar con el ticker, y además por
-     encima del rótulo cuando hay una tarjeta puesta (ver --rotulo-alto). */
-  #dialogo { bottom: calc(84px + var(--rotulo-alto, 0px)); }
+  /* El subtítulo de TV sube para no chocar con el ticker. Fijo: ver
+     arriba por qué no se mueve con el rótulo. */
+  #dialogo { bottom: 84px; }
 </style>
 </head>
 <body>
@@ -3637,7 +3644,15 @@ async def visor():
 </div></div>
 <button id="voz">CLICK TO ENABLE SOUND</button>
 <script>
-let vozActiva = true, ultimoSegmento = -1, posPrevias = {};
+// ?mudo en la URL abre la pantalla SIN audio.
+//
+// La misma página es la que captura OBS y la que abre el dueño para
+// mirarla. Si las dos suenan —y OBS suele capturar el audio del
+// escritorio— la narración sale DOBLE al aire, con las dos copias
+// desfasadas. Con /?mudo se puede mirar, hacer capturas y comprobar
+// cosas sin tocar lo que se está emitiendo.
+const MUDO_URL = new URLSearchParams(location.search).has('mudo');
+let vozActiva = !MUDO_URL, ultimoSegmento = -1, posPrevias = {};
 let reproduciendo = false, pendiente = null, amb = null;
 
 // ── El lecho: el fondo grave de la carrera ─────────────────────────────
@@ -3893,11 +3908,7 @@ function pintarRotulo(d) {
   }
   if (deg.length >= 3) cartas.push(['deg', () => cartaDegradacion(deg)]);
   if (d.pit) cartas.push(['pit', () => cartaPit(d.pit, deg)]);
-  if (!cartas.length) {
-    caja.classList.remove('on'); rotClave = '';
-    document.body.style.setProperty('--rotulo-alto', '0px');
-    return;
-  }
+  if (!cartas.length) { caja.classList.remove('on'); rotClave = ''; return; }
 
   const ahora = Date.now();
   if (!rotTs) rotTs = ahora;
@@ -3921,14 +3932,6 @@ function pintarRotulo(d) {
     caja.firstChild._actualizar(d);
   }
   caja.classList.add('on');
-  // Cuánto sitio ocupa el rótulo, para que el subtítulo se coloque
-  // ENCIMA en vez de quedar debajo. Se mide después de montar la
-  // tarjeta porque cada una tiene una altura distinta, y la de pelea
-  // —con su gráfico— es bastante más alta que las demás.
-  requestAnimationFrame(() => {
-    const alto = Math.round(caja.getBoundingClientRect().height);
-    document.body.style.setProperty('--rotulo-alto', (alto + 16) + 'px');
-  });
 }
 
 // ── El tamaño del mapa ─────────────────────────────────────────────────
@@ -4324,15 +4327,16 @@ function aclarar(hex, f) {
 
 function trazaDoble(sA, colA, sB, colB, min, max, guiones) {
   const c = document.createElement('canvas');
-  // Se dibuja en coordenadas fijas (320x40) sobre un búfer 4 veces
+  // Se dibuja en coordenadas fijas (320x27) sobre un búfer 4 veces
   // mayor, y el CSS lo estira manteniendo la proporción. Antes el búfer
   // medía 320 de ancho y se mostraba a 700: la línea salía borrosa y
   // aplastada. Así queda nítido a cualquier ancho y los grosores y
   // tipografías siguen expresados en unidades legibles.
-  // Proporción ancha (unos 8:1). Con 5:1 el gráfico se comía un tercio
-  // de la pantalla en 1080p y la mayor parte era hueco: los dos coches
-  // van a tope dos tercios de la ventana, así que la franja alta sobra.
-  const w = 320, h = 40, K = 4;
+  // Muy ancha (12:1). El gráfico es la parte que más alto roba y la
+  // tarjeta tiene que caber sobre el subtítulo sin tocar el mapa. A esta
+  // proporción la separación entre las dos líneas —que es lo único que
+  // hay que leer— se sigue viendo igual de bien.
+  const w = 320, h = 27, K = 4;
   c.width = w * K; c.height = h * K;
   c.style.width = '100%'; c.style.height = 'auto';
   c.style.aspectRatio = w + ' / ' + h;
@@ -4349,7 +4353,7 @@ function trazaDoble(sA, colA, sB, colB, min, max, guiones) {
   // Franja de dibujo con hueco arriba y abajo para las cifras de escala.
   // Sin este margen la línea del más rápido pasa POR ENCIMA del "322
   // km/h" y se leían las dos cosas a la vez, ninguna bien.
-  const ARR = 10, ABJ = 8;
+  const ARR = 9, ABJ = 7;
   const py = v => h - ABJ - (v - min) / (max - min) * (h - ARR - ABJ);
   const traza = (s, col, raya) => {
     if (!s || s.length < 2) return;
@@ -4434,13 +4438,11 @@ function cartaPelea(p) {
         + '<span class="sx mal">S' + p.pierde.n + ' ' + sec(p.pierde)
         + '</span><em>s per lap</em></div>';
     }
-    const na = (p.neumaticos || {}).detras, nb = (p.neumaticos || {}).delante;
-    if (na && nb && (na.c || nb.c)) {
-      filas += '<div class="afila"><span class="et">TYRES</span>'
-        + neuChip(na.c) + '<span class="ed">' + na.v + 'L</span>'
-        + '<u>vs</u>' + neuChip(nb.c) + '<span class="ed">' + nb.v + 'L</span>'
-        + '</div>';
-    }
+    // Los neumáticos NO van en esta tarjeta. Con el gráfico dentro, el
+    // contenido pasaba del alto de la caja y lo que se cortaba era la
+    // ÚLTIMA línea — justo la lectura, que es lo único que explica lo que
+    // se está viendo. El compuesto y su edad ya están en el leaderboard;
+    // la lectura no está en ningún otro sitio.
     const pegado = p.vueltas >= 2 ? ' · ' + p.vueltas + ' LAPS' : '';
     el.innerHTML = '<div class="cab"><span class="et">FIGHT</span>'
       + '<span class="pn">' + (p.gap || 0).toFixed(2) + 's'
@@ -5105,70 +5107,59 @@ function pintarMapa(d) {
     const [X, Y] = punto(c);
     dibujarCasco(ctx, X, Y, rC, c.c ? ('#' + c.c) : '#E10600');
   }
-  ctx.font = (grande ? '800 14px' : '700 9px') + ' Inter,sans-serif';
+  // El PUESTO va dentro del casco, y el nombre SOLO para los dos coches
+  // de la pelea destacada.
+  //
+  // Antes cada coche llevaba su chapa con dorsal y acrónimo, y las chapas
+  // se buscaban hueco solas en anillos alrededor del casco. En un pelotón
+  // suelto funcionaba; en cuanto se juntaban —que es justo cuando la
+  // gente mira el mapa— pasaban las tres cosas a la vez: se amontonaban,
+  // las que no encontraban sitio DESAPARECÍAN, y a las que quedaban lejos
+  // se les dibujaba una guía, así que el mapa se llenaba de rayas
+  // cruzando la pista.
+  //
+  // Las retransmisiones de verdad no rotulan veinte coches: ponen el
+  // número y ya. Con el nombre solo en los dos que están peleando, el
+  // mapa se lee siempre y no hay nada que colocar.
+  const pel = (d.duelo && d.duelo.detras && d.duelo.delante)
+              ? [d.duelo.detras.acr, d.duelo.delante.acr] : [];
   ctx.textBaseline = 'middle';
-  const alto = grande ? 24 : 13;
-  const puestas = [];
-  const libre = b => !puestas.some(o => !(b[2] <= o[0] || b[0] >= o[2] ||
-                                          b[3] <= o[1] || b[1] >= o[3]));
+  ctx.textAlign = 'center';
+  ctx.font = (grande ? '800 13px' : '700 8px') + ' Inter,sans-serif';
   for (const c of orden) {
+    if (!c.p) continue;
     const [X, Y] = punto(c);
-    const col = c.c ? ('#' + c.c) : '#E10600';
-    const txt = (c.p ? c.p + '  ' : '') + (c.a || c.n);
-    const ancho = ctx.measureText(txt).width + (grande ? 24 : 12);
-    // La chapa se busca sitio ella sola: se prueban posiciones en anillos
-    // cada vez más lejos del casco y se coge el primer hueco libre. Sin
-    // esto, en cuanto el pelotón se junta —que es justo lo que la gente
-    // quiere mirar— las chapas se pisan y no se lee ninguna. Se dibuja
-    // además una guía del casco a la chapa cuando queda lejos.
-    // Un hueco solo vale si además cabe ENTERO en el lienzo. Sin esto las
-    // chapas de los coches del borde se salían por un lado de la pantalla
-    // y se leían a medias o no se leían.
-    const dentro = b => b[0] >= 2 && b[1] >= 2 && b[2] <= w - 2 && b[3] <= h - 2;
-    let x = X + rC + 5, y = Y - alto / 2, puesto = false;
-    // Tres anillos y no más. Un rótulo que hay que irse a buscar al otro
-    // lado del mapa, unido por una guía que cruza la pista, se lee peor que
-    // no ponerlo: en un pelotón junto acababan repartidos por todo el
-    // lienzo y tapando el trazado.
-    for (const anillo of [0, 1, 2, 3]) {
-      const dist = rC + 5 + anillo * (alto + 4);
-      for (const g of [0, -28, 28, -58, 58, 90, -90, 128, -128, 180]) {
-        const a = g * Math.PI / 180;
-        const cx0 = X + Math.cos(a) * dist - (Math.cos(a) < -0.2 ? ancho : 0)
-                    - (Math.abs(Math.cos(a)) <= 0.2 ? ancho / 2 : 0);
-        const cy0 = Y + Math.sin(a) * dist - alto / 2;
-        const caja = [cx0, cy0, cx0 + ancho, cy0 + alto];
-        if (dentro(caja) && libre(caja)) {
-          x = cx0; y = cy0; puesto = true; break;
-        }
-      }
-      if (puesto) break;
+    // Sombra dura debajo: el número tiene que leerse sobre cualquier
+    // color de equipo, y algunos son muy claros.
+    ctx.fillStyle = 'rgba(0,0,0,.85)';
+    ctx.fillText(String(c.p), X + 1, Y + 1);
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillText(String(c.p), X, Y);
+  }
+  ctx.textAlign = 'left';
+  // Y el nombre de los dos que pelean, al lado de su casco.
+  if (pel.length && grande) {
+    ctx.font = '800 15px Inter,sans-serif';
+    const alto = 24;
+    for (const c of orden) {
+      if (!pel.includes(c.a)) continue;
+      const [X, Y] = punto(c);
+      const txt = c.a || String(c.n);
+      const ancho = ctx.measureText(txt).width + 20;
+      // A la derecha si cabe, y si no a la izquierda. Sin anillos, sin
+      // guías y sin desaparecer: son dos, siempre hay sitio para dos.
+      const x = (X + rC + 6 + ancho <= w - 4) ? X + rC + 6 : X - rC - 6 - ancho;
+      const y = Y - alto / 2;
+      _chapa(ctx, x, y, ancho, alto, 8);
+      ctx.fillStyle = 'rgba(10,13,20,.92)'; ctx.fill();
+      ctx.save();
+      _chapa(ctx, x, y, ancho, alto, 8); ctx.clip();
+      ctx.fillStyle = c.c ? ('#' + c.c) : '#E10600';
+      ctx.fillRect(x, y, 5, alto);
+      ctx.restore();
+      ctx.fillStyle = '#fff';
+      ctx.fillText(txt, x + 12, y + alto / 2 + 0.5);
     }
-    // Sin hueco en ningún anillo, el rótulo NO se dibuja: solo el casco.
-    // Apilar chapas hasta taparse unas a otras no informa de nada — se
-    // convierte en una mancha encima de la pista, que es lo que se veía en
-    // cuanto el pelotón se juntaba. Como se recorren por posición, los de
-    // delante cogen sitio primero y el que se queda sin él es un coche de
-    // media tabla, cuyo puesto ya está en la izquierda con su nombre.
-    if (!puesto) continue;
-    puestas.push([x, y, x + ancho, y + alto]);
-    const cxm = x + ancho / 2, cym = y + alto / 2;
-    if (Math.hypot(cxm - X, cym - Y) > rC + ancho * 0.6) {
-      ctx.beginPath(); ctx.moveTo(X, Y); ctx.lineTo(cxm, cym);
-      ctx.strokeStyle = 'rgba(255,255,255,.28)';
-      ctx.lineWidth = 1; ctx.stroke();
-    }
-    _chapa(ctx, x, y, ancho, alto, Math.min(alto / 2, 8));
-    ctx.fillStyle = 'rgba(10,13,20,.90)'; ctx.fill();
-    // Franja del equipo a la izquierda, como en las chapas de la tele
-    ctx.save();
-    _chapa(ctx, x, y, ancho, alto, Math.min(alto / 2, 8));
-    ctx.clip();
-    ctx.fillStyle = col;
-    ctx.fillRect(x, y, grande ? 5 : 3, alto);
-    ctx.restore();
-    ctx.fillStyle = '#fff';
-    ctx.fillText(txt, x + (grande ? 13 : 7), y + alto / 2 + 0.5);
   }
   ctx.textBaseline = 'alphabetic';
 }
@@ -5404,6 +5395,8 @@ setInterval(() => {
   }
 }, 1000);
 async function reproducirSegmento(seg, lineas, idioma) {
+  if (MUDO_URL) { capLineas = lineas; capIdx = 0; capTs = Date.now();
+                  pintarCaption(); return; }   // subtítulos sí, voz no
   pendiente = { seg, lineas, idioma };  // si ya habla, gana el más nuevo
   // El segmento nuevo tiene prioridad, pero NO sobre la frase que está
   // sonando. Antes aquí se llamaba a pararVoz() y el que entraba cortaba a
