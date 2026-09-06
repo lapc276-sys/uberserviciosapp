@@ -15,6 +15,7 @@ darle contexto al narrador.
 """
 
 import asyncio
+import contextlib
 import datetime as dt
 import logging
 import math
@@ -218,14 +219,30 @@ async def sesiones_programables():
         if not s.get("date_start"):
             continue
         inicio = _fecha(s["date_start"])
-        dur = _DURACION.get(s.get("session_name"), 80)
+        # La hora de fin REAL si OpenF1 la da, y solo estimarla si no.
+        #
+        # Antes se estimaba siempre: inicio + una duración por tipo de
+        # sesión. Eso tiene dos formas de salir mal, y las dos acaban con
+        # el dúo DESPIDIÉNDOSE EN MITAD DE LA CARRERA —que fue lo que
+        # pasó en antena—: si el nombre de la sesión no cae en la tabla,
+        # se usan 80 minutos, menos de lo que dura un Gran Premio; y una
+        # carrera con bandera roja o safety car se alarga más de lo que
+        # cualquier estimación previera. La hora que manda OpenF1 sabe de
+        # las dos cosas.
+        fin = None
+        if s.get("date_end"):
+            with contextlib.suppress(Exception):
+                fin = _fecha(s["date_end"])
+        if not fin or fin <= inicio:
+            fin = inicio + dt.timedelta(
+                minutes=_DURACION.get(s.get("session_name"), 80))
         out.append({
             "session_key": s["session_key"],
             "sesion": s.get("session_name", "?"),
             "pais": s.get("country_name", "?"),
             "circuito": s.get("circuit_short_name", "?"),
             "inicio": inicio,
-            "fin": inicio + dt.timedelta(minutes=dur),
+            "fin": fin,
         })
     out.sort(key=lambda s: s["inicio"])
     return out

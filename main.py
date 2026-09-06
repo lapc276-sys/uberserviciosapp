@@ -14853,6 +14853,38 @@ async def _rotar_show(tipo):
     return ROTACION_MINUTOS
 
 
+#: Cuánto puede estar la telemetría sin traer una posición nueva antes de
+#: dar la sesión por terminada. Un minuto y medio: entre vueltas siempre
+#: llegan datos, y con bandera roja los coches paran pero la sesión NO ha
+#: acabado — por eso no basta con mirar si el reloj de la carrera avanza.
+SIN_DATOS_FIN = 150.0
+
+
+def _sigue_rodando():
+    """¿Hay una sesión VIVA ahora mismo, con coches en pista?
+
+    Es la red de seguridad de la despedida. El cierre se disparaba solo
+    con el reloj —la hora de fin PREVISTA— y en antena el dúo se despidió
+    con la carrera en marcha. Una carrera se alarga por bandera roja, por
+    safety car o simplemente porque la estimación era corta; el reloj no
+    sabe nada de eso y la telemetría sí.
+
+    Se mira que sigan LLEGANDO posiciones, no que el reloj avance: con
+    bandera roja los coches están parados y la sesión no ha terminado.
+    """
+    if estado.tele is None:
+        return False
+    if time.time() - estado.mapa_ts > SIN_DATOS_FIN:
+        return False
+    # Y si la carrera tiene un número de vueltas conocido, no se cierra
+    # hasta que se haya dado la última.
+    t = estado.tele
+    with contextlib.suppress(Exception):
+        if t.total_vueltas and t.vuelta and t.vuelta < t.total_vueltas:
+            return True
+    return True
+
+
 def sesion_en_ventana(ahora, sesiones, antes_min=30, despues_min=0):
     """Decisión pura: ¿qué sesión debería estar al aire ahora? Devuelve la
     sesión (o None). La ventana va desde `antes_min` antes del inicio (pre-
@@ -15083,7 +15115,7 @@ async def bucle_programacion():
                     _correr_sesion(s["session_key"]))
             # Post-show: la sesión ya terminó pero seguimos en la ventana
             # de cortesía (POSTSHOW_MINUTOS) — análisis post + despedida
-            elif ahora >= s["fin"]:
+            elif ahora >= s["fin"] and not _sigue_rodando():
                 estado.postsesion = True   # análisis calmado, sin bucle
                 if cierre_hecho_para != s["session_key"]:
                     cierre_hecho_para = s["session_key"]
