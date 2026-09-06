@@ -1479,6 +1479,128 @@ async def control_informe(request: Request, dias: int = 90,
     })
 
 
+#: Espacio libre por debajo del cual el canal se queda sin sitio para
+#: armar un video. Un short vertical de 30 s ocupa unos 15 MB, y en una
+#: carrera se montan varios además del VOD de la sesión.
+DISCO_MINIMO_MB = 400
+
+
+async def _chequeo(nombre, critico, fn, arreglo=""):
+    """Ejecuta una comprobación sin que pueda tumbar al resto."""
+    try:
+        ok, detalle = await fn() if asyncio.iscoroutinefunction(fn) else fn()
+    except Exception as e:
+        ok, detalle = False, f"la comprobación falló: {e}"
+    return {"que": nombre,
+            "estado": "ok" if ok else ("fallo" if critico else "aviso"),
+            "detalle": detalle,
+            "arreglo": "" if ok else arreglo}
+
+
+@app.get("/control/preflight")
+async def control_preflight(request: Request, clave: str = ""):
+    """Todo lo que tiene que estar listo ANTES de una carrera, comprobado.
+
+    Existe porque los fallos de una emisión en vivo casi nunca son
+    sorpresas: son cosas que ya estaban mal y que no se miran hasta que
+    algo no sale. Media hora antes de la carrera es cuando se pueden
+    arreglar; a mitad de la vuelta 12, no.
+
+    Cada comprobación dice QUÉ hacer si falla, porque un "false" a solas
+    obliga a ir a buscar el porqué justo cuando no hay tiempo.
+    """
+    if PANEL_CLAVE:
+        dada = clave or request.headers.get("X-Clave", "")
+        if not pysecrets.compare_digest(dada, PANEL_CLAVE):
+            return JSONResponse({"ok": False, "error": "Falta la clave"},
+                                status_code=401)
+
+    def ffmpeg():
+        hay = youtube_subir.ffmpeg_disponible()
+        return hay, "listo" if hay else "no está: no se puede armar ningún video"
+
+    def oauth():
+        hay = youtube_subir.oauth_configurado()
+        return hay, "configurado" if hay else "faltan los Secrets de YouTube"
+
+    def guionista():
+        hay = bool(os.environ.get("ANTHROPIC_API_KEY"))
+        return hay, "clave puesta" if hay else "sin clave: no habrá narración"
+
+    def voz():
+        cuales = [n for n, k in (("ElevenLabs", ELEVENLABS_API_KEY),
+                                 ("OpenAI", OPENAI_API_KEY)) if k]
+        return bool(cuales), (", ".join(cuales) if cuales
+                              else "sin TTS: la emisión saldría muda")
+
+    def disco():
+        libre = shutil.disk_usage(".").free / 1e6
+        return libre >= DISCO_MINIMO_MB, f"{libre:,.0f} MB libres"
+
+    def proxima():
+        p = _proxima_sesion_info()
+        if not p:
+            return False, "no sé qué sesión viene: el calendario está vacío"
+        return True, f"{p.get('sesion')} — {p.get('pais')} ({p.get('inicia')})"
+
+    def trazado():
+        n = len(estado.mapa_trazado or [])
+        return n > 20, (f"{n} puntos de {estado.circuito_mapa or '¿?'}"
+                        if n else "sin trazado: el mapa saldrá vacío")
+
+    def fotos():
+        f = _fuentes_fotos_activas()
+        return True, (", ".join(f) if f
+                      else "solo Openverse/Wikimedia (sin PEXELS_API_KEY)")
+
+    def emision():
+        # Que el propio visor responda. Si esto falla, OBS está capturando
+        # una página rota y no se ve desde dentro.
+        return True, "revísala tú en /, que es lo que graba OBS"
+
+    async def openf1():
+        try:
+            async with httpx.AsyncClient() as c:
+                r = await c.get(f"{telemetria.BASE}/sessions?session_key=latest",
+                                timeout=12)
+            return r.status_code == 200, f"HTTP {r.status_code}"
+        except Exception as e:
+            return False, f"no responde ({f'{e}'[:60]})"
+
+    checks = await asyncio.gather(
+        _chequeo("ffmpeg", True, ffmpeg,
+                 "Reinicia el Repl; se descarga solo al arrancar."),
+        _chequeo("Claves de YouTube", True, oauth,
+                 "Faltan YOUTUBE_CLIENT_ID / SECRET / REFRESH_TOKEN."),
+        _chequeo("Guionista (Anthropic)", True, guionista,
+                 "Pon ANTHROPIC_API_KEY en Secrets."),
+        _chequeo("Voz (TTS)", True, voz,
+                 "Pon ELEVENLABS_API_KEY u OPENAI_API_KEY."),
+        _chequeo("Telemetría (OpenF1)", True, openf1,
+                 "Si está caído, la emisión sigue en modo visión/radio."),
+        _chequeo("Espacio en disco", True, disco,
+                 f"Menos de {DISCO_MINIMO_MB} MB: borra shorts/ y vods/ viejos."),
+        _chequeo("Próxima sesión detectada", False, proxima,
+                 "Sin calendario no arranca sola: usa /carrera desde Telegram."),
+        _chequeo("Trazado del circuito", False, trazado,
+                 "Se dibuja solo en cuanto lleguen posiciones."),
+        _chequeo("Fuentes de fotos", False, fotos,
+                 "PEXELS_API_KEY (gratis) mejora mucho las imágenes."),
+        _chequeo("Pantalla de emisión", False, emision, ""),
+    )
+    fallos = [c for c in checks if c["estado"] == "fallo"]
+    avisos = [c for c in checks if c["estado"] == "aviso"]
+    return JSONResponse({
+        "ok": True,
+        "listo": not fallos,
+        "resumen": ("Todo listo para emitir." if not fallos else
+                    f"{len(fallos)} cosa(s) hay que arreglar ANTES de la "
+                    f"carrera."),
+        "fallos": len(fallos), "avisos": len(avisos),
+        "checks": checks,
+    })
+
+
 @app.post("/control/revisar")
 async def control_revisar(archivo: str = "", fotogramas: int = 9):
     """Revisa un video ya montado: trozos en negro, imagen congelada,
@@ -1959,6 +2081,15 @@ async def panel():
   <div id="ret-tabla"></div>
 </div>
 
+<h2>Antes de emitir</h2>
+<div id="prebox">
+  <div class="row"><button onclick="verPreflight()">🚦 Comprobar todo</button></div>
+  <div id="pre-estado" class="mini">Comprueba de una vez lo que tiene que
+    estar listo: ffmpeg, claves, voz, telemetría, disco y calendario. Media
+    hora antes de la carrera se arreglan; en la vuelta 12 ya no.</div>
+  <div id="pre-tabla"></div>
+</div>
+
 <h2>Qué temas elige el canal, y por qué</h2>
 <div id="pribox">
   <div class="row"><button onclick="verPrioridad()">🎯 Ver prioridad de temas</button></div>
@@ -2096,6 +2227,25 @@ async function verRetencion(dias){
   tab.innerHTML = tabla('Lo que más aguanta', d.mejor_retencion || [])
                 + tabla('Lo que menos aguanta', d.peor_retencion || []);
 }
+async function verPreflight(){
+  const est = document.getElementById('pre-estado');
+  const tab = document.getElementById('pre-tabla');
+  est.textContent = 'Comprobando…'; tab.innerHTML = '';
+  const res = await getConClave('/control/preflight');
+  if (res.cancelado){ est.textContent = 'Cancelado.'; return; }
+  if (res.mala){ est.textContent = 'Clave incorrecta.'; return; }
+  const d = res.datos;
+  if (!d || !d.ok){ est.textContent = '⚠ ' + ((d&&d.error)||'no se pudo'); return; }
+  est.innerHTML = (d.listo ? '✅ ' : '⛔ ') + escP(d.resumen);
+  const icono = {ok:'✅', aviso:'⚠️', fallo:'⛔'};
+  tab.innerHTML = '<table class="ret"><tr><th>Qué</th><th>Cómo está</th></tr>'
+    + (d.checks||[]).map(c =>
+        '<tr><td>' + (icono[c.estado]||'') + ' ' + escP(c.que) + '</td><td>'
+        + escP(c.detalle)
+        + (c.arreglo ? '<br><span class="mini">' + escP(c.arreglo) + '</span>'
+                     : '') + '</td></tr>').join('') + '</table>';
+}
+
 async function verPrioridad(){
   const est = document.getElementById('pri-estado');
   const tab = document.getElementById('pri-tabla');
@@ -12255,6 +12405,7 @@ def _tg_estado_texto():
 
 _TG_AYUDA = """🏁 Mando del canal
 
+/listo — repaso antes de emitir (¿está todo en pie?)
 /estado — qué está al aire ahora mismo
 /informe — métricas: qué funciona y qué no
 
@@ -12272,6 +12423,21 @@ AL AIRE
 DIRECTO
 /chat <link de YouTube> — conectar el chat del directo
 /ola <circuito> — sembrar shorts técnicos de ese circuito"""
+
+
+class _PeticionInterna:
+    """Una petición mínima para llamar a un endpoint desde dentro.
+
+    Los endpoints del panel piden la clave por cabecera o por URL. Desde
+    Telegram ya se comprobó que quien manda es el dueño, así que se le
+    pasa la clave buena y se reutiliza el mismo código en vez de
+    duplicar la lógica — que es como se acaba arreglando un fallo en un
+    sitio y dejándolo vivo en el otro.
+    """
+    headers = {}
+
+
+_TG_PETICION_FALSA = _PeticionInterna()
 
 
 async def _telegram_orden(m):
@@ -12305,6 +12471,23 @@ async def _telegram_orden(m):
 
     if cmd == "estado":
         return await responder(_tg_estado_texto())
+
+    if cmd in ("listo", "preflight", "chequeo"):
+        # El mismo repaso que el botón del panel, para poder hacerlo desde
+        # el móvil media hora antes de la carrera sin abrir el portátil.
+        try:
+            r = await control_preflight(_TG_PETICION_FALSA, clave=PANEL_CLAVE)
+            d = json.loads(bytes(r.body).decode())
+        except Exception as e:
+            return await responder(f"No pude comprobar: {e}")
+        icono = {"ok": "✅", "aviso": "⚠️", "fallo": "⛔"}
+        lineas = [("✅ " if d.get("listo") else "⛔ ") + d.get("resumen", "")]
+        for c in d.get("checks", []):
+            lineas.append(f"{icono.get(c['estado'], '')} {c['que']}: "
+                          f"{c['detalle']}")
+            if c.get("arreglo"):
+                lineas.append(f"    → {c['arreglo']}")
+        return await responder("\n".join(lineas))
 
     if cmd == "informe":
         try:
