@@ -8667,10 +8667,27 @@ def _guardar_trazado_cache(circuito, puntos):
 
 
 def _leer_trazado(ruta):
+    """Un trazado guardado, SI sigue siendo dibujable.
+
+    Antes solo se miraba que tuviera más de veinte puntos. Pero la
+    validación de forma se hace al descargarlo, así que un trazado malo
+    guardado antes de existir ese filtro —media vuelta, un gancho— seguía
+    saliendo al aire cada vez que se leía del caché. Se revalida aquí: un
+    archivo viejo no es una garantía de nada.
+    """
     with contextlib.suppress(Exception):
         with open(ruta) as f:
             p = json.load(f)
-        return p if isinstance(p, list) and len(p) > 20 else []
+        if not (isinstance(p, list) and len(p) > 20):
+            return []
+        pares = [(float(d["x"]), float(d["y"])) for d in p
+                 if isinstance(d, dict) and d.get("x") is not None
+                 and d.get("y") is not None]
+        if (len(pares) > 20 and telemetria._es_vuelta_real(pares)
+                and telemetria._cierra_la_vuelta(pares)):
+            return p
+        log.info("🗺️  Trazado guardado descartado (%s): la vuelta no cierra "
+                 "— se vuelve a bajar", os.path.basename(ruta))
     return []
 
 

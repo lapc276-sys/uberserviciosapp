@@ -332,6 +332,42 @@ def _es_vuelta_real(pts):
     return math.sqrt(max(0.0, lmin) / lmax) >= 0.12
 
 
+def _cierra_la_vuelta(pts, tolerancia=0.14):
+    """¿La traza da la vuelta COMPLETA al circuito?
+
+    `_es_vuelta_real` solo descarta trazas rectas. Pero la ventana de GPS
+    de la que se saca el trazado son ocho minutos, y ahí cabe media
+    vuelta: el coche fue de A a B sin volver. Eso no es una raya —pasa el
+    filtro de colinealidad— y en pantalla sale como un gancho abierto, un
+    circuito que no existe. Se vio en antena.
+
+    Un circuito es un LAZO: se sale de un punto y se vuelve a él. Así que
+    se mira desde que el coche SE HA ALEJADO de verdad, y se comprueba si
+    a partir de ahí vuelve a pasar cerca de donde empezó.
+
+    Se mide desde que se aleja y no desde el punto MÁS lejano, que fue el
+    primer intento y descartaba las ventanas con vuelta y media: ahí el
+    punto más lejano cae al final del recorrido, y detrás de él ya no
+    queda nada donde comprobar el regreso.
+    """
+    n = len(pts)
+    if n < 20:
+        return False
+    xs = [p[0] for p in pts]
+    ys = [p[1] for p in pts]
+    diag = math.hypot(max(xs) - min(xs), max(ys) - min(ys))
+    if diag <= 0:
+        return False
+    p0 = pts[0]
+    dist = [math.hypot(p[0] - p0[0], p[1] - p0[1]) for p in pts]
+    # Tiene que alejarse de verdad antes de volver: si nunca se separa,
+    # es un coche parado mandando la misma posición.
+    salio = next((i for i, d in enumerate(dist) if d > diag * 0.30), None)
+    if salio is None:
+        return False
+    return min(dist[salio:]) <= diag * tolerancia
+
+
 def _limpiar_traza(crudos):
     """Convierte filas de /location en un trazado dibujable, o []."""
     puntos = [(f["x"], f["y"]) for f in crudos
@@ -344,7 +380,15 @@ def _limpiar_traza(crudos):
     ylo, yhi = _limites_iqr([p[1] for p in puntos])
     puntos = [(x, y) for x, y in puntos
               if xlo <= x <= xhi and ylo <= y <= yhi]
+    # Dos filtros, no uno: que no sea una raya Y que la vuelta cierre.
+    # Un mapa a medias es peor que ningún mapa — el que mira se cree que
+    # ese es el circuito, y encima lo firma el canal.
     if len(puntos) < 50 or not _es_vuelta_real(puntos):
+        return []
+    if not _cierra_la_vuelta(puntos):
+        log.info("Trazado descartado: la vuelta no cierra (%d puntos) — "
+                 "probablemente media vuelta dentro de la ventana",
+                 len(puntos))
         return []
     paso = max(1, len(puntos) // 500)
     return [{"x": x, "y": y} for x, y in puntos[::paso]]
