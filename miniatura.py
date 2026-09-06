@@ -143,6 +143,50 @@ def _degradado(dib, w, h):
                     fill=(10 + a, 12 + a // 3, 16 + a // 4))
 
 
+def _trazado_cacheado(circuito):
+    """El trazado REAL del circuito, si el canal ya lo tiene guardado.
+
+    Se guarda en cache/trazados/<circuito>.json cuando la app dibuja el
+    mapa de una sesión, así que en el servidor del canal suele estar. Es
+    GPS de una vuelta de verdad: para la miniatura de un Gran Premio
+    concreto, la silueta auténtica dice mucho más que una forma bonita.
+    """
+    import json as _json
+    import re as _re
+    clave = _re.sub(r"[^a-z0-9]+", "", (circuito or "").lower())
+    if not clave:
+        return None
+    ruta = os.path.join("cache", "trazados", f"{clave}.json")
+    try:
+        with open(ruta, encoding="utf-8") as f:
+            d = _json.load(f)
+        pts = [(float(p["x"]), float(p["y"])) for p in d
+               if isinstance(p, dict) and p.get("x") is not None
+               and p.get("y") is not None]
+        return pts if len(pts) > 40 else None
+    except Exception:
+        return None
+
+
+def _traza_real(dib, w, h, pts):
+    """Dibuja el trazado de verdad, encuadrado como la silueta genérica.
+
+    Mismo sitio y mismo tono apagado: es fondo, no protagonista. Lo único
+    que cambia es que la forma existe.
+    """
+    xs = [p[0] for p in pts]
+    ys = [p[1] for p in pts]
+    ancho = (max(xs) - min(xs)) or 1.0
+    alto = (max(ys) - min(ys)) or 1.0
+    # Cabe en la mitad derecha, que es donde no hay texto.
+    esc = min(w * 0.42 / ancho, h * 0.78 / alto)
+    cx, cy = (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2
+    p = [(w * 0.75 + (x - cx) * esc, h * 0.46 - (y - cy) * esc)
+         for x, y in pts]
+    dib.line(p + [p[0]], fill="#171E28", width=26, joint="curve")
+    dib.line(p + [p[0]], fill="#1E2735", width=6, joint="curve")
+
+
 def _traza(dib, w, h):
     """Silueta de circuito al fondo, muy apagada: da contexto sin robar
     atención. No es ningún circuito real — es una forma genérica."""
@@ -157,10 +201,15 @@ def _traza(dib, w, h):
 
 
 def crear(nombre, circuito="", sesion="LIVE", salida="miniatura.jpg",
-          año="", foto=None, sin_foto=False):
+          año="", foto=None, sin_foto=False, trazado=None):
     """foto: ruta a una imagen propia (se usa tal cual, recortada a la
     tarjeta). None y sin_foto=False → se intenta buscar sola en Pexels.
-    sin_foto=True → fuerza el diseño abstracto aunque haya clave."""
+    sin_foto=True → fuerza el diseño abstracto aunque haya clave.
+
+    trazado: lista [(x, y)] del circuito real. Si no se pasa, se busca en
+    el caché del canal por el nombre de `circuito`; y si tampoco está, se
+    dibuja la silueta genérica de siempre. Una miniatura del GP de Monza
+    con la forma REAL de Monza vale más que una con una curva bonita."""
     from PIL import Image, ImageDraw, ImageEnhance, ImageFilter
     img = Image.new("RGB", (W, H), "#08090C")
     dib = ImageDraw.Draw(img)
@@ -211,7 +260,13 @@ def crear(nombre, circuito="", sesion="LIVE", salida="miniatura.jpg",
         dib.rounded_rectangle([cx0, cy0, cx1, cy1], radius=22,
                               outline="#FF2D16", width=3)
     else:
-        _traza(dib, W, H)
+        # El trazado REAL si lo hay (pasado o en el caché del canal), y si
+        # no la silueta genérica. Nunca se queda sin fondo.
+        pts = trazado if trazado else _trazado_cacheado(circuito)
+        if pts:
+            _traza_real(dib, W, H, pts)
+        else:
+            _traza(dib, W, H)
 
     # Franja roja inclinada a la izquierda: ancla la vista y separa el
     # texto del fondo sin necesidad de una caja.
@@ -305,6 +360,14 @@ def crear(nombre, circuito="", sesion="LIVE", salida="miniatura.jpg",
     return salida
 
 
+def _leer_trazado_json(ruta):
+    import json as _json
+    with open(ruta, encoding="utf-8") as f:
+        d = _json.load(f)
+    return [(float(p["x"]), float(p["y"])) for p in d
+            if isinstance(p, dict) and p.get("x") is not None]
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("nombre", help='Nombre del GP, p.ej. "Dutch GP"')
@@ -317,9 +380,18 @@ def main():
                    help="Ruta a una foto propia (si no, se busca sola)")
     p.add_argument("--sin-foto", action="store_true",
                    help="Fuerza el diseño abstracto, sin buscar foto")
+    p.add_argument("--trazado", default="",
+                   help="JSON del trazado real. Si no se pasa, se busca en "
+                        "cache/trazados/<circuito>.json")
     a = p.parse_args()
+    pts = None
+    if a.trazado:
+        try:
+            pts = _leer_trazado_json(a.trazado)
+        except Exception as e:
+            print(f"⚠️  No pude leer {a.trazado} ({e}) — sigo sin trazado")
     ruta = crear(a.nombre, a.circuito, a.sesion, a.salida, a.año,
-                foto=a.foto or None, sin_foto=a.sin_foto)
+                foto=a.foto or None, sin_foto=a.sin_foto, trazado=pts)
     kb = os.path.getsize(ruta) // 1024
     print(f"✅ {ruta} — 1280x720, {kb} KB (OBS admite hasta 2048 KB)")
     return 0
