@@ -187,6 +187,67 @@ def _traza_real(dib, w, h, pts):
     dib.line(p + [p[0]], fill="#1E2735", width=6, joint="curve")
 
 
+def _coche(dib, x, y, largo, color):
+    """Silueta de F1 vista desde arriba, dibujada por nosotros.
+
+    Genérica a propósito: sin librea, sin números y sin logotipos. El
+    color es el del equipo y nada más — la decoración real de un coche es
+    marca ajena.
+
+    Dos intentos antes de que se leyera. El primero salía como una
+    MANCUERNA (los dos alerones igual de anchos y el cuerpo estrecho en
+    medio). El segundo tenía las ruedas separadas del chasis, flotando
+    como cuadrados sueltos. Lo que hace que se lea "coche" es que las
+    ruedas TOQUEN el cuerpo y sobresalgan poco, y que el alerón trasero
+    sea más ancho que el delantero.
+    """
+    L = largo
+    def R(x0, y0, x1, y1, col):
+        ax, bx_ = sorted((x + x0 * L, x + x1 * L))
+        ay, by_ = sorted((y + y0 * L, y + y1 * L))
+        dib.rectangle([ax, ay, bx_, by_], fill=col)
+    def P(pts, col):
+        dib.polygon([(x + a * L, y + b * L) for a, b in pts], fill=col)
+
+    rueda = "#12161C"
+    # Ruedas: pegadas al cuerpo (empiezan en 0.09, que es su medio ancho)
+    # y sobresaliendo poco. Van primero para que el chasis las remate.
+    for rx in (-0.34, 0.14):
+        for ry in (-1, 1):
+            R(rx, ry * 0.09, rx + 0.19, ry * 0.21, rueda)
+    # Alerón delantero
+    R(-0.50, -0.21, -0.43, 0.21, color)
+    # Chasis: morro afilado que se ensancha suavemente hacia atrás. Sin
+    # cintura: una silueta de coche no se estrecha en el medio.
+    P([(-0.43, -0.035), (-0.16, -0.075), (0.10, -0.10), (0.36, -0.10),
+       (0.42, -0.07), (0.42, 0.07), (0.36, 0.10), (0.10, 0.10),
+       (-0.16, 0.075), (-0.43, 0.035)], color)
+    # Alerón trasero: más ancho que el delantero
+    R(0.40, -0.27, 0.50, 0.27, color)
+    # Cabina
+    dib.ellipse([x - 0.09 * L, y - 0.045 * L, x + 0.03 * L, y + 0.045 * L],
+                fill="#0B0E13")
+
+
+def _podio(dib, x, y, ancho, filas, fuente_pos, fuente_acr):
+    """Los tres primeros, en una tira. `filas` = [(pos, acr, color)].
+
+    Va con el color de equipo en una pastilla, no con el nombre completo:
+    a 168 píxeles de ancho —que es donde se decide el clic— un apellido
+    largo no se lee y tres acrónimos sí.
+    """
+    alto = 52
+    for i, (pos, acr, color) in enumerate(filas[:3]):
+        yy = y + i * (alto + 8)
+        # Pastilla de posición
+        dib.rounded_rectangle([x, yy, x + 46, yy + alto], radius=10,
+                              fill="#" + color.lstrip("#"))
+        w = dib.textlength(str(pos), font=fuente_pos)
+        dib.text((x + 23 - w / 2, yy + 6), str(pos), font=fuente_pos,
+                 fill="#0B0E13")
+        dib.text((x + 60, yy + 4), acr, font=fuente_acr, fill="#FFFFFF")
+
+
 def _traza(dib, w, h):
     """Silueta de circuito al fondo, muy apagada: da contexto sin robar
     atención. No es ningún circuito real — es una forma genérica."""
@@ -360,6 +421,97 @@ def crear(nombre, circuito="", sesion="LIVE", salida="miniatura.jpg",
     return salida
 
 
+def crear_podio(titular, podio, circuito="", sesion="RACE", subtitulo="",
+                salida="miniatura.jpg", trazado=None):
+    """Miniatura con GANCHO: un titular grande, los tres primeros y coches.
+
+    La otra variante dice qué Gran Premio es. Esta dice QUÉ PASÓ, que es
+    lo que hace que alguien pulse: "GASLY" y "POLE" cuentan una historia;
+    "ITALIAN GP" cuenta un calendario.
+
+    `podio` = [(pos, acrónimo, color de equipo)]. Los acrónimos y no los
+    apellidos porque la miniatura se decide a 168 píxeles de ancho, y ahí
+    un apellido largo no se lee.
+    """
+    import diagramas as D
+    from PIL import Image, ImageDraw
+    img = Image.new("RGB", (W, H), "#08090C")
+    dib = ImageDraw.Draw(img)
+    _degradado(dib, W, H)
+
+    # Fondo: el circuito, muy apagado.
+    pts = trazado if trazado else _trazado_cacheado(circuito)
+    if pts:
+        _traza_real(dib, W, H, pts)
+    else:
+        _traza(dib, W, H)
+
+    # Los coches, en fila y en diagonal, como saliendo de la parrilla.
+    # De mayor a menor: el primero manda y los otros dos le siguen.
+    for i, (_pos, _acr, color) in enumerate(podio[:3]):
+        largo = 300 - i * 62
+        x = W * 0.615 + i * 128
+        y = H * 0.30 + i * 148
+        _coche(dib, x, y, largo, "#" + color.lstrip("#"))
+
+    # La franja roja llega hasta x=150, así que el texto NO puede empezar
+    # en el margen de siempre: en el primer intento "GASLY" y "POLE"
+    # arrancaban por debajo de ella y salían cortados por la izquierda.
+    dib.polygon([(0, 0), (128, 0), (56, H), (0, H)], fill="#FF2D16")
+    dib.polygon([(128, 0), (150, 0), (78, H), (56, H)], fill="#0A0C11")
+
+    m = 172
+    util = W * 0.44        # la mitad derecha es de los coches
+
+    # ── El titular, lo más grande que quepa ──
+    palabras = titular.upper().split()
+    lineas = ([" ".join(palabras[:1]), " ".join(palabras[1:])]
+              if len(palabras) > 1 else palabras)
+    tam = 150
+    while tam > 52:
+        f = D._fuente(tam, True)
+        if max(dib.textlength(l, font=f) for l in lineas) <= util:
+            break
+        tam -= 5
+    f_t = D._fuente(tam, True)
+    alto = int(tam * 1.02)
+    y = 48
+    for i, l in enumerate(lineas):
+        dib.text((m + 5, y + 5), l, font=f_t, fill="#000000")
+        dib.text((m, y), l, font=f_t, fill="#FFFFFF" if i == 0 else "#FF2D16")
+        y += alto
+
+    if subtitulo:
+        f_s = D._fuente(30, True)
+        D._texto(dib, (m + 4, y + 6), subtitulo.upper(), f_s, "#8892A3",
+                 esp=6)
+        y += 54
+
+    # ── Los tres primeros, debajo del titular y nunca encima ──
+    y = max(y + 16, int(H * 0.50))
+    f_pos = D._fuente(30, True)
+    f_acr = D._fuente(38, True)
+    _podio(dib, m, y, 300, podio, f_pos, f_acr)
+
+    # ── Insignia y marca ──
+    f_l = D._fuente(30, True)
+    et = (sesion or "LIVE").upper()
+    ancho_et = D._ancho(dib, et, f_l, 8) + 78
+    bx, by = m, H - 78
+    dib.rectangle([bx, by, bx + ancho_et, by + 52], fill="#FF2D16")
+    dib.ellipse([bx + 24, by + 19, bx + 38, by + 33], fill="#FFFFFF")
+    D._texto(dib, (bx + 50, by + 11), et, f_l, "#FFFFFF", esp=8)
+    if circuito:
+        f_c = D._fuente(28, True)
+        D._texto(dib, (bx + ancho_et + 26, by + 14), circuito.upper(), f_c,
+                 "#C9D0DB", esp=6)
+    f_m = D._fuente(44, True)
+    D._texto(dib, (W - 54, 40), "APEX", f_m, "#FFFFFF", esp=3, derecha=True)
+
+    img.save(salida, "JPEG", quality=88, optimize=True)
+    return salida
+
+
 def _leer_trazado_json(ruta):
     import json as _json
     with open(ruta, encoding="utf-8") as f:
@@ -380,6 +532,12 @@ def main():
                    help="Ruta a una foto propia (si no, se busca sola)")
     p.add_argument("--sin-foto", action="store_true",
                    help="Fuerza el diseño abstracto, sin buscar foto")
+    p.add_argument("--podio", default="",
+                   help='Los 3 primeros: "1:GASLY:0093CC,2:RUSSELL:27F4D2,'
+                        '3:PIASTRI:FF8000". Activa el diseño con coches.')
+    p.add_argument("--titular", default="",
+                   help='Gancho grande, p.ej. "Gasly Pole" (con --podio)')
+    p.add_argument("--sub", default="", help="Línea pequeña bajo el titular")
     p.add_argument("--trazado", default="",
                    help="JSON del trazado real. Si no se pasa, se busca en "
                         "cache/trazados/<circuito>.json")
@@ -390,8 +548,17 @@ def main():
             pts = _leer_trazado_json(a.trazado)
         except Exception as e:
             print(f"⚠️  No pude leer {a.trazado} ({e}) — sigo sin trazado")
-    ruta = crear(a.nombre, a.circuito, a.sesion, a.salida, a.año,
-                foto=a.foto or None, sin_foto=a.sin_foto, trazado=pts)
+    if a.podio:
+        filas = []
+        for trozo in a.podio.split(","):
+            partes = [x.strip() for x in trozo.split(":")]
+            if len(partes) == 3:
+                filas.append((partes[0], partes[1].upper(), partes[2]))
+        ruta = crear_podio(a.titular or a.nombre, filas, a.circuito,
+                           a.sesion, a.sub, a.salida, pts)
+    else:
+        ruta = crear(a.nombre, a.circuito, a.sesion, a.salida, a.año,
+                    foto=a.foto or None, sin_foto=a.sin_foto, trazado=pts)
     kb = os.path.getsize(ruta) // 1024
     print(f"✅ {ruta} — 1280x720, {kb} KB (OBS admite hasta 2048 KB)")
     return 0
