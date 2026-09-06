@@ -422,7 +422,8 @@ def crear(nombre, circuito="", sesion="LIVE", salida="miniatura.jpg",
 
 
 def crear_podio(titular, podio, circuito="", sesion="RACE", subtitulo="",
-                salida="miniatura.jpg", trazado=None):
+                salida="miniatura.jpg", trazado=None, foto=None,
+                sin_foto=False):
     """Miniatura con GANCHO: un titular grande, los tres primeros y coches.
 
     La otra variante dice qué Gran Premio es. Esta dice QUÉ PASÓ, que es
@@ -446,13 +447,50 @@ def crear_podio(titular, podio, circuito="", sesion="RACE", subtitulo="",
     else:
         _traza(dib, W, H)
 
-    # Los coches, en fila y en diagonal, como saliendo de la parrilla.
-    # De mayor a menor: el primero manda y los otros dos le siguen.
-    for i, (_pos, _acr, color) in enumerate(podio[:3]):
-        largo = 300 - i * 62
-        x = W * 0.615 + i * 128
-        y = H * 0.30 + i * 148
-        _coche(dib, x, y, largo, "#" + color.lstrip("#"))
+    # A la derecha: una FOTO real si la hay, y si no los coches dibujados.
+    #
+    # La foto manda siempre que exista. Una silueta hecha con polígonos
+    # parece clip-art al lado de cualquier canal que use fotografía, y
+    # este canal compite con esos. Los coches dibujados son el respaldo
+    # para cuando no hay foto —que es mejor que un hueco vacío— pero no
+    # la primera opción.
+    from PIL import ImageEnhance, ImageFilter
+    foto_img = None
+    if not sin_foto:
+        if foto:
+            try:
+                foto_img = Image.open(foto).convert("RGB")
+            except Exception as e:
+                print(f"⚠️  No pude abrir {foto} ({e}) — sigo sin foto")
+        else:
+            consultas = ([f"{circuito} race track"] if circuito else
+                         []) + _BUSQUEDAS_FOTO
+            foto_img = _buscar_foto(consultas)
+
+    if foto_img:
+        cx0, cy0 = int(W * 0.545), int(H * 0.14)
+        cx1, cy1 = int(W * 0.965), int(H * 0.86)
+        tarjeta = _cubrir(foto_img, cx1 - cx0, cy1 - cy0)
+        tarjeta = ImageEnhance.Contrast(tarjeta).enhance(1.12)
+        tarjeta = ImageEnhance.Color(tarjeta).enhance(1.18)
+        tarjeta = ImageEnhance.Brightness(tarjeta).enhance(0.92)
+        halo = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        ImageDraw.Draw(halo).rounded_rectangle(
+            [cx0 - 14, cy0 - 14, cx1 + 14, cy1 + 14], radius=32,
+            fill=(255, 45, 22, 130))
+        halo = halo.filter(ImageFilter.GaussianBlur(22))
+        img.paste(halo, (0, 0), halo)
+        redonda = _redondear(tarjeta, 22)
+        img.paste(redonda, (cx0, cy0), redonda)
+        dib = ImageDraw.Draw(img)
+        dib.rounded_rectangle([cx0, cy0, cx1, cy1], radius=22,
+                              outline="#FF2D16", width=3)
+    else:
+        for i, (_pos, _acr, color) in enumerate(podio[:3]):
+            largo = 300 - i * 62
+            x = W * 0.615 + i * 128
+            y = H * 0.30 + i * 148
+            _coche(dib, x, y, largo, "#" + color.lstrip("#"))
 
     # La franja roja llega hasta x=150, así que el texto NO puede empezar
     # en el margen de siempre: en el primer intento "GASLY" y "POLE"
@@ -555,7 +593,8 @@ def main():
             if len(partes) == 3:
                 filas.append((partes[0], partes[1].upper(), partes[2]))
         ruta = crear_podio(a.titular or a.nombre, filas, a.circuito,
-                           a.sesion, a.sub, a.salida, pts)
+                           a.sesion, a.sub, a.salida, pts,
+                           foto=a.foto or None, sin_foto=a.sin_foto)
     else:
         ruta = crear(a.nombre, a.circuito, a.sesion, a.salida, a.año,
                     foto=a.foto or None, sin_foto=a.sin_foto, trazado=pts)
