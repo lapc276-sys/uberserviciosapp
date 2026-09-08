@@ -42,6 +42,7 @@ from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse,
                                PlainTextResponse, Response)
 
+import actuacion
 import articulos
 import curva
 import diagramas
@@ -318,16 +319,25 @@ VOZ_VELOCIDAD = max(0.7, min(1.2, float(os.environ.get("VOZ_VELOCIDAD",
                                                        "0.9"))))
 
 
-async def _tts_elevenlabs(quien, texto):
+async def _tts_elevenlabs(quien, texto, entrega=None):
     voz = ELEVENLABS_VOCES.get(quien, ELEVENLABS_VOCES["narrador"])
-    ajustes = {**ELEVENLABS_AJUSTES.get(quien, ELEVENLABS_AJUSTES["narrador"]),
-               "speed": VOZ_VELOCIDAD}
+    base = ELEVENLABS_AJUSTES.get(quien, ELEVENLABS_AJUSTES["narrador"])
+    e = entrega or {}
+    ajustes = actuacion.ajustes_eleven(base, e.get("velocidad"),
+                                       e.get("intensidad"),
+                                       velocidad_base=VOZ_VELOCIDAD)
+    # Aquí las marcas se traducen: [PAUSE 0.4] se convierte en la etiqueta
+    # <break> que este modelo sí entiende, y todo lo demás se BORRA. Sin
+    # este paso, un "[BUILD]" que se colara en el guion se leería en voz
+    # alta en mitad de un adelantamiento.
+    _, hablado = actuacion.separar(texto, actuacion.MOTOR_ELEVEN,
+                                   ELEVENLABS_MODELO)
     async with httpx.AsyncClient() as cliente:
         r = await cliente.post(
             f"https://api.elevenlabs.io/v1/text-to-speech/{voz}",
             params={"output_format": "mp3_44100_128"},
             headers={"xi-api-key": ELEVENLABS_API_KEY},
-            json={"text": texto, "model_id": ELEVENLABS_MODELO,
+            json={"text": hablado, "model_id": ELEVENLABS_MODELO,
                   "voice_settings": ajustes},
             timeout=60,
         )
@@ -335,15 +345,23 @@ async def _tts_elevenlabs(quien, texto):
         return r.content
 
 
-async def _tts_openai(quien, texto):
+async def _tts_openai(quien, texto, entrega=None):
     cfg = TTS_VOCES.get(quien, TTS_VOCES["narrador"])
+    e = entrega or {}
+    # OpenAI no lee corchetes como instrucciones, pero tiene un campo
+    # aparte para la dirección de actuación. Es el sitio donde el "speed 4,
+    # intensity 4" deja de ser una anotación y se convierte en voz.
+    instr = actuacion.instrucciones_openai(
+        cfg["instructions"], e.get("velocidad"), e.get("intensidad"),
+        e.get("emocion"))
+    _, hablado = actuacion.separar(texto, actuacion.MOTOR_OPENAI)
     async with httpx.AsyncClient() as cliente:
         r = await cliente.post(
             "https://api.openai.com/v1/audio/speech",
             headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
             json={"model": TTS_MODELO, "voice": cfg["voice"],
-                  "instructions": cfg["instructions"],
-                  "input": texto, "response_format": "mp3"},
+                  "instructions": instr,
+                  "input": hablado, "response_format": "mp3"},
             timeout=60,
         )
         r.raise_for_status()
@@ -431,10 +449,21 @@ def _voz_en_pausa():
             "cuanto recargues, sin reiniciar" % " y ".join(falta))
 
 
-async def sintetizar(quien, texto):
-    """Convierte una línea en MP3: ElevenLabs > OpenAI > None (voz Mac)."""
-    # Primero, intentar caché de audios
-    audio_cacheado = _cargar_audio_cache(quien, texto)
+async def sintetizar(quien, texto, entrega=None):
+    """Convierte una línea en MP3: ElevenLabs > OpenAI > None (voz Mac).
+
+    `entrega` es la partitura de esa línea —{velocidad, intensidad,
+    emocion}— y cambia CÓMO se dice, no qué se dice. Sin ella la voz sale
+    igual que siempre.
+    """
+    # La entrega entra en la clave del caché. Si no entrara, la misma
+    # frase guardada en tono tranquilo se serviría luego en el momento del
+    # grito: el caché devolvería el audio equivocado justo en el instante
+    # que más importa.
+    sello = actuacion.firma((entrega or {}).get("velocidad"),
+                            (entrega or {}).get("intensidad"),
+                            (entrega or {}).get("emocion"))
+    audio_cacheado = _cargar_audio_cache(quien, texto, sello)
     if audio_cacheado:
         return audio_cacheado
 
@@ -442,7 +471,7 @@ async def sintetizar(quien, texto):
     audio = None
     if ELEVENLABS_API_KEY and _tts_disponible(_elevenlabs_estado):
         try:
-            audio = await _tts_elevenlabs(quien, texto)
+            audio = await _tts_elevenlabs(quien, texto, entrega)
         except Exception as e:
             code = getattr(getattr(e, "response", None), "status_code", None)
             if code in (401, 403):
@@ -461,7 +490,7 @@ async def sintetizar(quien, texto):
                 log.error("ElevenLabs falló (%s) — probando OpenAI", e)
     if not audio and OPENAI_API_KEY and _tts_disponible(_openai_tts_estado):
         try:
-            audio = await _tts_openai(quien, texto)
+            audio = await _tts_openai(quien, texto, entrega)
         except Exception as e:
             code = getattr(getattr(e, "response", None), "status_code", None)
             if code in (401, 403):
@@ -484,20 +513,27 @@ async def sintetizar(quien, texto):
                 log.error("OpenAI TTS falló (%s) — la Mac usará su voz", e)
 
     if audio:
-        _guardar_audio_cache(quien, texto, audio)
+        _guardar_audio_cache(quien, texto, audio, sello)
     return audio
 
 
 import hashlib
-def _hash_audio(quien, texto):
-    """Hash único para una combinación voz+texto."""
+def _hash_audio(quien, texto, sello=""):
+    """Hash único para una combinación voz+texto+entrega.
+
+    Con la entrega neutra el sello va vacío y la clave sale IDÉNTICA a la
+    de antes: los miles de audios ya cacheados (documentales incluidos)
+    siguen valiendo y no hay que volver a pagarlos.
+    """
     s = f"{quien}|{texto.strip()}"
+    if sello:
+        s += f"|{sello}"
     return hashlib.md5(s.encode()).hexdigest()[:12]
 
 
-def _cargar_audio_cache(quien, texto):
+def _cargar_audio_cache(quien, texto, sello=""):
     """Carga audio sintetizado desde caché si existe."""
-    h = _hash_audio(quien, texto)
+    h = _hash_audio(quien, texto, sello)
     ruta = f"cache/audio_{h}.mp3"
     if os.path.exists(ruta):
         try:
@@ -508,9 +544,9 @@ def _cargar_audio_cache(quien, texto):
     return None
 
 
-def _guardar_audio_cache(quien, texto, audio):
+def _guardar_audio_cache(quien, texto, audio, sello=""):
     """Guarda audio sintetizado en caché."""
-    h = _hash_audio(quien, texto)
+    h = _hash_audio(quien, texto, sello)
     ruta = f"cache/audio_{h}.mp3"
     try:
         os.makedirs("cache", exist_ok=True)
@@ -5951,7 +5987,9 @@ the outside, a slipstream down to the line, or the other car running wide. \
 "He got him" is not a description. If the data does not tell you where or \
 how, then say only what you know — who passed whom and for which \
 position — and do not invent a corner or a manoeuvre. Being short is \
-fine; being vague or making it up is not."""
+fine; being vague or making it up is not.
+
+""" + actuacion.LEYENDA
 
 
 DUO_SCHEMA = {
@@ -5965,6 +6003,23 @@ DUO_SCHEMA = {
                     "quien": {"type": "string",
                               "enum": ["narrador", "analista"]},
                     "texto": {"type": "string"},
+                    # La partitura de la línea. Son opcionales a propósito:
+                    # sin ellas la voz sale exactamente como salía antes,
+                    # así que ningún camino que no se haya tocado cambia.
+                    #
+                    # Y van con "enum" y NO con minimum/maximum: la salida
+                    # estructurada de la API no admite límites numéricos, y
+                    # un esquema con "minimum" lo rechaza entero. Serían
+                    # 400 en TODAS las llamadas de la narración en vivo —
+                    # el canal mudo — por un detalle del esquema.
+                    "velocidad": {"type": "integer", "enum": [1, 2, 3, 4, 5],
+                                  "description": "1 slow … 5 extremely fast"},
+                    "intensidad": {"type": "integer", "enum": [1, 2, 3, 4, 5],
+                                   "description": "1 calm … 5 explosive"},
+                    "emocion": {"type": "string",
+                                "enum": ["calm", "anticipation", "tension",
+                                         "excitement", "urgency", "disbelief",
+                                         "relief", "triumph", "concern"]},
                 },
                 "required": ["quien", "texto"],
                 "additionalProperties": False,
@@ -5982,6 +6037,12 @@ def _nombre_de(quien):
     if quien == "tecnico":
         return PRESENTADOR_TECH
     return NARRADOR if quien == "narrador" else ANALISTA
+
+
+#: La curva de tensión del directo. Vive fuera de la función porque su
+#: trabajo es RECORDAR: sin memoria de lo que ya salió a tope no hay forma
+#: de saber que el siguiente grito ya no es un grito, es el tono normal.
+_curva_tension = actuacion.Curva()
 
 
 def _situacion(eventos):
@@ -6313,6 +6374,7 @@ async def narrar_datos(client: anthropic.AsyncAnthropic, eventos):
     Devuelve una lista de líneas [{"quien", "texto"}].
     """
     contexto = estado.tele.resumen() if estado.tele else ""
+    pel = None                 # la pelea en pantalla, si la hay
     if estado.tele:
         estrategia = estado.tele.estrategia_resumen()
         if estrategia:
@@ -6512,6 +6574,22 @@ async def narrar_datos(client: anthropic.AsyncAnthropic, eventos):
                "blended into the flow, e.g. 'if you're enjoying the ride, "
                "hit subscribe, it genuinely helps us'. Just one line, from "
                "either voice, never salesy.")
+    # Cuánta energía autoriza lo que está pasando DE VERDAD en la pista.
+    # Se le dice al guionista antes de escribir, y se le recorta después:
+    # si se le deja elegir a él, contesta 5 en todo y a los treinta
+    # segundos el 5 no significa nada.
+    objetivo = _curva_tension.objetivo(
+        eventos=eventos, situacion=situacion, duelo=pel,
+        vuelta=(t.vuelta if t else 0),
+        total_vueltas=(t.total_vueltas if t else 0),
+        prerace=prerace, postsesion=postsesion)
+    entrega = (
+        f"\n\nDELIVERY FOR THIS SEGMENT — the track says speed "
+        f"{objetivo['velocidad']}, intensity {objetivo['intensidad']} "
+        f"({objetivo['motivo']}). Shape the segment around that: you may "
+        f"drop below it for a reflective line, and go one step above it "
+        f"only on the single word that deserves it. Anything higher will "
+        f"be pulled back down, so spend it where it counts.")
     response = await client.messages.create(
         model=modelo_actual(),
         max_tokens=500,
@@ -6523,7 +6601,7 @@ async def narrar_datos(client: anthropic.AsyncAnthropic, eventos):
             "content": (f"RACE CONTEXT: {contexto}\n"
                         f"SITUATION: {situacion}\n\n"
                         f"WHAT THE DUO ALREADY SAID (memory):\n{memoria}\n\n"
-                        f"{pedido}{cta}\n\n"
+                        f"{pedido}{cta}{entrega}\n\n"
                         "Write the next segment of the conversation."),
         }],
     )
@@ -6531,10 +6609,16 @@ async def narrar_datos(client: anthropic.AsyncAnthropic, eventos):
         return []
     texto = next((b.text for b in response.content if b.type == "text"), "")
     try:
-        return json.loads(texto).get("lineas", [])
+        lineas = json.loads(texto).get("lineas", [])
     except json.JSONDecodeError:
         log.error("Respuesta del dúo no parseable: %.200s", texto)
         return []
+    lineas = [actuacion.normalizar(l, objetivo, _curva_tension)
+              for l in lineas]
+    if lineas:
+        _curva_tension.registrar(max(l["intensidad"] for l in lineas),
+                                 objetivo["motivo"])
+    return lineas
 
 
 AMBIENTE_ARCHIVO = "ambiente_f1.mp3"
@@ -15652,23 +15736,46 @@ async def difundir(lineas):
     """Publica un segmento de diálogo a la Mac y al visor."""
     if isinstance(lineas, str):  # ruta de visión: una sola voz
         lineas = [{"quien": "narrador", "texto": lineas}]
-    lineas = [{**l, "texto": _limpiar_linea(l.get("texto", ""))}
-              for l in lineas]
-    lineas = [l for l in lineas if l["texto"]]
-    if not lineas:
+    # El texto puede venir con marcas de actuación ([PAUSE 0.4], [BREATH]).
+    # Aquí se parte en dos y no se vuelven a juntar: la versión MARCADA va
+    # solo al motor de voz, que es el único que sabe traducirlas, y la
+    # LIMPIA es la que se ve, se guarda en el diario y se graba en el VOD.
+    # Las dos salen del mismo texto ya pasado por _limpiar_linea, así que
+    # el subtítulo y la voz no pueden desincronizarse.
+    preparadas = []
+    for l in lineas:
+        marcado = _limpiar_linea(l.get("texto", ""))
+        limpio = actuacion.limpiar(marcado)
+        if not limpio:
+            continue
+        preparadas.append((
+            {**l, "texto": limpio}, marcado,
+            {"velocidad": l.get("velocidad"),
+             "intensidad": l.get("intensidad"),
+             "emocion": l.get("emocion")}))
+    if not preparadas:
         return
+    lineas = [p[0] for p in preparadas]
     estado.lineas = lineas
     estado.narracion = " / ".join(
         f"{_nombre_de(l['quien'])}: {l['texto']}" for l in lineas)
     estado.narracion_ts = time.time()
     for l in lineas:
+        # Al diario va la versión limpia. Es la memoria que se le enseña al
+        # guionista para que no se repita, y si le devolviéramos las marcas
+        # aprendería a copiarlas en vez de a decidirlas.
         estado.diario.append(f"{_nombre_de(l['quien'])}: {l['texto']}")
-        log.info("🎙️  %s: %s", _nombre_de(l["quien"]), l["texto"])
+        # La partitura va al log para poder VER la curva en los registros:
+        # si todas las líneas de una carrera salen i5, el freno no está
+        # funcionando y hay que enterarse sin tener que oír la emisión.
+        marca = (f" [v{l['velocidad']}i{l['intensidad']}]"
+                 if l.get("intensidad") else "")
+        log.info("🎙️  %s:%s %s", _nombre_de(l["quien"]), marca, l["texto"])
     del estado.diario[:-24]
     lineas_ws = []
     audios = []
-    for l in lineas:
-        audio = await sintetizar(l["quien"], l["texto"])
+    for l, marcado, entrega in preparadas:
+        audio = await sintetizar(l["quien"], marcado, entrega)
         audios.append(audio)
         if audio:
             _vod_grabar(l["quien"], l["texto"], audio)
