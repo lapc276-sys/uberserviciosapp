@@ -72,6 +72,26 @@ CATALOGO = [
      "titulo": "F1 corners pull 6G sideways #Shorts #F1",
      "tarjetas": [("LATERAL FORCE", "6", "G"),
                   ("YOUR HEAD WEIGHS", "30", "kg")]},
+    # Madrid, que estrena el 13 de septiembre de 2026. Las cifras son las
+    # publicadas por el circuito y están cruzadas en hechos.CIRCUITOS.
+    # Ninguna es un tiempo de vuelta ni una velocidad punta: eso no existe
+    # todavía y no se puede poner en una tarjeta como si existiera.
+    {"id": "m09", "etiquetas": "banked corner race track banking",
+     "titulo": "F1's new corner is banked at 24% #Shorts #F1 #Madrid",
+     "tarjetas": [("LA MONUMENTAL BANKING", "24", "%"),
+                  ("TIME IN ONE CORNER", "6", "seconds")]},
+    {"id": "m10", "etiquetas": "formula 1 straight speed racing car",
+     "titulo": "Madrid's longest straight is 837m #Shorts #F1",
+     "tarjetas": [("RIBERA DEL SENA", "837", "m"),
+                  ("SPEED AT THE END", "300+", "km/h")]},
+    {"id": "m11", "etiquetas": "formula 1 circuit aerial track",
+     "titulo": "F1's newest track: 22 corners, 57 laps #Shorts #F1",
+     "tarjetas": [("CORNERS PER LAP", "22", ""),
+                  ("RACE DISTANCE", "308.5", "km")]},
+    {"id": "m12", "etiquetas": "formula 1 car garage engineers",
+     "titulo": "Nobody has ever raced this track #Shorts #F1",
+     "tarjetas": [("PAST RACES HERE", "0", ""),
+                  ("FIRST NEW TRACK SINCE", "2023", "Las Vegas")]},
 ]
 
 DESCRIPCION = (

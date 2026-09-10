@@ -9712,6 +9712,12 @@ _TRAZADOS = [
     ("Las Vegas", "Las Vegas Strip Circuit Formula 1"),
     ("Baku", "Baku City Circuit Formula 1"),
     ("Hungaroring", "Hungaroring Formula 1"),
+    # Madrid estrena en 2026. La búsqueda de fotos es DELIBERADAMENTE
+    # genérica: de un circuito que no ha corrido nunca no hay fotos en los
+    # bancos de imágenes, y pedir "Madring" devolvería o nada o cualquier
+    # otra cosa. Un coche de F1 sin circuito reconocible es honesto; una
+    # foto de Montmeló ilustrando Madrid, no.
+    ("Madring", "Formula 1 2026 car racing"),
 ]
 _CLIMAS = [
     ("in heavy rain", "Formula 1 wet race rain"),
@@ -9847,6 +9853,11 @@ _ALIAS_TRAZADO = {
     "vegas": "Las Vegas", "usa": "Las Vegas",
     "singapore": "Singapore",
     "monaco": "Monaco", "montecarlo": "Monaco", "monte carlo": "Monaco",
+    # 2026: el Gran Premio de España se corre en Madrid. El alias del país
+    # apunta aquí por eso, no por el nombre — si algún año vuelve a
+    # Montmeló, esta línea es la que hay que cambiar.
+    "madrid": "Madring", "ifema": "Madring",
+    "spain": "Madring", "spanish": "Madring",
 }
 
 
@@ -10072,9 +10083,17 @@ def _hechos_para(categoria):
     if _hechos is None:
         return ""
     try:
-        return _hechos.bloque(categoria, n=2)
+        bloque = _hechos.bloque(categoria, n=2)
     except Exception:
         return ""
+    # Y los datos publicados del circuito de ESTA semana, sea cual sea la
+    # temática del short. Un short de neumáticos en semana de Madrid es
+    # mejor short si puede nombrar el peralte del 24% que carga esos
+    # neumáticos; y en un circuito que estrena es lo ÚNICO concreto que
+    # existe, porque no hay ni una vuelta de carrera de la que tirar.
+    with contextlib.suppress(Exception):
+        bloque += _hechos.bloque_circuito(_GP_ACTUAL, n=2)
+    return bloque
 
 
 def _pista_vocabulario(categoria, leccion):

@@ -53,6 +53,14 @@ LARGO_OFICIAL = {
     "barcelona": 4657, "montreal": 4361, "red bull ring": 4318,
     "mexico city": 4304, "lusail": 5419, "yas marina": 5281,
     "shanghai": 5451, "miami": 5412, "sakhir": 5412,
+    # Madrid estrena en 2026. La longitud publicada baila entre 5416 y
+    # 5474 m según la fuente; se usa la que sale de la especificación
+    # oficial de carrera (308,524 km en 57 vueltas = 5413 m), que es la
+    # que cuadra consigo misma. Da igual para lo que sirve esta tabla: el
+    # margen de la comprobación es del 6%, y las tres cifras caben. Lo que
+    # NO cabe es no tener entrada, porque entonces la ficha sale sin poder
+    # decir si la vuelta medida es sana.
+    "madring": 5413, "madrid": 5413,
 }
 
 #: Umbrales de lectura. A fondo = acelerador casi al máximo y sin freno.

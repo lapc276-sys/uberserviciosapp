@@ -34,6 +34,7 @@ Reglas de esta lista
 
 import logging
 import random
+import re
 
 log = logging.getLogger("hechos")
 
@@ -126,6 +127,80 @@ HECHOS = {
     ],
 }
 
+
+# ── Circuitos: las cifras publicadas de la pista de esta semana ───────
+#
+# Por qué esto va aparte de HECHOS
+# ─────────────────────────────────
+# Un circuito que estrena no tiene nada de lo que el canal vive: ni
+# carreras anteriores, ni telemetría guardada, ni degradación medida, ni
+# archivo de fotos. La primera vez que Madrid aparezca en los datos será
+# la FP1 del viernes. Antes de eso, todo lo que el canal puede decir con
+# fundamento es lo que el circuito ha publicado de sí mismo.
+#
+# Y resulta que eso es bastante, y que además NADIE MÁS lo tiene contado
+# todavía. Un trazado que nadie ha corrido no tiene vídeos de archivo con
+# los que competir: los datos publicados son, esta semana, la única
+# ventaja que hay.
+#
+# Regla igual de estricta que arriba, y una más
+# ──────────────────────────────────────────────
+# Cuando dos fuentes se contradicen, se dice la cifra con la PRECISIÓN
+# que de verdad se tiene, no la más bonita. La longitud de vuelta de
+# Madrid aparece publicada como 5,416 km en unos sitios y 5,474 en otros,
+# y la distancia de carrera oficial (308,524 km en 57 vueltas) sale a
+# 5,413. Así que aquí se dice "5,4 km", que es verdad en las tres
+# lecturas, y no se elige una al azar para sonar preciso. Lo que sí se
+# dice exacto es lo que está cruzado por varias fuentes.
+CIRCUITOS = {
+    "madring": [
+        {"dato": "Turn 12, La Monumental, is a banked right-hander about "
+                 "550 metres long with 24% banking — drivers are in that "
+                 "one corner for roughly six seconds.",
+         "fuente": "Circuit specification published by MADRING / IFEMA"},
+        {"dato": "La Monumental is shaped after a bullring, which is where "
+                 "the name comes from.",
+         "fuente": "MADRING / Formula 1 circuit guide"},
+        {"dato": "The longest straight, Ribera del Sena, runs 837 metres, "
+                 "with cars going past 300 km/h at the end of it.",
+         "fuente": "Circuit specification published by MADRING / IFEMA"},
+        {"dato": "The Madring is a hybrid: temporary street sections around "
+                 "the IFEMA exhibition halls, then two short tunnels into a "
+                 "permanent, faster part of the lap.",
+         "fuente": "Circuit specification published by MADRING / IFEMA"},
+        {"dato": "The lap has 22 corners in about 5.4 kilometres, and two "
+                 "DRS zones.",
+         "fuente": "Circuit specification published by MADRING / IFEMA"},
+        {"dato": "The Spanish Grand Prix at the Madring runs to 57 laps, a "
+                 "race distance of 308.524 km.",
+         "fuente": "Formula 1 official race specification"},
+        {"dato": "The Madring is the first brand-new circuit to join the "
+                 "Formula 1 calendar since Las Vegas in 2023, and the 81st "
+                 "track to have held a World Championship Grand Prix.",
+         "fuente": "Formula 1 calendar record"},
+        {"dato": "No driver on the grid has a race lap of this circuit to "
+                 "look back on. The first competitive laps anyone has ever "
+                 "run here are this weekend's.",
+         "fuente": "It is the circuit's debut — 2026 F1 calendar"},
+    ],
+}
+
+#: El mismo tema escrito de las dos maneras. La cola de temas se siembra a
+#: mano y a veces en castellano ("Motor", "Neumáticos"), mientras que estas
+#: tablas están en inglés. Sin esta traducción, `bloque("Motor")` no
+#: encontraba nada y devolvía cadena vacía — y el guion salía SIN cifras
+#: justo en los shorts sembrados, que son los de actualidad y los que más
+#: se ven. El fallo no se veía por ninguna parte: no hay error, solo un
+#: guion más vago.
+ALIAS_CATEGORIA = {
+    "motor": "Engine", "engine": "Engine",
+    "neumaticos": "Tyres", "neumáticos": "Tyres", "tyres": "Tyres",
+    "estrategia": "Strategy", "strategy": "Strategy",
+    "aero": "Aero", "aerodinamica": "Aero", "aerodinámica": "Aero",
+    "historia": "Tech history", "tech history": "Tech history",
+    "prohibida": "Banned tech", "banned tech": "Banned tech",
+}
+
 #: Lo que hace falta para que un short ENSEÑE algo, en vez de afirmarlo.
 #: Va al guionista tal cual.
 MECANISMO = (
@@ -146,6 +221,10 @@ def para(categoria, n=2, semilla=None):
     """
     pozo = list(HECHOS.get(categoria) or [])
     if not pozo:
+        # Segunda oportunidad por el nombre traducido, antes de rendirse.
+        equiv = ALIAS_CATEGORIA.get((categoria or "").strip().lower())
+        pozo = list(HECHOS.get(equiv) or []) if equiv else []
+    if not pozo:
         return []
     r = random.Random(semilla) if semilla is not None else random
     r.shuffle(pozo)
@@ -163,6 +242,65 @@ def bloque(categoria, n=2, semilla=None):
             "concrete:\n" + lineas
             + "\nDo not invent any other figure. If you need a number that "
             "is not on this list, explain the mechanism without it.")
+
+
+#: El mismo circuito llega con nombres distintos según de dónde venga: el
+#: Secret GP_ACTUAL lo escribe el dueño a mano, y el calendario lo llama
+#: como quiera. NO se mete aquí "spain": el Gran Premio de España lo ha
+#: corrido Barcelona durante años, y colgarle a Barcelona la ficha de
+#: Madrid sería exactamente el error que estas tablas existen para evitar.
+ALIAS_CIRCUITO = {
+    "madrid": "madring", "ifema": "madring", "ifemamadrid": "madring",
+    "madridring": "madring",
+}
+
+
+def _clave_circuito(nombre):
+    """El nombre del circuito reducido a la clave de la tabla."""
+    n = re.sub(r"[^a-z0-9]+", "", (nombre or "").strip().lower())
+    if not n:
+        return ""
+    if n in CIRCUITOS:
+        return n
+    if n in ALIAS_CIRCUITO:
+        return ALIAS_CIRCUITO[n]
+    # "Madrid", "MADRING", "Madring Circuit" → madring. Se acepta solo si
+    # encaja UNA, para no acabar dando los datos de un circuito por otro.
+    posibles = [c for c in CIRCUITOS if c in n or n in c]
+    return posibles[0] if len(posibles) == 1 else ""
+
+
+def circuito(nombre, n=2, semilla=None):
+    """`n` datos publicados de ese circuito, o [] si no hay ficha."""
+    clave = _clave_circuito(nombre)
+    pozo = list(CIRCUITOS.get(clave) or [])
+    if not pozo:
+        return []
+    r = random.Random(semilla) if semilla is not None else random
+    r.shuffle(pozo)
+    return pozo[:max(1, n)]
+
+
+def bloque_circuito(nombre, n=2, semilla=None):
+    """Los datos del circuito de esta semana, listos para el prompt.
+
+    Va aparte del bloque temático porque responden a preguntas distintas:
+    uno dice de qué trata el short, y este dice DÓNDE se corre el domingo.
+    Un short de neumáticos en semana de Madrid es mejor short si puede
+    nombrar el peralte del 24% que carga esos neumáticos.
+    """
+    hs = circuito(nombre, n, semilla)
+    if not hs:
+        return ""
+    lineas = "\n".join(f"- {h['dato']}" for h in hs)
+    return ("\n\nThis weekend's circuit. These are PUBLISHED figures and "
+            "you may state them — but only these, and do not invent a lap "
+            "time, a top speed or a tyre choice for a track nobody has "
+            "raced yet:\n" + lineas)
+
+
+def circuitos():
+    return sorted(CIRCUITOS)
 
 
 def categorias():

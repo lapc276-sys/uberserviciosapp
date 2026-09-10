@@ -44,31 +44,59 @@ ARCHIVO = "shorts_ola.json"
 # habla de una persona hay que NOMBRARLA ahí. La primera versión de estos
 # temas buscaba solo "hybrid power unit engine" para un short cuyo gancho
 # era Verstappen: salieron motores y coches de calle, y ni una foto suya.
+# ── Semana del GP de España en el Madring (debut, 13 sep 2026) ──────────
+#
+# Un circuito que estrena es el caso raro en el que NO tener archivo juega
+# a favor. No hay vídeos de carreras anteriores porque no ha habido
+# ninguna: nadie tiene metraje que este canal no tenga. Lo que sí hay son
+# las cifras que el propio circuito ha publicado, y con esas se puede
+# explicar de verdad — están en hechos.CIRCUITOS["madring"] y se le pasan
+# solas al guionista durante toda la semana.
+#
+# El ángulo sigue siendo TÉCNICO, no turístico. "Mira qué circuito nuevo"
+# se muere el lunes; "por qué un peralte del 24% cambia lo que el coche
+# necesita" sigue explicando peraltes dentro de un año, y encima se puede
+# comprobar en pantalla el domingo.
+#
+# Y el límite, escrito para que no se cruce: de este trazado NO se puede
+# decir una vuelta rápida, una velocidad punta ni una elección de
+# neumático, porque nadie ha rodado aquí todavía. Todo eso son
+# PREDICCIONES y se dicen como predicciones. Publicar un tiempo de vuelta
+# inventado de un circuito que estrena es de las pocas cosas que un canal
+# no puede deshacer.
 ACTUALIDAD = [
-    ("Motor",
-     "Verstappen just signed with Red Bull until 2030 after doubting the "
-     "2026 cars — here is what actually changed in the power unit",
-     "Max Verstappen Red Bull Formula One 2026"),
-    ("Motor",
-     "Why the 2026 rules split power almost evenly between engine and "
-     "battery, and what that does to a driver's job",
-     "Max Verstappen Red Bull Racing car Formula One"),
-    ("Estrategia",
-     "Managing battery energy lap by lap is the new skill in 2026 — why "
-     "some drivers hate it",
-     "Formula One 2026 car cockpit racing"),
     ("Aero",
-     "Zandvoort's banked corners explained: why this circuit punishes a "
-     "car that is not planted",
-     "Zandvoort circuit banking corner"),
+     "F1's newest corner is banked at 24% and lasts six seconds — what "
+     "that does to the car, and to the driver's neck",
+     "formula 1 banked corner cornering car"),
     ("Aero",
-     "The banking at Zandvoort lets cars run side by side — the geometry "
-     "that makes it work",
-     "Zandvoort circuit aerial track"),
+     "Madrid's Monumental is a banked corner shaped like a bullring. "
+     "Banking adds grip without adding wing — here is the geometry",
+     "banked race track corner aerial"),
     ("Neumáticos",
-     "Why banked corners load the tyres differently, and what teams change "
-     "for it",
-     "formula 1 tyre loaded cornering"),
+     "A banked corner presses the tyre into the road instead of sliding "
+     "it sideways. Why that changes how long a tyre lasts",
+     "formula 1 tyre loaded cornering close up"),
+    ("Motor",
+     "837 metres flat out into a heavy braking zone: what the 2026 power "
+     "unit is doing with its battery down a straight that long",
+     "formula 1 2026 car straight speed"),
+    ("Estrategia",
+     "Nobody has ever raced here. How teams actually build a setup for a "
+     "circuit with zero data — and what they get wrong on debut weekends",
+     "formula 1 engineers garage laptops"),
+    ("Estrategia",
+     "Two DRS zones and a street section: why the first race at a new "
+     "track is usually decided by track position, not tyres",
+     "formula 1 cars overtaking street circuit"),
+    ("Aero",
+     "Street corners then two tunnels then a fast permanent loop — a "
+     "hybrid lap forces one wing level to do two jobs. Which one wins",
+     "formula 1 rear wing detail"),
+    ("Motor",
+     "A tunnel is the one place on a lap where the car cannot breathe "
+     "clean air the way it does everywhere else — what changes",
+     "race car tunnel circuit"),
 ]
 
 
