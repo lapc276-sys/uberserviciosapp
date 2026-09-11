@@ -992,10 +992,396 @@ def esquema(salida, titulo, piezas, flujo_lineas=(), notas=(), pie="",
     return _guardar(img, salida)
 
 
+# ── Plantillas nuevas ─────────────────────────────────────────────────
+#
+# Por qué hacían falta más
+# ─────────────────────────
+# Había seis plantillas, pero al guionista solo se le ofrecían cuatro, y
+# de esas cuatro la de comparar es la única que casi siempre se puede
+# rellenar con honradez. Resultado: casi todos los diagramas del canal
+# eran el mismo diagrama. Con el catálogo corto no es culpa del
+# guionista — es que no tenía otra cosa que elegir.
+#
+# Estas cuatro son FORMAS distintas, no versiones repintadas de las que
+# ya había: una lista ordenada, una cifra sola, un lazo cerrado y un
+# corte por capas. Cada una responde a una pregunta que las anteriores
+# no sabían contestar.
+
+def barras(salida, titulo, filas, unidad="", pie="", etiqueta="Ranked",
+           tam=VERT):
+    """Una lista ORDENADA con su barra. `filas` = [{"nombre", "valor",
+    "nota"}], `valor` numérico.
+
+    Es la forma que más falta hacía y la más reutilizable del catálogo:
+    velocidades punta, diferencias por sector, tiempos de parada, puntos
+    de campeonato. Cualquier cosa que sea "quién va primero y por cuánto".
+
+    Se distingue de `reparto`, que dibuja cómo se distribuye una nube de
+    valores. Aquí no hay nube: hay un orden.
+    """
+    limpias = []
+    for f in (filas or []):
+        try:
+            limpias.append({"nombre": str(f.get("nombre", "")).strip(),
+                            "valor": float(f.get("valor")),
+                            "nota": str(f.get("nota", "")).strip()})
+        except (TypeError, ValueError):
+            continue
+    limpias = [f for f in limpias if f["nombre"]][:8]
+    if len(limpias) < 2:
+        return None
+    img, dib, y, y_fin = _marco(tam, titulo, etiqueta, pie)
+    w, h = img.size
+    esc = _escala(tam)
+    m = int(w * 0.075)
+    limpias.sort(key=lambda f: -f["valor"])
+
+    # La barra se mide desde CERO cuando todos los valores son positivos, y
+    # desde el mínimo cuando están apelotonados arriba (321, 319, 318 km/h).
+    # Desde cero, esas tres barras saldrían idénticas y el gráfico no
+    # enseñaría lo único que tenía que enseñar: la diferencia.
+    vmax = max(f["valor"] for f in limpias)
+    vmin = min(f["valor"] for f in limpias)
+    apelotonados = vmin > 0 and (vmax - vmin) < vmax * 0.35
+    base = vmin - (vmax - vmin) * 0.25 if apelotonados else min(0.0, vmin)
+    rango = (vmax - base) or 1.0
+
+    f_n = _fuente(int(esc * 0.034), True)
+    f_v = _fuente(int(esc * 0.040), True)
+    f_d = _fuente(int(esc * 0.025), False)
+    # Las filas se reparten el hueco, pero con un TOPE: tres barras en un
+    # lienzo vertical se separaban tanto que dejaban de leerse como una
+    # lista y parecían tres gráficos distintos.
+    alto_fila = max(int(esc * .082),
+                    min(int(esc * .160),
+                        (y_fin - y - int(esc * .04)) // len(limpias)))
+    alto_barra = int(alto_fila * 0.30)
+    x0 = m
+
+    # El hueco de la derecha se MIDE, no se estima. Con un hueco fijo,
+    # "238.9 km/h" no cabía y la barra más larga acababa pintada por
+    # debajo de su propia cifra.
+    etiquetas = [f"{f['valor']:g} {unidad}".strip() for f in limpias]
+    hueco_cifra = max(_ancho(dib, t, f_v) for t in etiquetas)
+    ancho_max = w - 2 * m - int(hueco_cifra) - int(esc * .03)
+
+    # Y el bloque se centra en el hueco disponible. Con tres filas y el
+    # tope de arriba, pegarlo al título dejaba media pantalla vacía
+    # debajo y parecía un diagrama a medio cargar.
+    usado = alto_fila * len(limpias)
+    y = y + max(int(esc * .02), (y_fin - y - usado) // 2)
+
+    for i, f in enumerate(limpias):
+        fy = y + alto_fila * i
+        col = ACENTO if i == 0 else (FRIO if i == 1 else TENUE)
+        dib.text((x0, fy), f["nombre"].upper()[:26], font=f_n, fill=TINTA)
+        by = fy + int(esc * .046)
+        largo = max(int(esc * .01),
+                    int(ancho_max * (f["valor"] - base) / rango))
+        dib.rounded_rectangle([x0, by, x0 + ancho_max, by + alto_barra],
+                              radius=alto_barra // 2, fill=PANEL)
+        dib.rounded_rectangle([x0, by, x0 + largo, by + alto_barra],
+                              radius=alto_barra // 2, fill=col)
+        txt = (f"{f['valor']:g} {unidad}".strip())
+        _texto(dib, (w - m, by - int(esc * .004)), txt, f_v, TINTA,
+               derecha=True)
+        if f["nota"]:
+            dib.text((x0, by + alto_barra + int(esc * .012)),
+                     _recortar(dib, f["nota"], f_d, ancho_max), font=f_d,
+                     fill=APAGADO)
+    # Cuando la barra no arranca en cero hay que DECIRLO. Un gráfico con el
+    # eje cortado y sin avisar exagera la diferencia, y eso es engañar con
+    # datos ciertos, que es la forma elegante de mentir.
+    if apelotonados:
+        f_a = _fuente(int(esc * 0.022), False)
+        # Redondeado: el arranque real sale de una cuenta y queda en
+        # 191,65, que es una cifra que nadie escribiría a mano y que
+        # además aparenta una precisión que no significa nada aquí.
+        arranque = round(base) if abs(base) >= 10 else round(base, 1)
+        _texto(dib, (w - m, y_fin - int(esc * .062)),
+               f"bars start at {arranque:g}, not zero", f_a, TENUE,
+               derecha=True)
+    _pie(img, dib, pie)
+    return _guardar(img, salida)
+
+
+def marcador(salida, titulo, valor, unidad="", de_que="", contexto="",
+             fraccion=None, pie="", etiqueta="Figure", tam=VERT):
+    """UNA cifra, enorme, dentro de un anillo. Con su contexto debajo.
+
+    Existe porque muchos shorts giran alrededor de un solo número —el 24%
+    de peralte, los 350 kW del MGU-K, los 837 metros de recta— y meterlo
+    en una comparación de dos columnas obligaba a inventarse la segunda
+    mitad. Aquí la cifra se sostiene sola.
+
+    `fraccion` (0..1) rellena el anillo en esa proporción, cuando el
+    número ES un porcentaje de algo. Sin ella el anillo queda entero.
+    """
+    valor = str(valor or "").strip()
+    if not valor:
+        return None
+    img, dib, y, y_fin = _marco(tam, titulo, etiqueta, pie)
+    w, h = img.size
+    esc = _escala(tam)
+    m = int(w * 0.075)
+
+    # Vertical: anillo arriba y texto debajo. Apaisado: anillo a la
+    # izquierda y texto al lado.
+    #
+    # No es una preferencia estética. En 1280x720, descontada la cabecera
+    # y el pie, quedan unos 400 píxeles de alto: el anillo más su rótulo y
+    # su frase de contexto no caben apilados, y lo que pasaba es que el
+    # contexto se pintaba encima del pie. En apaisado el sitio está a lo
+    # ANCHO, así que el texto se va al lado.
+    vert = h > w
+    hueco = y_fin - y
+    if vert:
+        r = int(min(hueco * 0.42, (w - 2 * m) * 0.42))
+        cx, cy = w // 2, y + int(hueco * 0.44)
+    else:
+        r = int(min(hueco * 0.44, (w - 2 * m) * 0.22))
+        cx, cy = m + r + int(esc * .02), y + hueco // 2
+    grosor = max(6, int(r * 0.10))
+    dib.ellipse([cx - r, cy - r, cx + r, cy + r], outline=LINEA,
+                width=grosor)
+    if fraccion is not None:
+        try:
+            frac = max(0.0, min(1.0, float(fraccion)))
+        except (TypeError, ValueError):
+            frac = None
+        if frac:
+            # Desde arriba y en el sentido del reloj, que es como se lee un
+            # indicador de verdad.
+            dib.arc([cx - r, cy - r, cx + r, cy + r], -90,
+                    -90 + int(360 * frac), fill=ACENTO, width=grosor)
+
+    # La cifra se encoge hasta caber dentro del anillo. Medirla a ojo con
+    # una fracción fija dejaba "308.5" saliéndose por los lados.
+    cuerpo = int(r * 0.86)
+    while cuerpo > int(esc * 0.05):
+        f_v = _fuente(cuerpo, True)
+        if _ancho(dib, valor, f_v) <= (r * 2 - grosor * 4):
+            break
+        cuerpo -= max(2, cuerpo // 16)
+    f_v = _fuente(cuerpo, True)
+    caja = dib.textbbox((0, 0), valor, font=f_v)
+    dib.text((cx - (caja[2] - caja[0]) / 2 - caja[0],
+              cy - (caja[3] - caja[1]) / 2 - caja[1]), valor,
+             font=f_v, fill=TINTA)
+    if unidad:
+        f_u = _fuente(int(r * 0.20), True)
+        _texto(dib, (cx, cy + (caja[3] - caja[1]) / 2 + int(esc * .008)),
+               unidad, f_u, ACENTO, centro=True, esp=int(esc * .004))
+
+    f_q = _fuente(int(esc * 0.036), True)
+    f_c = _fuente(int(esc * 0.029), False)
+    if vert:
+        tx, ancho_txt, centrado = cx, w - 2 * m, True
+        yy = cy + r + int(esc * .05)
+    else:
+        tx = cx + r + int(esc * .06)
+        ancho_txt, centrado = w - m - tx, False
+        # El bloque se centra con el anillo, midiéndolo ANTES de pintarlo:
+        # así la frase larga y la corta quedan las dos a la misma altura
+        # que la cifra.
+        n_q = len(_partir(dib, de_que.upper(), f_q, ancho_txt)[:2]) if de_que \
+            else 0
+        n_c = len(_partir(dib, contexto, f_c, ancho_txt)[:3]) if contexto else 0
+        alto_txt = n_q * int(esc * .046) + n_c * int(esc * .040)
+        yy = cy - alto_txt // 2
+    if de_que:
+        for ln in _partir(dib, de_que.upper(), f_q, ancho_txt)[:2]:
+            _texto(dib, (tx, yy), ln, f_q, TINTA, centro=centrado)
+            yy += int(esc * .046)
+        yy += int(esc * .014)
+    if contexto:
+        for ln in _partir(dib, contexto, f_c, ancho_txt)[:3]:
+            _texto(dib, (tx, yy), ln, f_c, APAGADO, centro=centrado)
+            yy += int(esc * .040)
+    _pie(img, dib, pie)
+    return _guardar(img, salida)
+
+
+def ciclo(salida, titulo, etapas, centro="", pie="", etiqueta="Cycle",
+          tam=VERT):
+    """Un lazo CERRADO de etapas. `etapas` = [{"nombre", "detalle"}].
+
+    `fases` dibuja una secuencia que empieza y acaba; esto dibuja una que
+    vuelve al principio, y la diferencia no es decorativa. La unidad de
+    potencia de 2026 recupera energía, la guarda, la despliega y vuelve a
+    recuperar: pintarlo como una lista de cuatro pasos sugiere que se
+    termina, cuando lo que hay que entender es justo que no.
+    """
+    et = [e for e in (etapas or [])
+          if str(e.get("nombre", "")).strip()][:4]
+    if len(et) < 3:
+        return None
+    img, dib, y, y_fin = _marco(tam, titulo, etiqueta, pie)
+    w, h = img.size
+    esc = _escala(tam)
+    m = int(w * 0.075)
+
+    # El lazo arriba con solo los NÚMEROS, y las etapas escritas debajo.
+    #
+    # La primera versión ponía el nombre y el detalle pegados a cada nodo,
+    # alrededor del círculo, y no cabían: el de arriba se metía dentro de
+    # su propio nodo y los de los lados se salían del lienzo por la
+    # derecha y por la izquierda. En un lienzo de 1080 de ancho, al lado
+    # de un nodo no hay sitio para una frase, y no lo hay con ningún
+    # tamaño de círculo que siga pareciendo un círculo. Con la leyenda
+    # debajo cabe entero, y el lazo sigue diciendo lo único que tenía que
+    # decir: que gira y que no se acaba.
+    # Y en apaisado la leyenda no va debajo sino AL LADO, por lo mismo que
+    # en `marcador`: en 1280x720 no hay alto para un lazo más cuatro
+    # entradas apiladas, y la última acababa pintada sobre el pie.
+    vert = h > w
+    hueco = y_fin - y
+    if vert:
+        r = int(min(hueco * 0.24, (w - 2 * m) * 0.30))
+        cx, cy = w // 2, y + int(esc * .03) + r
+    else:
+        r = int(min(hueco * 0.40, (w - 2 * m) * 0.20))
+        cx, cy = m + r + int(esc * .02), y + hueco // 2
+    n = len(et)
+    # El lazo, a trozos, con un hueco donde va cada nodo.
+    paso = 360 / n
+    for i in range(n):
+        a0 = -90 + paso * i + 16
+        a1 = -90 + paso * (i + 1) - 16
+        dib.arc([cx - r, cy - r, cx + r, cy + r], a0, a1, fill=LINEA,
+                width=max(4, int(esc * .008)))
+        # La punta de flecha al final de cada tramo: es lo que dice que el
+        # lazo GIRA y no que simplemente está ahí.
+        ang = math.radians(a1)
+        px, py = cx + r * math.cos(ang), cy + r * math.sin(ang)
+        tang = ang + math.pi / 2
+        _flecha(dib, (px - math.cos(tang) * esc * .02,
+                      py - math.sin(tang) * esc * .02), (px, py),
+                ACENTO if i == 0 else TENUE,
+                grosor=max(3, int(esc * .006)), punta=int(esc * .022))
+
+    # Los nodos: solo el número, dentro del lazo.
+    rn = int(esc * .040)
+    for i in range(n):
+        ang = math.radians(-90 + paso * i)
+        nx, ny = cx + r * math.cos(ang), cy + r * math.sin(ang)
+        col = ACENTO if i == 0 else FRIO
+        dib.ellipse([nx - rn, ny - rn, nx + rn, ny + rn], fill=FONDO,
+                    outline=col, width=max(3, int(esc * .008)))
+        _texto(dib, (nx, ny - int(esc * .017)), str(i + 1),
+               _fuente(int(esc * 0.030), True), col, centro=True)
+
+    if centro:
+        f_c = _fuente(int(esc * 0.032), True)
+        lineas_c = _partir(dib, centro.upper(), f_c, int(r * 1.15))[:2]
+        cy0 = cy - int(esc * .019) * len(lineas_c)
+        for k, ln in enumerate(lineas_c):
+            _texto(dib, (cx, cy0 + k * int(esc * .040)), ln, f_c, TENUE,
+                   centro=True)
+
+    # Y las etapas escritas: debajo en vertical, al lado en apaisado.
+    f_n = _fuente(int(esc * 0.034), True)
+    f_d = _fuente(int(esc * 0.026), False)
+    f_i = _fuente(int(esc * 0.026), True)
+    if vert:
+        x_ley = m
+        yy = cy + r + int(esc * .07)
+        sitio = max(int(esc * .07), (y_fin - yy) // n)
+    else:
+        x_ley = cx + r + int(esc * .06)
+        sitio = max(int(esc * .075), hueco // n)
+        yy = cy - (sitio * n) // 2
+    for i, e in enumerate(et):
+        col = ACENTO if i == 0 else FRIO
+        _texto(dib, (x_ley, yy + int(esc * .006)), f"{i + 1}", f_i, col)
+        tx = x_ley + int(esc * .042)
+        dib.text((tx, yy), str(e["nombre"]).upper()[:24], font=f_n,
+                 fill=TINTA)
+        if e.get("detalle"):
+            dy = yy + int(esc * .044)
+            for ln in _partir(dib, str(e["detalle"]), f_d, w - tx - m)[:2]:
+                dib.text((tx, dy), ln, font=f_d, fill=APAGADO)
+                dy += int(esc * .036)
+        yy += sitio
+    _pie(img, dib, pie)
+    return _guardar(img, salida)
+
+
+def capas(salida, titulo, capas_lista, pie="", etiqueta="Cross-section",
+          tam=VERT):
+    """Un corte por CAPAS, apiladas. `capas_lista` = [{"nombre",
+    "detalle", "grosor"}] de arriba a abajo; `grosor` relativo, opcional.
+
+    Un neumático, un disco de freno, el suelo del coche, el sándwich de
+    fibra de carbono: cosas que se entienden viéndolas en capas y que con
+    una lista de puntos no se entienden. Va en trazo del canal y no en
+    modo esquema, porque una capa es un HECHO de cómo está construida la
+    pieza, no el dibujo de nadie.
+    """
+    cs = []
+    for c in (capas_lista or []):
+        nombre = str(c.get("nombre", "")).strip()
+        if not nombre:
+            continue
+        try:
+            g = float(c.get("grosor") or 1.0)
+        except (TypeError, ValueError):
+            g = 1.0
+        cs.append({"nombre": nombre, "grosor": max(0.25, min(4.0, g)),
+                   "detalle": str(c.get("detalle", "")).strip()})
+    cs = cs[:6]
+    if len(cs) < 2:
+        return None
+    img, dib, y, y_fin = _marco(tam, titulo, etiqueta, pie)
+    w, h = img.size
+    esc = _escala(tam)
+    m = int(w * 0.075)
+
+    # El bloque de capas ocupa la izquierda; las etiquetas, la derecha.
+    x0 = m
+    ancho_bloque = int((w - 2 * m) * 0.42)
+    y0 = y + int(esc * .03)
+    alto_total = (y_fin - y0 - int(esc * .04))
+    suma = sum(c["grosor"] for c in cs) or 1.0
+    paleta = [ACENTO, FRIO, CALIDO, VERDE, APAGADO, TENUE]
+
+    f_n = _fuente(int(esc * 0.032), True)
+    f_d = _fuente(int(esc * 0.024), False)
+    yy = y0
+    for i, c in enumerate(cs):
+        alto = max(int(esc * .03), int(alto_total * c["grosor"] / suma))
+        col = paleta[i % len(paleta)]
+        dib.rectangle([x0, yy, x0 + ancho_bloque, yy + alto], fill=PANEL,
+                      outline=LINEA, width=2)
+        # Una banda de color al canto: identifica la capa sin tapar el
+        # rectángulo, que es donde luego caben las tramas si hicieran falta.
+        dib.rectangle([x0, yy, x0 + int(esc * .022), yy + alto], fill=col)
+        # La línea de llamada hasta su etiqueta.
+        ty = yy + alto // 2
+        dib.line([(x0 + ancho_bloque, ty),
+                  (x0 + ancho_bloque + int(esc * .045), ty)],
+                 fill=LINEA, width=2)
+        tx = x0 + ancho_bloque + int(esc * .058)
+        dib.text((tx, ty - int(esc * .030)), c["nombre"].upper()[:22],
+                 font=f_n, fill=TINTA)
+        if c["detalle"]:
+            dy = ty + int(esc * .008)
+            for ln in _partir(dib, c["detalle"], f_d, w - tx - m)[:2]:
+                dib.text((tx, dy), ln, font=f_d, fill=APAGADO)
+                dy += int(esc * .034)
+        yy += alto
+    _pie(img, dib, pie)
+    return _guardar(img, salida)
+
+
 PLANTILLAS = {
     "comparar": comparar,
     "tendencia": tendencia,
     "reparto": reparto,
+    "barras": barras,
+    "marcador": marcador,
+    "ciclo": ciclo,
+    "capas": capas,
     "flujo": flujo,
     "fases": fases,
     "esquema": esquema,

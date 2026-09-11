@@ -10261,6 +10261,7 @@ DIAGRAMA_SCHEMA = {
     "properties": {
         "plantilla": {"type": "string",
                       "enum": ["comparar", "tendencia", "flujo", "fases",
+                               "barras", "marcador", "ciclo", "capas",
                                "ninguna"]},
         "titulo": {"type": "string"},
         "etiqueta": {"type": "string"},
@@ -10281,32 +10282,71 @@ DIAGRAMA_SCHEMA = {
             "properties": {"en": {"type": "number"},
                            "texto": {"type": "string"}},
             "required": ["en", "texto"], "additionalProperties": False}},
-        # fases
+        # fases — y también ciclo y capas, que piden la misma forma
+        # {nombre, detalle}. Se reutiliza el campo a propósito: tres
+        # plantillas con el mismo hueco es un esquema que se entiende, y
+        # tres huecos idénticos con nombres distintos es uno que se llena
+        # mal.
         "pasos": {"type": "array", "items": {
             "type": "object",
             "properties": {"nombre": {"type": "string"},
                            "detalle": {"type": "string"}},
             "required": ["nombre", "detalle"], "additionalProperties": False}},
+        # barras
+        "filas": {"type": "array", "items": {
+            "type": "object",
+            "properties": {"nombre": {"type": "string"},
+                           "valor": {"type": "number"},
+                           "nota": {"type": "string"}},
+            "required": ["nombre", "valor", "nota"],
+            "additionalProperties": False}},
+        "unidad": {"type": "string"},
+        # marcador
+        "cifra": {"type": "string"},
+        "de_que": {"type": "string"},
+        "contexto": {"type": "string"},
+        # ciclo
+        "centro": {"type": "string"},
     },
     "required": ["plantilla", "titulo", "etiqueta", "pie",
                  "izq_nombre", "izq_valor", "izq_unidad", "izq_nota",
                  "der_nombre", "der_valor", "der_unidad", "der_nota",
                  "puntos_y", "eje_x", "eje_y", "marca_i", "marca_texto",
-                 "forma", "notas", "pasos"],
+                 "forma", "notas", "pasos",
+                 "filas", "unidad", "cifra", "de_que", "contexto", "centro"],
     "additionalProperties": False,
 }
 
 SYSTEM_DIAGRAMA = """You also choose a DIAGRAM that illustrates the script.
 
-Pick the ONE template that shows what the script explains:
+Pick the ONE template that shows what the script explains. There are
+eight shapes and they answer different questions — do not default to
+"comparar" because it is first. If the script has one headline number,
+that is "marcador". If it ranks things, that is "barras". Reaching for a
+two-column comparison every time is how a channel ends up with a hundred
+videos carrying the same picture.
 - comparar: two things with a measured figure each (two wing angles, two
   compounds, before and after a rule change).
+- barras: three to eight things RANKED by a number, with the figure on
+  each bar (top speeds, sector losses, stop times, points).
+- marcador: ONE headline figure, big, on its own. Use it when the script
+  is built around a single number and a second column would have to be
+  invented to fill a comparison. Put the number in "cifra", the unit in
+  "unidad", what it measures in "de_que", and in "contexto" the sentence
+  that makes it mean something.
 - tendencia: something that rises or falls over a run, with one point
   worth naming (tyre drop-off, downforce against speed, temperature).
 - flujo: air moving through a section — "suelo" for the floor and
   diffuser, "ala" for a wing, "cuerpo" for bodywork.
-- fases: a sequence in time (braking, turn-in, apex, exit; the phases of
-  a stop).
+- fases: a sequence in time that STARTS and ENDS (braking, turn-in,
+  apex, exit; the phases of a stop). Fill "pasos".
+- ciclo: a loop that returns to its own beginning and does not finish —
+  harvest, store, deploy, harvest again; a tyre heat cycle. Fill "pasos"
+  and put a short label for the middle in "centro". The difference from
+  "fases" is not decoration: drawing a loop as a list says it ends.
+- capas: a cross-section stacked in layers (a tyre, a brake disc, a
+  carbon sandwich, the floor). Fill "pasos", one per layer, from the
+  outside in.
 - ninguna: nothing here is worth drawing. Say this rather than forcing a
   diagram onto a script that is not about a mechanism.
 
@@ -10328,7 +10368,8 @@ def _diagrama_kwargs(d):
     if not isinstance(d, dict):
         return None
     plantilla = (d.get("plantilla") or "").strip().lower()
-    if plantilla not in ("comparar", "tendencia", "flujo", "fases"):
+    if plantilla not in ("comparar", "tendencia", "flujo", "fases",
+                         "barras", "marcador", "ciclo", "capas"):
         return None
     base = {"plantilla": plantilla,
             "titulo": (d.get("titulo") or "").strip(),
@@ -10366,14 +10407,59 @@ def _diagrama_kwargs(d):
                          for n in (d.get("notas") or [])
                          if isinstance(n, dict) and "en" in n
                          and (n.get("texto") or "").strip()][:3]
-    else:                                   # fases
+    elif plantilla == "barras":
+        filas = []
+        for f in (d.get("filas") or []):
+            if not isinstance(f, dict):
+                continue
+            nombre = (f.get("nombre") or "").strip()
+            if nombre and isinstance(f.get("valor"), (int, float)):
+                filas.append({"nombre": nombre, "valor": f["valor"],
+                              "nota": (f.get("nota") or "").strip()})
+        if len(filas) < 2:
+            return None
+        base["filas"] = filas[:8]
+        base["unidad"] = (d.get("unidad") or "").strip()
+    elif plantilla == "marcador":
+        cifra = (d.get("cifra") or "").strip()
+        if not cifra:
+            return None
+        base["valor"] = cifra
+        base["unidad"] = (d.get("unidad") or "").strip()
+        base["de_que"] = (d.get("de_que") or "").strip()
+        base["contexto"] = (d.get("contexto") or "").strip()
+        # El relleno del anillo NO se le pide: se deduce. Si la cifra es
+        # un porcentaje, el anillo se llena esa parte. Pidiéndoselo
+        # aparte podía contestar 0.8 junto a un 24%, y el dibujo diría
+        # una cosa y el número otra.
+        if base["unidad"] in ("%", "percent"):
+            with contextlib.suppress(ValueError):
+                base["fraccion"] = float(cifra.replace(",", ".")) / 100.0
+    else:                                   # fases, ciclo y capas
         pasos = [{"nombre": (p.get("nombre") or "").strip(),
                   "detalle": (p.get("detalle") or "").strip()}
                  for p in (d.get("pasos") or [])
                  if isinstance(p, dict) and (p.get("nombre") or "").strip()]
-        if len(pasos) < 2:
-            return None
-        base["pasos"] = pasos[:5]
+        if plantilla == "ciclo":
+            # Un lazo con dos nodos no es un lazo, es una flecha de ida y
+            # vuelta. Por debajo de tres no se dibuja.
+            if len(pasos) < 3:
+                return None
+            base["etapas"] = pasos[:4]
+            base["centro"] = (d.get("centro") or "").strip()
+        elif plantilla == "capas":
+            if len(pasos) < 2:
+                return None
+            # El grosor NO se le pide. Un espesor de capa es un dato
+            # medido que el guionista no tiene, y dejar que lo rellene es
+            # exactamente la clase de cifra inventada que este canal no
+            # publica. Todas las capas salen iguales, que es lo honesto
+            # cuando no se sabe cuál es más gruesa.
+            base["capas_lista"] = pasos[:6]
+        else:
+            if len(pasos) < 2:
+                return None
+            base["pasos"] = pasos[:5]
     return base
 
 
