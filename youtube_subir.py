@@ -31,6 +31,8 @@ import tempfile
 
 import httpx
 
+import subtitulos
+
 log = logging.getLogger("youtube")
 
 VERT_W, VERT_H = 1080, 1920
@@ -832,6 +834,73 @@ def _aplicar_cta(video_in, texto, dur, w, h, fps):
     return False
 
 
+#: Rótulos quemados en el vídeo. Se pueden apagar con el Secret ROTULOS=off.
+#: Van solo en los VERTICALES: en Shorts los subtítulos de YouTube están
+#: apagados por defecto y casi nadie los enciende, así que sin esto el
+#: canal escribía subtítulos que el espectador no veía. En horizontal la
+#: pista de YouTube sí se usa y un documental de diez minutos daría
+#: cientos de rótulos, con el encode arrastrándose.
+ROTULOS_ON = os.environ.get("ROTULOS", "on").lower() not in (
+    "off", "0", "", "no")
+
+
+def _aplicar_rotulos(video_in, texto, dur, w, h, fps):
+    """SEGUNDA pasada AISLADA: quema los rótulos del guion en la imagen.
+
+    Mismo trato que el CTA: si algo falla devuelve False y el llamador se
+    queda con el vídeo ORIGINAL intacto. Un rótulo es una mejora, no un
+    requisito, y no puede tumbar la publicación de un short.
+    """
+    if not (ROTULOS_ON and texto and video_in and os.path.exists(video_in)):
+        return False
+    if not dur or dur <= 0:
+        return False
+    carpeta = os.path.dirname(os.path.abspath(video_in))
+    pngs = []
+    try:
+        marcas = subtitulos.rotulos(texto, dur, (w, h), carpeta,
+                                    fuentes=_FUENTES)
+        if not marcas:
+            return False
+        pngs = [m[2] for m in marcas]
+        args = [_ffmpeg(), "-y", "-i", video_in]
+        for p in pngs:
+            args += ["-loop", "1", "-framerate", str(fps), "-i", p]
+        # Cadena de superposiciones, una por rótulo, cada una encendida
+        # solo en su ventana de tiempo. `shortest=1` va en TODAS y no solo
+        # en la primera: las imágenes entran en bucle, o sea infinitas, y
+        # sin eso la cadena seguiría generando fotogramas para siempre
+        # después de que el vídeo se acabara.
+        partes, etiqueta = [], "0:v"
+        for i, (t0, t1, _p) in enumerate(marcas):
+            sig = f"v{i}"
+            partes.append(
+                f"[{etiqueta}][{i + 1}:v]overlay=0:0:"
+                f"enable='between(t,{t0:.2f},{t1:.2f})':shortest=1[{sig}]")
+            etiqueta = sig
+        salida = video_in + ".rot.mp4"
+        args += ["-filter_complex", ";".join(partes),
+                 "-map", f"[{etiqueta}]", "-map", "0:a?",
+                 "-c:v", "libx264", "-preset", "veryfast",
+                 "-pix_fmt", "yuv420p", "-c:a", "copy",
+                 "-movflags", "+faststart", salida]
+        r = subprocess.run(args, capture_output=True, timeout=900)
+        if (r.returncode == 0 and os.path.exists(salida)
+                and os.path.getsize(salida) > 0):
+            os.replace(salida, video_in)
+            log.info("💬 %d rótulos quemados en el short", len(marcas))
+            return True
+        log.info("Rótulos no aplicados (%s) — el short queda sin ellos",
+                 (r.stderr or b"")[-300:].decode("utf-8", "ignore"))
+    except Exception as e:
+        log.info("Rótulos no aplicados (%s)", e)
+    finally:
+        for p in pngs:
+            with contextlib.suppress(OSError):
+                os.remove(p)
+    return False
+
+
 def _preparar_imagen(ruta, texto, w, h):
     """Deja la imagen lista con Pillow: recorte a w×h (tipo cover) y el
     título pintado sobre una banda oscura. Nunca lanza — si algo falla,
@@ -941,7 +1010,7 @@ TITULO_EN_VIDEO = os.environ.get("TITULO_EN_VIDEO", "off").strip().lower() in (
 
 async def armar_video(audio_path, fotos_urls, titulo, salida_mp4,
                       horizontal=False, con_musica=False, cta_texto=None,
-                      chip=None, capitulos=(), montaje=None):
+                      chip=None, capitulos=(), montaje=None, guion=None):
     """Construye el MP4 y, si es un short vertical con `cta_texto`, le añade
     una píldora de suscripción en los últimos segundos (segunda pasada
     aislada: si falla, el video queda igual). `chip` = nombre de serie que se
@@ -952,11 +1021,19 @@ async def armar_video(audio_path, fotos_urls, titulo, salida_mp4,
                                  horizontal=horizontal, con_musica=con_musica,
                                  chip=chip, capitulos=capitulos,
                                  montaje=montaje)
-    if ok and cta_texto and not horizontal:
+    if ok and not horizontal:
         dur = _duracion_audio(audio_path) or 25.0
-        with contextlib.suppress(Exception):
-            await asyncio.to_thread(_aplicar_cta, salida_mp4, cta_texto,
-                                    dur, VERT_W, VERT_H, 30)
+        # Los rótulos van ANTES del CTA. Si fueran después, la píldora de
+        # suscripción quedaría debajo de un rótulo, y la píldora es lo
+        # único de la pantalla que pide una acción.
+        if guion:
+            with contextlib.suppress(Exception):
+                await asyncio.to_thread(_aplicar_rotulos, salida_mp4, guion,
+                                        dur, VERT_W, VERT_H, 30)
+        if cta_texto:
+            with contextlib.suppress(Exception):
+                await asyncio.to_thread(_aplicar_cta, salida_mp4, cta_texto,
+                                        dur, VERT_W, VERT_H, 30)
     return ok
 
 

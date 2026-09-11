@@ -176,3 +176,198 @@ def escribir_srt(texto, duracion, salida):
     except Exception as e:
         log.warning("No se pudo escribir el SRT (%s)", e)
         return None
+
+
+# ── Rótulos QUEMADOS en la imagen ─────────────────────────────────────
+#
+# Por qué hacen falta, además del SRT de arriba
+# ──────────────────────────────────────────────
+# El SRT se sube como pista de subtítulos de YouTube, y eso sirve para el
+# buscador y para las traducciones automáticas. Lo que NO hace es
+# aparecer en pantalla: en Shorts los subtítulos van apagados por
+# defecto y casi nadie entra a encenderlos. Así que el canal llevaba
+# subtítulos que el espectador no veía.
+#
+# Estos van dentro de la imagen. No se pueden apagar, se leen con el
+# móvil en silencio —que es como se ve la mitad de los Shorts— y son de
+# las pocas cosas que se sabe que suben la retención de un vertical.
+#
+# Cómo se dibujan, y por qué así
+# ───────────────────────────────
+# Blanco tirando a plateado: el relleno es un degradado vertical de
+# blanco a gris acero, que es lo que hace que unas letras parezcan metal
+# en vez de papel. Debajo va un contorno oscuro, y no por estética: sin
+# él, una letra blanca sobre el capó blanco de un coche desaparece. El
+# contorno es lo que garantiza que se lea SIEMPRE, sobre cualquier foto.
+#
+# Y el ancho se mide en PÍXELES con la tipografía de verdad, no contando
+# caracteres. Contando caracteres, una línea de eñes y una de íes miden
+# lo mismo en el código y muy distinto en pantalla — y la que se pasa se
+# sale del encuadre.
+
+#: Zona segura vertical. La interfaz de Shorts tapa la franja de abajo
+#: (título, canal, botones), y la píldora de suscripción del canal cae
+#: sobre el 58% de la altura. El rótulo se pone por debajo de esa píldora
+#: y por encima de la interfaz.
+ALTO_ROTULO = 0.72
+#: Ancho utilizable: se dejan márgenes a los lados para no pegarse al
+#: borde ni meterse bajo la columna de botones de la derecha.
+ANCHO_UTIL = 0.84
+#: Cuerpo de letra de partida y mínimo, como fracción del ancho del
+#: lienzo. Un Short se ve en una pantalla de mano: grande o no se lee.
+CUERPO_MAX = 0.075
+CUERPO_MIN = 0.044
+#: Líneas como mucho. Tres ya es un párrafo tapando la imagen.
+LINEAS_PANTALLA = 3
+
+#: El degradado del relleno: de blanco puro a gris acero.
+#: Blanco arriba, acero abajo. El extremo bajo NO baja más: el encargo
+#: era "blanca tirando a plateada", y por debajo de esto deja de leerse
+#: como plata y empieza a leerse como gris apagado.
+PLATA_ALTA = (255, 255, 255)
+PLATA_BAJA = (196, 204, 218)
+#: El contorno y su sombra. Es lo que hace que se lea sobre una foto
+#: clara; sin esto el rótulo se pierde la mitad de las veces.
+BORDE = (6, 8, 12)
+
+
+def _fuente_pil(rutas, tam):
+    from PIL import ImageFont
+    for p in (rutas or []):
+        try:
+            return ImageFont.truetype(p, size=tam)
+        except Exception:
+            continue
+    return ImageFont.load_default()
+
+
+def _envolver_ancho(dib, texto, fnt, ancho_max):
+    """Parte el texto en líneas que de verdad CABEN, medidas con la
+    tipografía. Devuelve la lista de líneas."""
+    palabras = (texto or "").split()
+    if not palabras:
+        return []
+    lineas, actual = [], palabras[0]
+    for p in palabras[1:]:
+        prueba = f"{actual} {p}"
+        if dib.textlength(prueba, font=fnt) <= ancho_max:
+            actual = prueba
+        else:
+            lineas.append(actual)
+            actual = p
+    lineas.append(actual)
+    return lineas
+
+
+def _degradado(tam, paso, y0):
+    """El degradado plateado, repetido UNA VEZ POR LÍNEA.
+
+    Que se repita es justo lo que lo hace parecer metal. Estirando un
+    solo degradado sobre todo el bloque, un rótulo de una línea sale de
+    un color plano y uno de tres sale con la primera línea blanca y la
+    última gris, como si se apagara. Por línea, las tres brillan igual:
+    claro arriba del trazo y acero abajo, que es como se ve una letra
+    cromada de verdad.
+    """
+    from PIL import Image
+    w, h = tam
+    paso = max(2, int(paso))
+    tira = Image.new("RGB", (1, paso))
+    px = tira.load()
+    for y in range(paso):
+        t = y / (paso - 1)
+        px[0, y] = tuple(
+            int(PLATA_ALTA[i] + (PLATA_BAJA[i] - PLATA_ALTA[i]) * t)
+            for i in range(3))
+    tira = tira.resize((w, paso))
+    lienzo = Image.new("RGB", (w, h), PLATA_BAJA)
+    # Se empieza a embaldosar desde y0 para que cada línea de texto caiga
+    # en la misma fase del degradado.
+    y = y0 % paso - paso
+    while y < h:
+        lienzo.paste(tira, (0, y))
+        y += paso
+    return lienzo
+
+
+def rotulo_png(texto, tam, salida, fuentes=(), alto=ALTO_ROTULO):
+    """Un PNG transparente del tamaño del vídeo con UN rótulo dibujado.
+
+    Devuelve la ruta o None. None no rompe nada: el vídeo se queda sin
+    ese rótulo y sigue su camino.
+    """
+    texto = re.sub(r"\s+", " ", (texto or "").replace("\n", " ")).strip()
+    if not texto:
+        return None
+    try:
+        from PIL import Image, ImageDraw
+        w, h = tam
+        ancho_max = int(w * ANCHO_UTIL)
+        # Se empieza grande y se baja hasta que quepa en las líneas
+        # permitidas. Al revés —elegir el cuerpo por número de letras— es
+        # lo que deja una línea saliéndose por la derecha.
+        medidor = ImageDraw.Draw(Image.new("L", (8, 8)))
+        cuerpo = int(w * CUERPO_MAX)
+        piso = max(12, int(w * CUERPO_MIN))
+        lineas, fnt = [], None
+        while cuerpo >= piso:
+            fnt = _fuente_pil(fuentes, cuerpo)
+            lineas = _envolver_ancho(medidor, texto, fnt, ancho_max)
+            if len(lineas) <= LINEAS_PANTALLA:
+                break
+            cuerpo -= max(2, cuerpo // 18)
+        if not lineas or fnt is None:
+            return None
+
+        borde = max(3, cuerpo // 14)
+        salto = int(cuerpo * 1.16)
+        bloque = salto * len(lineas)
+        y0 = int(h * alto - bloque / 2)
+
+        # 1) El contorno oscuro, en su propia capa.
+        capa = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        d = ImageDraw.Draw(capa)
+        for i, ln in enumerate(lineas):
+            d.text((w // 2, y0 + i * salto), ln, font=fnt,
+                   fill=BORDE + (255,), anchor="ma",
+                   stroke_width=borde, stroke_fill=BORDE + (255,))
+
+        # 2) El relleno plateado: se dibuja el texto en una máscara y el
+        #    degradado se cuela POR ella. Pintar letra a letra con un
+        #    color distinto cada una daría bandas, no un degradado.
+        mascara = Image.new("L", (w, h), 0)
+        dm = ImageDraw.Draw(mascara)
+        for i, ln in enumerate(lineas):
+            dm.text((w // 2, y0 + i * salto), ln, font=fnt, fill=255,
+                    anchor="ma")
+        # El degradado arranca un poco por encima de la altura de la
+        # línea: así el blanco cae sobre el cuerpo de la letra y el acero
+        # sobre su base, en vez de al contrario.
+        plata = _degradado((w, h), salto, max(0, y0 - int(cuerpo * 0.18)))
+        capa.paste(plata, (0, 0), mascara)
+
+        capa.save(salida)
+        return salida
+    except Exception as e:
+        log.info("No se pudo dibujar el rótulo (%s)", e)
+        return None
+
+
+def rotulos(texto, duracion, tam, carpeta, fuentes=(), maximo=40):
+    """Un PNG por cue. Devuelve [(inicio, fin, ruta_png)].
+
+    `maximo` existe porque cada rótulo es una entrada más en el
+    filtergraph de ffmpeg: en un short son ocho o diez y va sobrado, pero
+    un documental de diez minutos daría cientos y el encode se arrastra.
+    Pasado el tope se devuelve lo que cabe en vez de fallar.
+    """
+    import os
+    cs = cues(texto, duracion)
+    if not cs:
+        return []
+    fuera = []
+    for i, (t0, t1, linea) in enumerate(cs[:maximo]):
+        ruta = os.path.join(carpeta, f"rotulo_{i:03d}.png")
+        if rotulo_png(linea, tam, ruta, fuentes=fuentes):
+            fuera.append((t0, t1, ruta))
+    return fuera

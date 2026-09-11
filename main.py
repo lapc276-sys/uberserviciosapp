@@ -11874,7 +11874,12 @@ async def bucle_youtube():
                     "" if sin_ov else _texto_overlay_short(short), video_ruta,
                     cta_texto=_cta_visual(),
                     chip=None if sin_ov else _chip_serie(short),
-                    montaje=montaje)
+                    montaje=montaje,
+                    # El guion, para quemar los rótulos en la imagen. Es el
+                    # MISMO texto del que sale el SRT, así que lo que se
+                    # lee en pantalla y la pista de subtítulos no pueden
+                    # decir cosas distintas.
+                    guion=short.get("guion"))
                 if montaje:
                     short["montaje"] = montaje
                     _guardar_short(sid, short)
