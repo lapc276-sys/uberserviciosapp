@@ -14351,18 +14351,48 @@ async def bucle_resumen():
     """Genera el video-reseña (dúo debatiendo lo bueno/lo malo de la
     carrera) y un short TÉCNICO de datos para cada sesión terminada, y los
     sube a YouTube."""
+    # Las tres puertas de este bucle se cerraban EN SILENCIO. Si falta la
+    # clave de Claude, o el OAuth de YouTube, o ffmpeg, el bucle o no
+    # arranca o da vueltas sin hacer nada cada dos minutos sin escribir
+    # una línea. Y desde fuera eso se ve igual que un generador roto: hay
+    # un pendiente en disco y no aparece ningún video. Ahora cada puerta
+    # dice su nombre.
     if os.environ.get("RESUMEN_AUTO", "on").lower() in ("off", "0", ""):
+        log.info("📝 Video-reseña desactivada (Secret RESUMEN_AUTO=off)")
         return
     if not os.environ.get("ANTHROPIC_API_KEY"):
+        log.warning("📝 Video-reseña DESACTIVADA: falta ANTHROPIC_API_KEY. "
+                    "Los resúmenes se acumularán en %s sin montarse.",
+                    RESUMEN_DIR)
         return
     os.makedirs(RESUMEN_DIR, exist_ok=True)
     _cliente_tec = anthropic.AsyncAnthropic()
     await asyncio.sleep(45)
+    trabado = None           # última razón avisada, para no repetirla
     while True:
         try:
-            if (youtube_subir.oauth_configurado()
-                    and await youtube_subir.asegurar_ffmpeg()):
-                for a in sorted(os.listdir(RESUMEN_DIR)):
+            pend = [a for a in sorted(os.listdir(RESUMEN_DIR))
+                    if a.startswith("pendiente_") and a.endswith(".json")]
+            falta = None
+            if not youtube_subir.oauth_configurado():
+                falta = ("el OAuth de YouTube (Secrets YOUTUBE_CLIENT_ID, "
+                         "YOUTUBE_CLIENT_SECRET, YOUTUBE_REFRESH_TOKEN)")
+            elif not await youtube_subir.asegurar_ffmpeg():
+                falta = "ffmpeg, que es lo que une el audio con las fotos"
+            if falta and pend:
+                # Solo se avisa cuando CAMBIA: si no, son treinta líneas
+                # por hora diciendo lo mismo y el registro deja de servir.
+                if trabado != falta:
+                    trabado = falta
+                    log.warning("📝 %d resumen(es) esperando en %s y no se "
+                                "pueden montar: falta %s",
+                                len(pend), RESUMEN_DIR, falta)
+            elif not falta:
+                if trabado:
+                    log.info("📝 Ya se puede montar la reseña (%s resuelto)",
+                             trabado)
+                trabado = None
+                for a in pend:
                     if not (a.startswith("pendiente_") and a.endswith(".json")):
                         continue
                     ruta = os.path.join(RESUMEN_DIR, a)

@@ -53,9 +53,93 @@ def _acronimo(nombre):
     return base[:3].upper()
 
 
+def estado():
+    """Por qué no se ha montado la reseña.
+
+    El bucle tiene tres puertas —clave de Claude, OAuth de YouTube y
+    ffmpeg— y las tres se cerraban sin decir nada: daba vueltas cada dos
+    minutos sin escribir una línea. Desde fuera eso se ve igual que un
+    generador roto. Esto las abre una por una y dice cuál falla.
+    """
+    print("RESUMEN PENDIENTE")
+    pend = []
+    if os.path.isdir(DIR):
+        pend = sorted(a for a in os.listdir(DIR)
+                      if a.startswith("pendiente_") and a.endswith(".json"))
+    if pend:
+        for a in pend:
+            extra = ""
+            try:
+                with open(os.path.join(DIR, a)) as f:
+                    d = json.load(f)
+                intentos = d.get("intentos", 0)
+                extra = (f"  ({d.get('sesion','?')} — {d.get('pais','?')}"
+                         + (f", {intentos} intento(s) fallidos" if intentos
+                            else "") + ")")
+                if intentos >= 3:
+                    extra += "  ⚠️  SE RINDIÓ: bórralo y vuelve a crearlo"
+            except Exception as e:
+                extra = f"  (no se pudo leer: {e})"
+            print(f"  ✅ {a}{extra}")
+    else:
+        print(f"  ❌ no hay ningún pendiente_*.json en {DIR}/")
+        print("     Sin eso no hay nada que montar. Créalo con este mismo")
+        print("     script (mira --help) o espera a que lo apunte una")
+        print("     sesión que SÍ tenga telemetría.")
+
+    print("\nLAS TRES PUERTAS DEL BUCLE")
+    ok = True
+    if os.environ.get("RESUMEN_AUTO", "on").lower() in ("off", "0", ""):
+        print("  ❌ RESUMEN_AUTO está en off — el bucle no arranca")
+        ok = False
+    else:
+        print("  ✅ RESUMEN_AUTO activo")
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        print("  ✅ ANTHROPIC_API_KEY presente")
+    else:
+        print("  ❌ falta ANTHROPIC_API_KEY — el bucle SE CIERRA al arrancar")
+        ok = False
+    faltan = [v for v in ("YOUTUBE_CLIENT_ID", "YOUTUBE_CLIENT_SECRET",
+                          "YOUTUBE_REFRESH_TOKEN")
+              if not os.environ.get(v)]
+    if faltan:
+        print("  ❌ OAuth de YouTube incompleto, falta: " + ", ".join(faltan))
+        print("     Con esto el bucle da vueltas y NO monta nada.")
+        print("     Se arregla corriendo: python3 autorizar_youtube.py")
+        ok = False
+    else:
+        print("  ✅ OAuth de YouTube completo")
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import youtube_subir
+        if youtube_subir.ffmpeg_disponible():
+            print("  ✅ ffmpeg disponible")
+        else:
+            print("  ❌ ffmpeg NO disponible — no se puede montar el video")
+            ok = False
+    except Exception as e:
+        print(f"  ⚠️  no pude comprobar ffmpeg ({e})")
+
+    print()
+    if pend and ok:
+        print("Todo en orden: el bucle lo monta en menos de dos minutos.")
+        print("Si aun así no aparece, mira el registro del Repl y busca")
+        print("'video-reseña' o 'Recap con muy pocas líneas'.")
+    elif not pend:
+        print("Falta el resumen pendiente. Eso es lo primero.")
+    else:
+        print("Arregla las puertas marcadas con ❌ y el bucle lo recogerá")
+        print("solo, sin reiniciar.")
+    return 0
+
+
 def main():
+    if "--estado" in sys.argv:
+        return estado()
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--estado", action="store_true",
+                   help="Solo diagnosticar: por qué no se monta la reseña")
     p.add_argument("--sesion", default="Race",
                    help="Race, Sprint o Qualifying (por defecto Race)")
     p.add_argument("--pais", required=True, help='p.ej. "Spain"')
