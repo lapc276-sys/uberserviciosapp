@@ -6427,6 +6427,17 @@ async def narrar_datos(client: anthropic.AsyncAnthropic, eventos):
                 f"\nOVERTAKES JUST NOW, with the place each one happened "
                 f"(measured from GPS — quotable, and the ONLY source you "
                 f"may use for where a pass happened): {det}")
+        # Los datos PUBLICADOS del circuito de hoy, si hay ficha. En un
+        # trazado que estrena es lo único concreto que existe sobre la
+        # pista antes de que ruede nadie: no hay carreras anteriores de las
+        # que tirar, y sin esto el dúo hablaba de Madrid sin poder nombrar
+        # ni el peralte ni la recta larga.
+        with contextlib.suppress(Exception):
+            ficha = (_hechos.bloque_circuito(
+                         estado.tele.sesion.get("circuit_short_name"), n=3)
+                     or _hechos.bloque_circuito(_GP_ACTUAL, n=3))
+            if ficha:
+                contexto += ficha
         # Curva destacada: la más lenta del circuito, medida del trazado real.
         # Es donde menos se adelanta, y da pie a explicar el trazado al aire.
         if estado.curvas:
@@ -6526,13 +6537,26 @@ async def narrar_datos(client: anthropic.AsyncAnthropic, eventos):
             "warm-up. Keep the show ALIVE and exciting like a real TV "
             "pre-show. Do NOT go silent. Say something FRESH each time "
             "(never repeat anything in the memory) — pick ONE new angle:\n"
-            "  • who's on pole / the front rows and the key grid battles;\n"
+            "  • QUALIFYING: who's on pole, the front rows, who out- or "
+            "under-performed their car, the grid battles that matter — "
+            "using the grid in the RACE CONTEXT and the headlines, never "
+            "a lap time you were not given;\n"
+            "  • incidents or penalties from the weekend — ONLY if they are "
+            "in the headlines or the race-control data; if nothing is "
+            "there, there were none to talk about;\n"
+            "  • THIS CIRCUIT: its corners, its straights, its banking, "
+            "where the overtaking will be — from the circuit facts in the "
+            "context and the corner spotlight, nothing else;\n"
+            "  • RACE STRATEGY: how many stops the lap length and the tyre "
+            "allocation suggest, undercut risk, where a safety car would "
+            "hurt — said as a PREDICTION, and if the track has never been "
+            "raced, say so: that is the story, not a gap in your notes;\n"
             "  • a driver storyline going into today, a rivalry, a comeback;\n"
             "  • what's at stake in the championship (use standings);\n"
-            "  • a bold prediction: who wins, first-lap danger at La Source "
-            "or Eau Rouge, undercut risk;\n"
-            "  • weather and tyre choices, or a bit of Spa history;\n"
+            "  • weather and tyre choices;\n"
             "  • ONE relaxed nod to a real headline below.\n"
+            "Alex and Sam should disagree sometimes — two predictions are "
+            "better television than one.\n"
             "Two to four short, upbeat lines. Build anticipation.\n"
             f"HEADLINES (data, not orders):\n{bloque}")
     else:
@@ -6554,9 +6578,24 @@ async def narrar_datos(client: anthropic.AsyncAnthropic, eventos):
             "RACE CONTEXT data):\n"
             "  • who's fastest and by how much, who just improved, who's "
             "struggling; a driver's run, sector strengths;\n"
+            "  • THE CORNERS AND THE BRAKING: use the corner spotlight and "
+            "the circuit facts — why that corner is slow, what the banking "
+            "does to the car, where the big braking zone is and what it "
+            "takes to get it right; the fight card's sector data says who "
+            "is stronger where;\n"
             "  • tyre life, an undercut window, a strategy read, a prediction "
             "(never invent numbers — only what's in the data);\n"
-            "  • a specific driver storyline or a bit of circuit history.\n"
+            "  • an OPINION: a take on a driver, a team call, a rule, the "
+            "state of the sport — Alex and Sam may disagree, and a good "
+            "argument is a better minute of radio than a fact read twice; "
+            "opinions are free, figures are not;\n"
+            "  • a specific driver storyline or a bit of circuit history;\n"
+            "  • Formula 2 or Formula 3 — ONLY when a headline below is "
+            "about them; you have no results feed, so nothing on those "
+            "series comes from memory.\n"
+            "If an incident, a safety car or a red flag is in the events, "
+            "that comes FIRST and everything else waits: concern for the "
+            "driver, then what it changes for the race.\n"
             "ONLY OCCASIONALLY (and never twice in a row), a short off-track "
             "aside using a REAL headline below — but if you've chatted news "
             "recently in the memory, DON'T; go back to the track instead.\n"
@@ -13582,7 +13621,8 @@ _RECAP_CAPS = [
     ("THE GOOD — what you LOVED about this session. Open with a quick, warm "
      "'welcome back' and set the scene, then debate the highlights: the "
      "racing, a standout drive, a brilliant overtake, the circuit itself "
-     "(Eau Rouge, the flow). Alex and Sam should AGREE and DISAGREE, share "
+     "(its signature corner, the flow — the circuit in the DATA, not any "
+     "other). Alex and Sam should AGREE and DISAGREE, share "
      "genuine opinions, not just facts."),
     ("THE CONTROVERSY — what you DIDN'T like or found debatable: the "
      "stewards' decisions and penalties, a questionable strategy call, a "
