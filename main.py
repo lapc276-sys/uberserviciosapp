@@ -3345,6 +3345,18 @@ async def visor():
                box-shadow: 0 10px 34px rgba(0,0,0,.6);
                backdrop-filter: blur(7px); }
   #battlebar.on { opacity: 1; transform: translate(-50%, 0); }
+  /* En una pantalla estrecha las columnas se apilan, el mapa baja y la
+     tarjeta de pelea —que va fija a 211px del suelo— le caía ENCIMA:
+     tapaba la mitad inferior del circuito y los coches de esa mitad
+     desaparecían detrás de ella. Se le reserva el sitio por debajo del
+     mapa, que es lo que hace la columna cuando hay sitio de sobra.
+     OBS captura a 1280 o a 1920 y ahí no entra esta regla. */
+  @media (max-width: 620px) {
+    #battlebar { position: static; left: auto; bottom: auto; width: auto;
+                 max-height: none; margin: 14px 22px 0;
+                 transform: translateY(14px); }
+    #battlebar.on { transform: none; }
+  }
   body.programa #battlebar, body.interludio #battlebar,
   body.standby #battlebar { display: none; }
 
@@ -5040,6 +5052,15 @@ function pintarMapa(d) {
     return X >= -4 && X <= w + 4 && Y >= -4 && Y <= h + 4;
   };
   ctx.clearRect(0, 0, w, h);
+  // Escala del dibujo, relativa al lienzo. Vive AQUÍ arriba y no dentro
+  // del bloque de la pista porque la necesitan también los cascos y los
+  // números, y ahí estaba el fallo de los coches amontonados: la pista sí
+  // adelgazaba con el lienzo pero el casco medía 15 px fijos. A 1920 el
+  // mapa sale de ~920 px y cuadra; a 1280 sale de ~410 y el casco pasa a
+  // ser tres veces más gordo de lo que le toca, así que diez coches se
+  // tocan unos a otros y no se distingue nada. Que es exactamente lo que
+  // se veía en antena.
+  const gr = w / 980;
   {
     // Pista: glow suave, cinta de asfalto y una línea de acento encima.
     //
@@ -5051,9 +5072,6 @@ function pintarMapa(d) {
     // aunque la midiera, sería la de otra sesión, no la de hoy. Se veía como
     // un arcoíris porque eso es lo que era: ruido pintado de colores.
     ctx.lineJoin = 'round'; ctx.lineCap = 'round';
-    // Grosores relativos al lienzo, para que se vean igual a cualquier
-    // resolución en vez de engordar cuando el mapa es pequeño.
-    const gr = w / 980;
     // Sin sujetar: la pista se dibuja con los MISMOS puntos que fijaron el
     // encuadre, así que cae dentro por construcción.
     const pt = lin.map(([x, y]) => [_px(x), _py(y)]);
@@ -5120,23 +5138,28 @@ function pintarMapa(d) {
   const cur = (d.curvas || [])[curvaFoco % Math.max(1, (d.curvas||[]).length)];
   if (cur) {
     const X = px(cur.x), Y = py(cur.y);
-    const r = (grande ? 20 : 9) + Math.sin(Date.now() / 260) * (grande ? 4 : 2);
+    const rBase = grande ? Math.max(10, 20 * gr) : 9;
+    const r = rBase + Math.sin(Date.now() / 260) * (grande ? 4 * gr : 2);
     ctx.save();
     ctx.strokeStyle = 'rgba(255,214,0,.95)';
-    ctx.lineWidth = grande ? 4 : 2;
+    ctx.lineWidth = grande ? Math.max(2, 4 * gr) : 2;
     ctx.beginPath(); ctx.arc(X, Y, r, 0, 7); ctx.stroke();
     ctx.fillStyle = 'rgba(255,214,0,.16)'; ctx.fill();
     if (grande) {
-      ctx.font = '800 15px Inter,sans-serif';
+      const cuerpo = Math.max(9, Math.round(15 * gr));
+      ctx.font = '800 ' + cuerpo + 'px Inter,sans-serif';
       ctx.fillStyle = '#FFD600';
-      ctx.fillText('T' + cur.numero, X + r + 6, Y + 5);
+      ctx.fillText('T' + cur.numero, X + r + 6 * gr, Y + cuerpo / 3);
     }
     ctx.restore();
   }
   // Coches: un CASCO con el color del equipo y su chapa con dorsal y
   // acrónimo. Antes era un puntito de color con el nombre al lado; a quien
   // acaba de llegar a la F1 eso no le dice nada, y un casco sí se reconoce.
-  const rC = grande ? 15 : 6;
+  // El casco, a escala del lienzo. Con 15 px fijos, un mapa pequeño salía
+  // con diez cascos pisándose: el suelo de 7 px es el mínimo para que
+  // siga leyéndose como un casco y no como una mancha.
+  const rC = grande ? Math.max(7, Math.round(15 * gr)) : 6;
   // El líder primero: elige antes dónde va su chapa y se dibuja encima.
   const orden = coches.filter(enCuadro)
                       .sort((a, b) => (a.p || 99) - (b.p || 99));
@@ -5166,7 +5189,10 @@ function pintarMapa(d) {
               ? [d.duelo.detras.acr, d.duelo.delante.acr] : [];
   ctx.textBaseline = 'middle';
   ctx.textAlign = 'center';
-  ctx.font = (grande ? '800 13px' : '700 8px') + ' Inter,sans-serif';
+  // El número dentro del casco: también a escala, o en un mapa pequeño el
+  // 13 fijo se sale del casco que acaba de encogerse.
+  ctx.font = (grande ? ('800 ' + Math.max(7, Math.round(13 * gr)) + 'px')
+                     : '700 8px') + ' Inter,sans-serif';
   for (const c of orden) {
     if (!c.p) continue;
     const [X, Y] = punto(c);
@@ -5180,8 +5206,9 @@ function pintarMapa(d) {
   ctx.textAlign = 'left';
   // Y el nombre de los dos que pelean, al lado de su casco.
   if (pel.length && grande) {
-    ctx.font = '800 15px Inter,sans-serif';
-    const alto = 24;
+    const cuerpo = Math.max(9, Math.round(15 * gr));
+    ctx.font = '800 ' + cuerpo + 'px Inter,sans-serif';
+    const alto = Math.max(15, Math.round(24 * gr));
     for (const c of orden) {
       if (!pel.includes(c.a)) continue;
       const [X, Y] = punto(c);
@@ -5663,6 +5690,7 @@ async function tick() {
   const board = document.getElementById('board');
   const boardTitle = document.getElementById('board-title');
   board.innerHTML = '';
+  try {
   if (d.en_vivo) {
     boardTitle.textContent = 'Leaderboard';
     for (const f of d.leaderboard) {
@@ -5697,7 +5725,7 @@ async function tick() {
     }
   } else if ((d.calendario || []).length) {
     boardTitle.textContent = 'Upcoming Sessions';
-    d.calendario.forEach((s, i) => {
+    (d.calendario || []).forEach((s, i) => {
       const row = document.createElement('div'); row.className = 'row';
       const cd = i === 0 && s.inicia
         ? '<span class="gap" style="color:var(--accent)">' +
@@ -5717,11 +5745,39 @@ async function tick() {
     boardTitle.textContent = 'Leaderboard';
     board.innerHTML = '<div class="vacio">No live session</div>';
   }
-  pintarMapa(d);
-  pintarCurva(d);
-  pintarVelocidad(d);
-  pintarPodio(d);
-  pintarPistaEspera(d);
+  } catch (e) {
+    // La tabla va ANTES del mapa en esta función, así que una fila mala
+    // se llevaba por delante el mapa entero. Aquí se corta: la tabla se
+    // queda con las filas que se pudieron pintar y el mapa se dibuja.
+    if (!tick._tabla_mal) { tick._tabla_mal = 1; console.error('tabla:', e); }
+  }
+  // Cada panel, en su propia red.
+  //
+  // Esto no es precaución de manual: está MEDIDO. Con un solo campo de
+  // una forma inesperada —un neumático que llegue como objeto en vez de
+  // como texto— la excepción sube por tick() y aborta TODO lo que venía
+  // detrás: el mapa no se dibuja, la tabla se queda vacía, la tarjeta de
+  // pelea se queda a medias y el podio no sale. La pantalla se congela en
+  // lo último que se pintó y parece que el canal se ha roto. Así se ve
+  // "el mapa quedó una línea sin cascos ni nada": no es el mapa, es que
+  // alguien murió antes de llegar a él.
+  //
+  // Con cada panel aparte, un dato malo cuesta UN panel desactualizado
+  // durante dos segundos, y el resto de la pantalla sigue viva.
+  const panel = (nombre, fn) => {
+    try { fn(d); } catch (e) {
+      if (!panel._visto) panel._visto = {};
+      if (!panel._visto[nombre]) {          // una vez, no 30 por minuto
+        panel._visto[nombre] = 1;
+        console.error('panel ' + nombre + ':', e);
+      }
+    }
+  };
+  panel('mapa', pintarMapa);
+  panel('curva', pintarCurva);
+  panel('velocidad', pintarVelocidad);
+  panel('podio', pintarPodio);
+  panel('espera', pintarPistaEspera);
   // Reservar en la columna derecha el sitio que ocupa el cuadro de
   // campeonato, que va fijo encima de ella. Se mide en vez de fijarlo a
   // ojo porque su alto depende de cuántas filas tenga.
@@ -5780,7 +5836,11 @@ async function tick() {
   // de veinte mensajes que empuja la columna hacia abajo hasta meterse por
   // debajo del cuadro de campeonato, y se solapan los dos. Los seis
   // últimos son los que importan; lo viejo ya se contó.
-  for (const i of d.incidentes.slice(0, 6)) {
+  // (d.incidentes || []): el servidor manda siempre la lista, pero una
+  // sola vez que no lo hiciera esta línea tiraba tick() entera y con
+  // ella el subtítulo, el ticker y el relevo de voz. Los tres campos de
+  // esta función que se recorren sin red llevan ahora su respaldo.
+  for (const i of (d.incidentes || []).slice(0, 6)) {
     const el = document.createElement('div'); el.className = 'inc';
     el.innerHTML = '<span class="lapn">L' + i.vuelta + '</span><span>' +
       i.texto + '</span>';
@@ -5793,7 +5853,7 @@ async function tick() {
     document.getElementById('frame').src = '/frame.jpg?t=' + Date.now();
   } else { fb.style.display = 'none'; }
   // subtítulo: llega un segmento nuevo → arranca por su primera línea
-  if (d.lineas.length && d.segmento !== ultimoSegmento) {
+  if ((d.lineas || []).length && d.segmento !== ultimoSegmento) {
     ultimoSegmento = d.segmento;
     // Se reproduce TAMBIÉN el segmento que ya estaba sonando al cargar.
     // Antes la primera carga se saltaba a propósito: con la voz apagada
