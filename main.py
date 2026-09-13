@@ -14024,6 +14024,18 @@ def _guardar_resumen_sesion(s):
         return
     t = estado.tele
     if t is None:
+        # Sin telemetría no hay resultado que apuntar, y un resumen sin
+        # resultado no da una reseña: daría al dúo hablando de una carrera
+        # cuyo ganador no conoce. Así que aquí se rinde — pero se rinde EN
+        # VOZ ALTA. Antes era un `return` callado, y el día que OpenF1 no
+        # respondió el video-reseña simplemente no apareció, sin una línea
+        # en el registro que dijera por qué; se buscó el fallo en el
+        # generador, que no tenía ninguno.
+        log.warning("📝 Sin resumen de %s: no hubo telemetría, así que no "
+                    "hay resultado que apuntar y NO habrá video-reseña. "
+                    "Se puede crear a mano: python3 resena.py --sesion "
+                    "Race --pais X --circuito Y --top \"1:Nombre,2:...\"",
+                    s.get("sesion"))
         return
     try:
         tabla = t.tabla()
