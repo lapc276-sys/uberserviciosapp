@@ -272,9 +272,20 @@ TTS_VOCES = {
     },
     "analista": {
         "voice": "onyx",
-        "instructions": ("Calm, seasoned Formula 1 color commentator. "
-                         "Relaxed pace, thoughtful, slightly dry humor. "
-                         "Conversational, like chatting in the booth."),
+        # Antes esta instrucción pedía CALMA con esas palabras: "Calm,
+        # relaxed pace, thoughtful". Y la voz obedecía. El dueño pidió
+        # alguien más enérgico y el problema no era la actriz: era que se
+        # le estaba dirigiendo para que bajara el tono mientras el
+        # narrador subía. Dos voces así no suenan a dúo, suenan a que una
+        # de las dos está de más.
+        "instructions": ("Sharp, quick-witted Formula 1 analyst with real "
+                         "energy — the one who cuts in because she has "
+                         "spotted something and can't wait. Lively pace, "
+                         "confident, a bit of edge. She commits to her "
+                         "reads instead of hedging them, and she enjoys "
+                         "disagreeing. Rises with the moment like her "
+                         "co-commentator does; never flat, never "
+                         "lecturing. Warm but never sleepy."),
     },
     "historiador": {
         "voice": "fable",
@@ -318,7 +329,12 @@ ELEVENLABS_VOCES = {
 # analista más estable y pausado (pero no plano).
 ELEVENLABS_AJUSTES = {
     "narrador": {"stability": 0.42, "similarity_boost": 0.75, "style": 0.6},
-    "analista": {"stability": 0.55, "similarity_boost": 0.75, "style": 0.45},
+    # stability BAJA = más rango y más variación; alta = plana. La
+    # analista estaba en 0.55 con estilo 0.45, o sea MENOS expresiva que
+    # el narrador (0.42 / 0.6), y encima con la instrucción pidiéndole
+    # calma. Ahora va a la par que él: si tiene que sonar enérgica, los
+    # mandos tienen que dejarla.
+    "analista": {"stability": 0.40, "similarity_boost": 0.75, "style": 0.62},
     "historiador": {"stability": 0.55, "similarity_boost": 0.8, "style": 0.35},
     "tecnico": {"stability": 0.5, "similarity_boost": 0.8, "style": 0.4},
 }
@@ -4042,8 +4058,37 @@ function encuadrarMapa() {
   const tope = puesto ? bb.getBoundingClientRect().top - 14
                       : window.innerHeight - 66;
   const alto = Math.max(220, tope - arriba);
-  const ancho = Math.min(1180, Math.round(alto * MAPA_PROPORCION));
+  // El ancho SALE del alto por la proporción del lienzo (980x600), y eso
+  // dejaba el mapa en 424 px de ancho a 1280 mientras la columna central
+  // tenía 688 libres: un mapa pequeño con espacio vacío a los lados, que
+  // es justo lo que se veía en antena. Ahora se coge lo que de verdad hay
+  // —el ancho de la columna— y si con ese ancho el alto natural no cabe,
+  // se le ESTIRA la proporción al lienzo en vez de encogerlo.
+  const disponible = Math.max(260, Math.floor(
+    (box.parentElement || box).getBoundingClientRect().width));
+  const ancho = Math.min(1180, disponible);
   if (box.style.maxWidth !== ancho + 'px') box.style.maxWidth = ancho + 'px';
+  // Y el lienzo adopta la proporción del hueco real. Su contenido se
+  // encuadra solo desde los límites del trazado, así que un lienzo más
+  // apaisado no deforma nada: solo cabe más pista.
+  //
+  // La proporción se escribe DIRECTAMENTE en _proporcion, sin tocar los
+  // atributos width/height del canvas. El primer intento sí los tocaba y
+  // dejó el mapa EN NEGRO: lienzo() sobrescribe cv.width y cv.height en
+  // cada vuelta con el tamaño en píxeles reales, así que el atributo que
+  // yo acababa de poner desaparecía, mi comprobación volvía a verlo
+  // distinto y lo ponía otra vez — cincuenta veces por segundo. Y cada
+  // asignación a cv.width BORRA el lienzo, con lo que el mapa se
+  // limpiaba justo después de dibujarse.
+  const cv = document.getElementById('mapa-grande');
+  if (cv) {
+    const usable = Math.max(200, ancho - 18);   // el padding de la caja
+    const ar = Math.max(1.15, Math.min(3.2, usable / Math.max(150, alto)));
+    const previo = _proporcion.get(cv);
+    // Solo si cambia de verdad: reescribirla igual no hace daño, pero
+    // comparar evita que un redondeo la mueva sin parar.
+    if (!previo || Math.abs(previo - ar) > 0.02) _proporcion.set(cv, ar);
+  }
 }
 
 // ── El adelantamiento, en su hueco bajo el leaderboard ─────────────────
@@ -5275,29 +5320,70 @@ function pintarMapa(d) {
     ctx.fillText(String(c.p), X, Y);
   }
   ctx.textAlign = 'left';
-  // Y el nombre de los dos que pelean, al lado de su casco.
-  if (pel.length && grande) {
-    const cuerpo = Math.max(9, Math.round(15 * gr));
+  // EL NOMBRE DE CADA COCHE, y no solo de los dos que pelean.
+  //
+  // Antes esto rotulaba únicamente la pelea destacada, y el resto del
+  // mapa eran números. El número dice en qué puesto va, que ya está en la
+  // tabla; lo que el mapa tiene que decir es QUIÉN es cada punto.
+  //
+  // Se quitaron en su día porque las chapas se buscaban hueco solas en
+  // anillos alrededor del casco y en cuanto los coches se juntaban
+  // pasaban tres cosas: se amontonaban, las que no encontraban sitio
+  // desaparecían, y a las lejanas se les dibujaba una guía, así que el
+  // mapa se llenaba de rayas cruzando la pista.
+  //
+  // La diferencia ahora: se prueban CUATRO sitios fijos alrededor del
+  // casco —derecha, izquierda, arriba, abajo— y si ninguno está libre la
+  // chapa NO se dibuja. Sin anillos, sin guías, sin rayas. Un coche sin
+  // nombre porque tiene a otro encima es honesto; una maraña, no. Y con
+  // los cascos ya a escala del lienzo hay bastante más sitio libre que
+  // cuando esto se intentó.
+  if (grande) {
+    const cuerpo = Math.max(8, Math.round(13 * gr));
     ctx.font = '800 ' + cuerpo + 'px Inter,sans-serif';
-    const alto = Math.max(15, Math.round(24 * gr));
+    const alto = Math.max(13, Math.round(20 * gr));
+    const hueco = Math.max(3, Math.round(5 * gr));
+    // Los cascos ya ocupan sitio: una chapa no puede caer sobre ninguno.
+    const puestos = orden.filter(c => c.p).map(c => {
+      const [X, Y] = punto(c);
+      return [X - rC, Y - rC, X + rC, Y + rC];
+    });
+    const choca = (a) => puestos.some(
+      b => !(a[2] <= b[0] || b[2] <= a[0] || a[3] <= b[1] || b[3] <= a[1]));
     for (const c of orden) {
-      if (!pel.includes(c.a)) continue;
+      if (!c.p) continue;
       const [X, Y] = punto(c);
       const txt = c.a || String(c.n);
-      const ancho = ctx.measureText(txt).width + 20;
-      // A la derecha si cabe, y si no a la izquierda. Sin anillos, sin
-      // guías y sin desaparecer: son dos, siempre hay sitio para dos.
-      const x = (X + rC + 6 + ancho <= w - 4) ? X + rC + 6 : X - rC - 6 - ancho;
-      const y = Y - alto / 2;
-      _chapa(ctx, x, y, ancho, alto, 8);
-      ctx.fillStyle = 'rgba(10,13,20,.92)'; ctx.fill();
+      const ancho = ctx.measureText(txt).width + Math.round(14 * gr);
+      // La pelea destacada va primero en la lista de sitios y con la
+      // chapa más marcada: es la que el espectador está buscando.
+      const sitios = [
+        [X + rC + hueco, Y - alto / 2],
+        [X - rC - hueco - ancho, Y - alto / 2],
+        [X - ancho / 2, Y - rC - hueco - alto],
+        [X - ancho / 2, Y + rC + hueco],
+      ];
+      let x = null, y = null;
+      for (const [sx, sy] of sitios) {
+        if (sx < 2 || sx + ancho > w - 2 || sy < 2 || sy + alto > h - 2)
+          continue;
+        if (choca([sx, sy, sx + ancho, sy + alto])) continue;
+        x = sx; y = sy; break;
+      }
+      if (x === null) continue;            // sin sitio: no se dibuja, y ya
+      puestos.push([x, y, x + ancho, y + alto]);
+      const suya = pel.includes(c.a);
+      _chapa(ctx, x, y, ancho, alto, Math.max(4, Math.round(7 * gr)));
+      ctx.fillStyle = suya ? 'rgba(14,18,26,.97)' : 'rgba(10,13,20,.86)';
+      ctx.fill();
       ctx.save();
-      _chapa(ctx, x, y, ancho, alto, 8); ctx.clip();
+      _chapa(ctx, x, y, ancho, alto, Math.max(4, Math.round(7 * gr)));
+      ctx.clip();
       ctx.fillStyle = c.c ? ('#' + c.c) : '#E10600';
-      ctx.fillRect(x, y, 5, alto);
+      ctx.fillRect(x, y, Math.max(3, Math.round(4 * gr)), alto);
       ctx.restore();
-      ctx.fillStyle = '#fff';
-      ctx.fillText(txt, x + 12, y + alto / 2 + 0.5);
+      ctx.fillStyle = suya ? '#FFFFFF' : 'rgba(238,241,246,.92)';
+      ctx.fillText(txt, x + Math.round(9 * gr), y + alto / 2 + 0.5);
     }
   }
   ctx.textBaseline = 'alphabetic';
@@ -5844,6 +5930,9 @@ async function tick() {
       }
     }
   };
+  // El encuadre va ANTES de pintar. Al revés, cualquier cambio de tamaño
+  // del lienzo borra lo que se acababa de dibujar.
+  panel('encuadre', encuadrarMapa);
   panel('mapa', pintarMapa);
   panel('curva', pintarCurva);
   panel('velocidad', pintarVelocidad);
@@ -5873,7 +5962,6 @@ async function tick() {
   // recortaban los nombres y los tiempos.
   pintarRotulo(d);
   pintarPase(d);
-  encuadrarMapa();
   // Coste de parada medido de las paradas reales de ESTA carrera
   const pitloss = document.getElementById('pitloss');
   if (d.pit) {
@@ -6103,9 +6191,13 @@ about to be caught. He calls positions and battles as they happen instead \
 of musing about the sport in general. Prefer "he's got him — down the \
 inside into turn one!" over abstract commentary. When the data shows a gap \
 shrinking, he is ON it.
-- {ANALISTA} earns her line: she speaks only when there is something the \
-picture does NOT explain — a strategy read, a degradation trend, why a pit \
-call was made. One point, then out.
+- {ANALISTA} earns her line, but when she takes it she TAKES it. She \
+speaks when there is something the picture does NOT explain — a strategy \
+read, a degradation trend, why a pit call was made — and she says it with \
+conviction, not as a hedge. She is allowed to cut in because she spotted \
+something, to disagree with {NARRADOR} outright, and to be the one who is \
+right. What she must not be is a murmur between his lines: a second voice \
+that sounds bored is worse than no second voice.
 - NEVER RE-EXPLAIN THE RULES. A flag, a penalty or a procedure gets \
 explained ONCE per race, briefly, the first time it happens. After that \
 you name it and move on — "still yellow in sector seven", not another \
