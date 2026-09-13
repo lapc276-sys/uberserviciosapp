@@ -187,46 +187,170 @@ def _traza_real(dib, w, h, pts):
     dib.line(p + [p[0]], fill="#1E2735", width=6, joint="curve")
 
 
-def _coche(dib, x, y, largo, color):
-    """Silueta de F1 vista desde arriba, dibujada por nosotros.
+def _coche_capa(largo, color, dorsal="", angulo=0.0):
+    """Un coche de F1 visto desde arriba, en su propia capa y girado.
 
-    Genérica a propósito: sin librea, sin números y sin logotipos. El
-    color es el del equipo y nada más — la decoración real de un coche es
-    marca ajena.
+    Devuelve una imagen RGBA. Se dibuja aparte y se gira porque un coche
+    recto es un icono y uno inclinado es una carrera: la inclinación es
+    lo que hace que la miniatura parezca movimiento en vez de plantilla.
 
-    Dos intentos antes de que se leyera. El primero salía como una
-    MANCUERNA (los dos alerones igual de anchos y el cuerpo estrecho en
-    medio). El segundo tenía las ruedas separadas del chasis, flotando
-    como cuadrados sueltos. Lo que hace que se lea "coche" es que las
-    ruedas TOQUEN el cuerpo y sobresalgan poco, y que el alerón trasero
-    sea más ancho que el delantero.
+    Tres intentos hasta que se leyó como un coche. El primero era una
+    MANCUERNA: los dos alerones igual de anchos y el cuerpo estrecho en
+    medio. El segundo tenía las ruedas flotando sueltas al lado del
+    chasis. El tercero pegó las ruedas al cuerpo y se leía... como una
+    plancha.
+
+    Lo que faltaba era lo que de verdad distingue a un F1 desde arriba:
+    las ruedas VAN separadas —son descubiertas, eso es la esencia de la
+    categoría— pero unidas al chasis por los BRAZOS DE SUSPENSIÓN, que
+    se ven. Sin los brazos parecen cuadrados sueltos; con ellos, el ojo
+    lee monoplaza. Y las proporciones son las de verdad: un coche de
+    2026 mide unos 5 m de largo por 1,9 m de ancho, así que el conjunto
+    es dos veces y media más largo que ancho.
+
+    Genérico a propósito: sin librea, sin números de equipo y sin
+    logotipos. El color es el del equipo y nada más — la decoración real
+    de un coche es marca ajena.
     """
-    L = largo
-    def R(x0, y0, x1, y1, col):
-        ax, bx_ = sorted((x + x0 * L, x + x1 * L))
-        ay, by_ = sorted((y + y0 * L, y + y1 * L))
-        dib.rectangle([ax, ay, bx_, by_], fill=col)
-    def P(pts, col):
-        dib.polygon([(x + a * L, y + b * L) for a, b in pts], fill=col)
+    from PIL import Image, ImageDraw
+    L = int(largo)
+    # Lienzo con holgura para que el giro no recorte las esquinas.
+    lado = int(L * 1.6)
+    capa = Image.new("RGBA", (lado, lado), (0, 0, 0, 0))
+    d = ImageDraw.Draw(capa)
+    cx, cy = lado / 2, lado / 2
+    col = "#" + color.lstrip("#")
+    sombra = _oscurecer(col, 0.55)
+    goma = "#0E1116"
+    llanta = _oscurecer(col, 0.8)
 
-    rueda = "#12161C"
-    # Ruedas: pegadas al cuerpo (empiezan en 0.09, que es su medio ancho)
-    # y sobresaliendo poco. Van primero para que el chasis las remate.
-    for rx in (-0.34, 0.14):
+    def X(u):
+        # Signo NEGATIVO: el coche mira a la derecha. Con el morro a la
+        # izquierda, el escalonado de los tres ponía al líder detrás y la
+        # miniatura contaba la carrera del revés.
+        return cx - u * L
+
+    def Y(v):
+        return cy + v * L
+
+    def P(pts, relleno, borde=None, gr=0):
+        d.polygon([(X(a), Y(b)) for a, b in pts], fill=relleno,
+                  outline=borde, width=gr)
+
+    def R(u0, v0, u1, v1, relleno, radio=0):
+        # ORDENA las esquinas. Pillow exige y1 >= y0 y lanza si no, y con
+        # coordenadas simétricas (±0.30) la mitad de las llamadas salen
+        # invertidas por el signo. Ordenar aquí es más barato que acertar
+        # el orden en cada una de las quince llamadas de abajo.
+        ax, bx = sorted((X(u0), X(u1)))
+        ay, by = sorted((Y(v0), Y(v1)))
+        if radio:
+            d.rounded_rectangle([ax, ay, bx, by], radius=radio, fill=relleno)
+        else:
+            d.rectangle([ax, ay, bx, by], fill=relleno)
+
+    # Anchos: la vía (de rueda a rueda) es 0.38 del largo, el chasis 0.13.
+    via = 0.19
+    # 1) Brazos de suspensión. Van PRIMERO para que el chasis los remate.
+    for ex in (-0.28, 0.22):
+        for ey in (-1, 1):
+            d.line([(X(ex - 0.02), Y(ey * 0.05)), (X(ex + 0.03),
+                    Y(ey * via))], fill=sombra, width=max(2, L // 42))
+            d.line([(X(ex + 0.07), Y(ey * 0.05)), (X(ex + 0.03),
+                    Y(ey * via))], fill=sombra, width=max(2, L // 42))
+    # 2) Ruedas: descubiertas y fuera del chasis, como son de verdad.
+    for rx in (-0.31, 0.19):
         for ry in (-1, 1):
-            R(rx, ry * 0.09, rx + 0.19, ry * 0.21, rueda)
-    # Alerón delantero
-    R(-0.50, -0.21, -0.43, 0.21, color)
-    # Chasis: morro afilado que se ensancha suavemente hacia atrás. Sin
-    # cintura: una silueta de coche no se estrecha en el medio.
-    P([(-0.43, -0.035), (-0.16, -0.075), (0.10, -0.10), (0.36, -0.10),
-       (0.42, -0.07), (0.42, 0.07), (0.36, 0.10), (0.10, 0.10),
-       (-0.16, 0.075), (-0.43, 0.035)], color)
-    # Alerón trasero: más ancho que el delantero
-    R(0.40, -0.27, 0.50, 0.27, color)
-    # Cabina
-    dib.ellipse([x - 0.09 * L, y - 0.045 * L, x + 0.03 * L, y + 0.045 * L],
-                fill="#0B0E13")
+            y0, y1 = ry * (via - 0.055), ry * (via + 0.055)
+            R(rx, y0, rx + 0.16, y1, goma, radio=max(2, L // 44))
+            # Una franja de llanta: sin ella la rueda es un rectángulo
+            # negro y a tamaño pequeño desaparece contra el fondo.
+            R(rx + 0.045, y0 + ry * 0.022, rx + 0.115, y1 - ry * 0.022,
+              llanta, radio=max(1, L // 70))
+    # 3) Alerón delantero: ancho, casi la vía completa, y fino.
+    P([(-0.50, -0.24), (-0.44, -0.24), (-0.44, 0.24), (-0.50, 0.24)], col)
+    R(-0.47, -0.245, -0.455, 0.245, sombra)
+    # 4) Morro y chasis: punta estrecha que se abre hacia los pontones.
+    P([(-0.44, -0.032), (-0.30, -0.045), (-0.14, -0.105),
+       (0.06, -0.125), (0.28, -0.115), (0.36, -0.075),
+       (0.36, 0.075), (0.28, 0.115), (0.06, 0.125),
+       (-0.14, 0.105), (-0.30, 0.045), (-0.44, 0.032)], col)
+    # Sombra en un costado: da volumen y separa el coche del fondo.
+    P([(0.06, 0.125), (0.28, 0.115), (0.36, 0.075), (0.36, 0.100),
+       (0.28, 0.140), (0.06, 0.150), (-0.14, 0.128), (-0.14, 0.105)],
+      sombra)
+    # 5) Halo y cabina.
+    def E(u0, v0, u1, v1, relleno=None, arco=None, gr=0):
+        ax, bx = sorted((X(u0), X(u1)))
+        ay, by = sorted((Y(v0), Y(v1)))
+        if arco:
+            d.arc([ax, ay, bx, by], arco[0], arco[1], fill=relleno, width=gr)
+        else:
+            d.ellipse([ax, ay, bx, by], fill=relleno)
+
+    E(-0.10, -0.052, 0.02, 0.052, "#0A0D12")
+    E(-0.12, -0.062, 0.04, 0.062, sombra, arco=(200, 340),
+      gr=max(2, L // 50))
+    # 6) Alerón trasero: MÁS ancho que el delantero, con derivas.
+    P([(0.36, -0.27), (0.47, -0.27), (0.47, 0.27), (0.36, 0.27)], col)
+    for ey in (-1, 1):
+        R(0.34, ey * 0.30, 0.49, ey * 0.255, sombra)
+    # 7) El dorsal, dentro del alerón trasero: es la parte plana más
+    #    grande y la única donde un número se lee a tamaño de móvil.
+    if dorsal:
+        import diagramas as D
+        f = D._fuente(int(L * 0.19), True)
+        w_ = d.textlength(str(dorsal), font=f)
+        d.text((X(0.415) - w_ / 2, Y(-0.10)), str(dorsal), font=f,
+               fill="#FFFFFF")  # X ya va espejado, así que cae en la cola
+    return capa.rotate(angulo, resample=Image.BICUBIC, expand=False)
+
+
+def _oscurecer(hexcol, f):
+    """El mismo color, más oscuro. Para las sombras del coche."""
+    h = hexcol.lstrip("#")
+    r, g, b = (int(h[i:i + 2], 16) for i in (0, 2, 4))
+    return "#%02X%02X%02X" % (int(r * f), int(g * f), int(b * f))
+
+
+def _estela(img, x, y, largo, color, angulo=0.0):
+    """Rayas de velocidad DETRÁS del coche, difuminadas.
+
+    Sin esto los tres coches son tres siluetas quietas puestas en fila.
+    Con esto se lee que van a algo. Van en su propia capa y difuminadas
+    porque una raya dura se lee como un fallo de dibujo.
+    """
+    from PIL import Image, ImageDraw, ImageFilter
+    import math
+    capa = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    d = ImageDraw.Draw(capa)
+    col = color.lstrip("#")
+    r, g, b = (int(col[i:i + 2], 16) for i in (0, 2, 4))
+    rad = math.radians(-angulo)
+    for k, (dv, alfa, lar) in enumerate(
+            ((-0.16, 150, 1.5), (0.0, 200, 2.1), (0.16, 150, 1.5))):
+        # El punto de salida, girado con el coche.
+        ox = -0.30 * largo
+        oy = dv * largo
+        sx = x + ox * math.cos(rad) - oy * math.sin(rad)
+        sy = y + ox * math.sin(rad) + oy * math.cos(rad)
+        ex = x + (ox - lar * largo) * math.cos(rad) - oy * math.sin(rad)
+        ey = y + (ox - lar * largo) * math.sin(rad) + oy * math.cos(rad)
+        d.line([(sx, sy), (ex, ey)], fill=(r, g, b, alfa),
+               width=max(3, int(largo * 0.055)))
+    capa = capa.filter(ImageFilter.GaussianBlur(largo * 0.035))
+    img.alpha_composite(capa) if img.mode == "RGBA" else img.paste(
+        capa, (0, 0), capa)
+
+
+def _coche(dib, x, y, largo, color):
+    """Compatibilidad: la firma de antes, sin giro. No la usa la portada
+    nueva, pero puede haber llamadas viejas por ahí."""
+    from PIL import Image
+    capa = _coche_capa(largo, color)
+    if hasattr(dib, "_image"):
+        dib._image.paste(capa, (int(x - capa.width / 2),
+                                int(y - capa.height / 2)), capa)
 
 
 def _podio(dib, x, y, ancho, filas, fuente_pos, fuente_acr):
@@ -486,11 +610,29 @@ def crear_podio(titular, podio, circuito="", sesion="RACE", subtitulo="",
         dib.rounded_rectangle([cx0, cy0, cx1, cy1], radius=22,
                               outline="#FF2D16", width=3)
     else:
-        for i, (_pos, _acr, color) in enumerate(podio[:3]):
-            largo = 300 - i * 62
-            x = W * 0.615 + i * 128
-            y = H * 0.30 + i * 148
-            _coche(dib, x, y, largo, "#" + color.lstrip("#"))
+        # Los tres, en diagonal y girados: el líder delante y más grande,
+        # los otros dos escalonados detrás como en una salida. En fila
+        # recta y del mismo tamaño parecían tres iconos de un catálogo;
+        # escalonados y con estela se lee que están corriendo.
+        img = img.convert("RGBA")
+        reparto = [
+            # (x, y, largo, giro en grados). El 1 va delante —a la
+            # derecha, que es donde mira el morro— y más grande; los
+            # otros dos recediendo hacia atrás y hacia abajo, que es lo
+            # que da la sensación de persecución.
+            (W * 0.815, H * 0.295, 340, -13),
+            (W * 0.700, H * 0.555, 276, -13),
+            (W * 0.600, H * 0.790, 220, -13),
+        ]
+        for (pos, _acr, color), (cx_, cy_, largo, giro) in zip(podio[:3],
+                                                               reparto):
+            col = "#" + color.lstrip("#")
+            _estela(img, cx_, cy_, largo, col, giro)
+            capa = _coche_capa(largo, col, str(pos), giro)
+            img.alpha_composite(capa, (int(cx_ - capa.width / 2),
+                                       int(cy_ - capa.height / 2)))
+        img = img.convert("RGB")
+        dib = ImageDraw.Draw(img)
 
     # La franja roja llega hasta x=150, así que el texto NO puede empezar
     # en el margen de siempre: en el primer intento "GASLY" y "POLE"
