@@ -15601,12 +15601,30 @@ def _sigue_rodando():
         return False
     if time.time() - estado.mapa_ts > SIN_DATOS_FIN:
         return False
-    # Y si la carrera tiene un número de vueltas conocido, no se cierra
-    # hasta que se haya dado la última.
+    # Y si la carrera tiene un número de vueltas conocido, se cierra en
+    # cuanto se haya dado la última.
+    #
+    # AQUÍ ESTABA EL FALLO, y era mío: la rama devolvía True si quedaban
+    # vueltas, y luego el final devolvía True IGUALMENTE. O sea que la
+    # función decía "sigue rodando" siempre que hubiera telemetría
+    # fresca, incluso con la carrera acabada. La única forma de sacarle
+    # un False era que se cayera la telemetría.
+    #
+    # Y de este False cuelga TODO el post-show, porque la parrilla
+    # pregunta `ahora >= fin and not _sigue_rodando()`: el podio, la
+    # despedida, el registro de datos medidos, el short de velocidades y
+    # —lo que se notó— el resumen del que sale el video-reseña. Con la
+    # carrera terminada y los datos llegando, ese bloque no se ejecutaba
+    # NUNCA y la reseña del Gran Premio no se generaba. Se buscó el fallo
+    # en el generador, en OpenF1 y en las claves; estaba en esta línea.
     t = estado.tele
     with contextlib.suppress(Exception):
-        if t.total_vueltas and t.vuelta and t.vuelta < t.total_vueltas:
-            return True
+        if t.total_vueltas and t.vuelta:
+            return t.vuelta < t.total_vueltas
+    # Sin número de vueltas conocido (libres, clasificación) no se puede
+    # decidir por las vueltas, y manda lo único que hay: siguen llegando
+    # posiciones, así que hay sesión. El reloj de la parrilla y el corte
+    # por datos rancios de arriba son los que la cierran.
     return True
 
 
