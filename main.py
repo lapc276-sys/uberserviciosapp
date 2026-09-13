@@ -13676,7 +13676,21 @@ def _tarjeta_previa():
     Solo en la previa: en cuanto hay una vuelta rodada manda lo medido, y
     una ficha del circuito por encima de una pelea de verdad sería
     cambiar la carrera por el folleto.
+
+    NUNCA lanza, y eso no es cortesía: esto se llama desde /apex, que no
+    tiene ninguna red alrededor del payload. Una excepción aquí devolvería
+    un 500 y la pantalla ENTERA dejaría de actualizarse — sin diálogo, sin
+    mapa, sin tabla. Una tarjeta decorativa no puede tumbar la emisión, así
+    que ante cualquier fallo devuelve None y el rótulo se apaga y ya.
     """
+    try:
+        return _tarjeta_previa_impl()
+    except Exception as e:
+        log.info("Tarjeta de previa no disponible (%s)", e)
+        return None
+
+
+def _tarjeta_previa_impl():
     t = estado.tele
     if estado.postsesion:
         return None
