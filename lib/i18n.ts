@@ -64,6 +64,8 @@ export interface Copy {
   calcTax: string;
   calcBook: string;
   calcDisclaimer: string;
+  calcFrom: string;
+  calcAsk: string;
 
   quoteTitle: string;
   quoteSub: string;
@@ -129,7 +131,9 @@ export const COPY: Record<Locale, Copy> = {
     calcResult: 'Tu precio',
     calcTax: 'impuesto incluido',
     calcBook: 'Agendar por WhatsApp',
-    calcDisclaimer: 'Precio estimado. Se confirma al ver el sitio o con el recorrido en vídeo.',
+    calcDisclaimer: 'Este es el precio. Si el sitio está mucho más sucio de lo normal, te lo digo antes de empezar.',
+    calcFrom: 'Desde',
+    calcAsk: 'Para un sitio de este tamaño prefiero verlo antes de dar precio fijo. Escríbeme y lo cerramos.',
 
     quoteTitle: 'Pruébalo ahora mismo',
     quoteSub:
@@ -198,7 +202,9 @@ export const COPY: Record<Locale, Copy> = {
     calcResult: 'Your price',
     calcTax: 'tax included',
     calcBook: 'Book on WhatsApp',
-    calcDisclaimer: 'Estimate. Confirmed once I see the place, or with the video walkthrough.',
+    calcDisclaimer: 'This is the price. If the place is much dirtier than usual, I tell you before I start.',
+    calcFrom: 'From',
+    calcAsk: 'For a place this size I would rather see it before committing to a fixed price. Message me and we will sort it out.',
 
     quoteTitle: 'Try it right now',
     quoteSub: 'This is the same tool my customers use. It runs in your browser — nothing to install.',

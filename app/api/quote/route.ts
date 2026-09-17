@@ -1,17 +1,23 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
-import { calculateQuote } from '@/lib/quote';
+import { listPrice, chargesSalesTax } from '@/lib/pricing/klaudy';
 import { services } from '@/lib/config/services';
+import { getCityByName } from '@/lib/config/cities';
 
 export const runtime = 'nodejs';
 
 /**
- * The questionnaire price: bedrooms, bathrooms, house or flat.
+ * The questionnaire price: bedrooms, bathrooms, type of clean.
  *
- * Runs on the server rather than in the browser even though the arithmetic is
- * trivial, because the rates are the business. Shipping `HOURLY_RATE_USD` and
- * every per-service multiplier into a public bundle hands a competitor the
- * whole pricing model, and hands a customer the ability to see the margin.
+ * Answers with the owner's own list price — a single number, not a range. The
+ * camera path quotes a range because what it measures is genuinely uncertain;
+ * this path is reading a price somebody already committed to, and wrapping
+ * that in "$99–$127" would invent doubt where none exists and quote under his
+ * own number besides.
+ *
+ * Runs on the server even though the arithmetic is trivial, because the ladder
+ * is the business. A public bundle containing it hands a competitor the entire
+ * pricing model.
  */
 const schema = z.object({
   serviceSlug: z.string().refine((s) => services.some((x) => x.slug === s), 'Unknown service'),
@@ -42,23 +48,27 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: parsed.error.issues[0]?.message ?? 'invalid_request' }, { status: 422 });
   }
 
-  const quote = calculateQuote(parsed.data);
-  if (!quote) {
-    return NextResponse.json({ error: 'unknown_service' }, { status: 422 });
-  }
+  const { bedrooms, bathrooms, serviceSlug, city } = parsed.data;
+  const { price, quoted } = listPrice({ bedrooms, bathrooms, serviceSlug });
 
-  // Customer-facing fields only: no labour cost, no margin. Same rule as the
-  // hosted tenant page — the browser asking belongs to the customer.
+  const service = services.find((s) => s.slug === serviceSlug)!;
+
+  // Tax is added only when the business actually collects it. Quoting a number
+  // the owner does not charge loses the job on price.
+  const taxRate = chargesSalesTax() ? (city ? (getCityByName(city)?.salesTax.rate ?? 0) : 0) : 0;
+  const taxAmount = Math.round(price * taxRate);
+
   return NextResponse.json({
-    service: quote.service,
-    currency: quote.currency,
-    low: quote.low,
-    high: quote.high,
-    totalLow: quote.totalLow,
-    totalHigh: quote.totalHigh,
-    taxAmount: quote.taxAmount,
-    taxNote: quote.taxNote,
-    estimatedMinutes: quote.estimatedMinutes,
-    recommendedPros: quote.recommendedPros,
+    service: service.name,
+    currency: 'USD',
+    price: price + taxAmount,
+    taxAmount: taxAmount || undefined,
+    /**
+     * False once the property is larger than anything the owner has priced
+     * directly. The page turns the number into a starting point rather than a
+     * quote, which is the honest thing to show and also the thing that gets
+     * the customer to make contact.
+     */
+     quoted,
   });
 }

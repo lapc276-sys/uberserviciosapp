@@ -22,14 +22,27 @@ import { COPY, type Locale } from '@/lib/i18n';
  * who would have accepted a range and moved on.
  */
 
+/**
+ * Two shapes, because the two paths know different amounts.
+ *
+ * The questionnaire returns one committed price. The camera returns a range,
+ * because what it measured is genuinely uncertain. Flattening them into one
+ * shape would mean either inventing a range around a fixed price or averaging
+ * away a real one.
+ */
 interface Priced {
-  low: number;
-  high: number;
+  /** Questionnaire: the owner's list price. */
+  price?: number;
+  /** Camera: a range, tax-inclusive where tax applies. */
+  low?: number;
+  high?: number;
   totalLow?: number;
   totalHigh?: number;
   taxAmount?: number;
   estimatedMinutes?: number;
   recommendedPros?: number;
+  /** False when the size is past anything actually quoted. */
+  quoted?: boolean;
 }
 
 const HOME_SERVICES = ['house-cleaning', 'deep-cleaning', 'move-out-cleaning'];
@@ -58,17 +71,10 @@ export function QuickQuote({ locale }: { locale: Locale }) {
       const res = await fetch('/api/quote', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          // An apartment of the same bedroom count is smaller in practice, and
-          // the engine takes area rather than a property type. Passing a rough
-          // figure per type beats passing nothing, which would price a studio
-          // like a townhouse.
-          serviceSlug,
-          bedrooms,
-          bathrooms,
-          sqft: propertyType === 'house' ? 450 + bedrooms * 350 : 350 + bedrooms * 250,
-          city: 'Brooklyn',
-        }),
+        // No square footage: the price list is keyed on rooms, and the owner
+        // quotes a house and a flat of the same size at the same price. Sending
+        // an invented area would let it drift off his own numbers.
+        body: JSON.stringify({ serviceSlug, bedrooms, bathrooms, city: 'Brooklyn' }),
       });
       const { data, failure } = await readJson<any>(res);
       if (failure || !data || !res.ok) {
@@ -117,10 +123,27 @@ export function QuickQuote({ locale }: { locale: Locale }) {
   const shownLow = priced?.totalLow ?? priced?.low;
   const shownHigh = priced?.totalHigh ?? priced?.high;
 
+  /** Exactly what the customer is looking at, so the message cannot disagree. */
+  const shownPrice =
+    priced?.price !== undefined ? `$${priced.price}` : shownLow ? `$${shownLow}–$${shownHigh}` : '';
+
+  /**
+   * The property type rides along in the message rather than in the price.
+   *
+   * The owner quotes a two-bed house and a two-bed flat the same, so making the
+   * toggle move the number would be inventing a rule he does not use. It still
+   * belongs in the message: a house means stairs and probably more floor, which
+   * is what he needs to know before agreeing to a time.
+   */
+  const place =
+    locale === 'es'
+      ? `${propertyType === 'house' ? 'casa' : 'apartamento'} de ${bedrooms} hab y ${bathrooms} baño${bathrooms > 1 ? 's' : ''}`
+      : `${bedrooms}-bed ${bathrooms}-bath ${propertyType}`;
+
   const bookMessage = priced
     ? locale === 'es'
-      ? `Hola, quiero limpieza en Brooklyn. La página me dio $${shownLow}–$${shownHigh}. ¿Cuándo tienes disponible?`
-      : `Hi, I need cleaning in Brooklyn. Your page quoted me $${shownLow}–$${shownHigh}. When are you available?`
+      ? `Hola, quiero limpieza en Brooklyn para un ${place}. La página me dio ${shownPrice}. ¿Cuándo tienes disponible?`
+      : `Hi, I need cleaning in Brooklyn for a ${place}. Your page quoted me ${shownPrice}. When are you available?`
     : '';
   const bookLink = priced ? whatsappLink(bookMessage) : null;
 
@@ -138,16 +161,19 @@ export function QuickQuote({ locale }: { locale: Locale }) {
           <div>
             <p className="text-sm text-slate-500 dark:text-slate-400">{t.calcResult}</p>
             <p className="mt-1 text-4xl font-semibold tracking-tight">
-              ${shownLow}–${shownHigh}
+              {priced.quoted === false && <span className="text-2xl font-medium">{t.calcFrom} </span>}
+              {shownPrice}
             </p>
-            <p className="mt-1.5 text-sm text-slate-600 dark:text-slate-400">
-              {priced.taxAmount ? `${t.calcTax} · ` : ''}
-              {priced.estimatedMinutes
-                ? `≈ ${Math.floor(priced.estimatedMinutes / 60)}h ${priced.estimatedMinutes % 60}m`
-                : ''}
-              {(priced.recommendedPros ?? 1) > 1 &&
-                ` · ${priced.recommendedPros} ${locale === 'es' ? 'personas' : 'people'}`}
-            </p>
+            {(priced.taxAmount || priced.estimatedMinutes) && (
+              <p className="mt-1.5 text-sm text-slate-600 dark:text-slate-400">
+                {priced.taxAmount ? `${t.calcTax} · ` : ''}
+                {priced.estimatedMinutes
+                  ? `≈ ${Math.floor(priced.estimatedMinutes / 60)}h ${priced.estimatedMinutes % 60}m`
+                  : ''}
+                {(priced.recommendedPros ?? 1) > 1 &&
+                  ` · ${priced.recommendedPros} ${locale === 'es' ? 'personas' : 'people'}`}
+              </p>
+            )}
           </div>
 
           {bookLink && (
@@ -159,7 +185,9 @@ export function QuickQuote({ locale }: { locale: Locale }) {
             </a>
           )}
 
-          <p className="text-xs text-slate-500 dark:text-slate-400">{t.calcDisclaimer}</p>
+          <p className="text-xs text-slate-500 dark:text-slate-400">
+            {priced.quoted === false ? t.calcAsk : t.calcDisclaimer}
+          </p>
 
           <button
             type="button"
