@@ -17,17 +17,40 @@
  * page that lies is not.
  */
 export const site = {
-  name: 'Homigo',
-  legalName: 'Homigo Home Services LLC',
-  tagline: 'Home services, on autopilot.',
+  name: 'Klaudy',
+
+  /**
+   * Null until a company actually exists.
+   *
+   * "Klaudy Home Services LLC" on a page is a claim that a registered entity
+   * is behind the work — the thing a customer relies on when something breaks
+   * and the thing that decides who they can pursue. Trading under a name is
+   * fine; naming a company that was never filed is not.
+   */
+  legalName: null as string | null,
+
+  tagline: 'Brooklyn cleaning, priced on the spot.',
   description:
-    'Instant online quotes from a short video of your home, AI scheduling, and pros who show up prepared.',
+    'House and apartment cleaning in Brooklyn. Record a short walkthrough on your phone and get the price immediately — no site visit. English and Spanish spoken.',
   url: process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000',
   locale: 'en_US',
+
+  /** The one place the business actually works. */
+  serviceArea: 'Brooklyn, NY',
 
   /** Set these once they are real and reachable. Null until then. */
   email: process.env.NEXT_PUBLIC_CONTACT_EMAIL ?? null,
   phone: process.env.NEXT_PUBLIC_CONTACT_PHONE ?? null,
+
+  /**
+   * WhatsApp number in international digits only, e.g. "13475551234".
+   *
+   * Kept apart from `phone` because they are frequently different lines, and
+   * because the link format is unforgiving: wa.me rejects anything with a
+   * plus, a space or a dash, and fails by opening a broken page rather than
+   * by erroring.
+   */
+  whatsapp: (process.env.NEXT_PUBLIC_WHATSAPP ?? '').replace(/\D/g, '') || null,
 
   /**
    * A street address here becomes a LocalBusiness claim to Google that the
@@ -45,6 +68,9 @@ export const site = {
   hours: 'Mo-Su 07:00-21:00',
   priceRange: '$$',
   founded: '2026',
+
+  /** Languages a customer can actually be served in. */
+  languages: ['es', 'en'] as const,
 
   /**
    * Only ever set from real, verifiable reviews. Until then no star rating is

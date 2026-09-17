@@ -20,7 +20,7 @@ export function organizationSchema() {
     '@context': 'https://schema.org',
     '@type': 'Organization',
     name: site.name,
-    legalName: site.legalName,
+    ...(site.legalName ? { legalName: site.legalName } : {}),
     url: site.url,
     logo: `${site.url}/logo.png`,
     email: site.email,

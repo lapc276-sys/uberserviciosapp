@@ -23,6 +23,16 @@ export interface SalesTax {
 
 export interface City {
   slug: string;
+  /**
+   * Whether the business actually serves this city today.
+   *
+   * Claiming a service area you cannot reach is the same class of problem as
+   * an invented review count: a page that says "Miami" gets found by somebody
+   * in Miami, who then books and gets nobody. The whole list stays here
+   * because the tax and timezone research is real and reusable, but only
+   * `liveCities()` reaches a visitor.
+   */
+  live?: boolean;
   name: string;
   region: string; // state abbreviation
   county?: string;
@@ -68,6 +78,7 @@ export const cities: City[] = [
   },
   {
     slug: 'brooklyn-ny',
+    live: true,
     name: 'Brooklyn',
     region: 'NY',
     county: 'Kings',
@@ -173,6 +184,12 @@ export const cities: City[] = [
     blurb: 'Trusted cleaners for homes, condos and offices across the Tampa Bay area.',
   },
 ];
+
+/** The only cities a visitor may be shown or allowed to book. */
+export const liveCities = () => cities.filter((c) => c.live);
+
+/** The launch market, for copy that names one place. */
+export const homeCity = () => liveCities()[0] ?? cities[0];
 
 export const getCity = (slug: string) => cities.find((c) => c.slug === slug);
 

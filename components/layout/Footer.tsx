@@ -60,7 +60,7 @@ export function Footer() {
 
       <div className="border-t">
         <div className="container flex flex-col items-center justify-between gap-2 py-6 text-xs text-slate-500 sm:flex-row dark:text-slate-400">
-          <p>© {new Date().getFullYear()} {site.legalName}. All rights reserved.</p>
+          <p>© {new Date().getFullYear()} {site.legalName ?? site.name}. Todos los derechos reservados.</p>
           {/* Both are factual claims — one about insurance cover, one a
               guarantee that would have to be honoured. Shown only when true. */}
           {site.claims.licensedInsured && <p>Licensed &amp; insured · Satisfaction guaranteed</p>}

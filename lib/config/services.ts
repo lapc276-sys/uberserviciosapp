@@ -8,6 +8,17 @@ export interface Service {
   vertical: string;
   name: string;
   shortName: string;
+  /**
+   * Spanish name and one-line summary.
+   *
+   * Not a translation layer — two fields, because these are the only strings a
+   * customer in Brooklyn reads before deciding. A full i18n framework for two
+   * fields would be more machinery than the problem, and the machinery is what
+   * usually goes stale: an untranslated string in a framework falls back
+   * silently, while a missing field here fails the type check.
+   */
+  nameEs: string;
+  summaryEs: string;
   icon: string; // lucide-react icon name
   summary: string;
   description: string;
@@ -28,6 +39,8 @@ export interface Service {
 export const services: Service[] = [
   {
     slug: 'deep-cleaning',
+    nameEs: 'Limpieza a fondo',
+    summaryEs: 'Todo lo de una limpieza normal más hornos, dentro de electrodomésticos, juntas y rodapiés.',
     vertical: 'cleaning',
     name: 'Deep Cleaning',
     shortName: 'Deep Clean',
@@ -50,6 +63,8 @@ export const services: Service[] = [
   },
   {
     slug: 'house-cleaning',
+    nameEs: 'Limpieza de casa',
+    summaryEs: 'Mantenimiento regular: polvo, suelos, baños y cocina por fuera.',
     vertical: 'cleaning',
     name: 'House Cleaning',
     shortName: 'House Clean',
@@ -72,6 +87,8 @@ export const services: Service[] = [
   },
   {
     slug: 'apartment-cleaning',
+    nameEs: 'Limpieza de apartamento',
+    summaryEs: 'Pensada para pisos y estudios, con precio por el espacio real.',
     vertical: 'cleaning',
     name: 'Apartment Cleaning',
     shortName: 'Apartment',
@@ -92,6 +109,8 @@ export const services: Service[] = [
   },
   {
     slug: 'move-in-cleaning',
+    nameEs: 'Limpieza de entrada',
+    summaryEs: 'Para dejar listo un sitio vacío antes de mudarte.',
     vertical: 'cleaning',
     name: 'Move In Cleaning',
     shortName: 'Move In',
@@ -112,6 +131,8 @@ export const services: Service[] = [
   },
   {
     slug: 'move-out-cleaning',
+    nameEs: 'Limpieza de mudanza',
+    summaryEs: 'Todo dentro y fuera de armarios, para entregar las llaves.',
     vertical: 'cleaning',
     name: 'Move Out Cleaning',
     shortName: 'Move Out',
@@ -133,6 +154,8 @@ export const services: Service[] = [
   },
   {
     slug: 'airbnb-cleaning',
+    nameEs: 'Limpieza para Airbnb',
+    summaryEs: 'Rotación rápida entre huéspedes, con fotos del antes y el después.',
     vertical: 'cleaning',
     name: 'Airbnb Cleaning',
     shortName: 'Airbnb',
@@ -153,6 +176,8 @@ export const services: Service[] = [
   },
   {
     slug: 'office-cleaning',
+    nameEs: 'Limpieza de oficinas',
+    summaryEs: 'Espacios de trabajo, fuera del horario de tu equipo.',
     vertical: 'cleaning',
     name: 'Office Cleaning',
     shortName: 'Office',
@@ -173,6 +198,8 @@ export const services: Service[] = [
   },
   {
     slug: 'post-construction-cleaning',
+    nameEs: 'Limpieza tras obra',
+    summaryEs: 'Polvo de obra, restos y detalle fino cuando termina el trabajo.',
     vertical: 'cleaning',
     name: 'Post Construction Cleaning',
     shortName: 'Post-Construction',
@@ -193,6 +220,8 @@ export const services: Service[] = [
   },
   {
     slug: 'commercial-cleaning',
+    nameEs: 'Limpieza comercial',
+    summaryEs: 'Locales y negocios, con plan a medida del sitio.',
     vertical: 'cleaning',
     name: 'Commercial Cleaning',
     shortName: 'Commercial',

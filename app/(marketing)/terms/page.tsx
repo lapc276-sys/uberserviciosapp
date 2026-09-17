@@ -14,7 +14,7 @@ export default function TermsPage() {
   return (
     <LegalPage title="Terms of Service" updated="July 2026">
       <p>
-        These Terms govern your use of {site.legalName} (“{site.name}”) services. By booking, you agree to
+        These Terms govern your use of {site.name} services. By booking, you agree to
         them. This is a template and should be reviewed by legal counsel before launch.
       </p>
       <h2>Services</h2>

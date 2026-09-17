@@ -14,7 +14,7 @@ export default function PrivacyPage() {
   return (
     <LegalPage title="Privacy Policy" updated="July 2026">
       <p>
-        This Privacy Policy explains how {site.legalName} (“{site.name}”, “we”, “us”) collects, uses, and
+        This Privacy Policy explains how {site.name} (“we”, “us”) collects, uses, and
         protects information when you use our website and services. This is a template and should be reviewed
         by legal counsel before launch.
       </p>

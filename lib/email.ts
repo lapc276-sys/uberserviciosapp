@@ -88,12 +88,12 @@ function shell(inner: string, unsubscribeFor?: string): string {
 
   const footer = unsubscribeFor
     ? `<p style="text-align:center;color:#9ca3af;font-size:12px;margin-top:20px;line-height:1.6">
-         ${site.legalName}${postal ? `<br>${postal}` : ''}<br>
+         ${site.legalName ?? site.name}${postal ? `<br>${postal}` : ''}<br>
          <a href="${site.url}/unsubscribe?e=${encodeURIComponent(unsubscribeFor)}" style="color:#9ca3af">Unsubscribe</a>
          · <a href="${site.url}" style="color:#9ca3af">${site.url.replace('https://', '')}</a>
        </p>`
     : `<p style="text-align:center;color:#9ca3af;font-size:12px;margin-top:20px">
-         ${site.legalName} · <a href="${site.url}" style="color:#9ca3af">${site.url.replace('https://', '')}</a>${site.phone ? ` · ${site.phone}` : ''}
+         ${site.legalName ?? site.name} · <a href="${site.url}" style="color:#9ca3af">${site.url.replace('https://', '')}</a>${site.phone ? ` · ${site.phone}` : ''}
        </p>`;
 
   return `<div style="font-family:ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;max-width:520px;margin:0 auto;color:#0a0a0b">
