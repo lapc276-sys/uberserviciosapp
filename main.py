@@ -6873,11 +6873,38 @@ async def narrar_datos(client: anthropic.AsyncAnthropic, eventos):
     cta = ""
     if time.time() - estado.ultimo_cta >= SUSCRIBIR_SEGUNDOS:
         estado.ultimo_cta = time.time()
-        cta = ("\n\nALSO: weave ONE short, warm reminder into this segment "
-               "to subscribe to the channel (and drop a like) — casual and "
-               "blended into the flow, e.g. 'if you're enjoying the ride, "
-               "hit subscribe, it genuinely helps us'. Just one line, from "
-               "either voice, never salesy.")
+        # ALTERNA entre pedir suscripción y PREGUNTAR algo contestable.
+        #
+        # El directo llevaba tres emisiones con CERO comentarios, y no era
+        # mala suerte: el único CTA que tenía pedía suscripción y like, y
+        # el dúo no preguntaba nada en dos horas y media. La instrucción
+        # para hacer preguntas de verdad —_CIERRE_QUE_PIDE_RESPUESTA— ya
+        # existía y estaba bien escrita, pero solo la usaban los shorts.
+        #
+        # Y la pregunta aquí vale más que en un short, porque el canal SÍ
+        # puede responder: el chat en vivo entra en la narración y el dúo
+        # contesta al aire con el nombre de quien preguntó. O sea que hay
+        # un motivo real para comentar, y nunca se le había contado a
+        # nadie.
+        #
+        # Alterna en vez de pedir las dos cosas cada vez: dos peticiones
+        # en el mismo segmento se anulan, y a los veinte minutos toca la
+        # otra de todas formas.
+        estado.cta_turno = getattr(estado, "cta_turno", 0) + 1
+        if estado.cta_turno % 2:
+            cta = ("\n\nALSO: close this segment by asking the live chat a "
+                   "question — and say that you read the answers out on "
+                   "air, because you do. "
+                   + _CIERRE_QUE_PIDE_RESPUESTA
+                   + " Make it about what is happening RIGHT NOW in this "
+                   "session, not a generic F1 question. One line, from "
+                   "either voice.")
+        else:
+            cta = ("\n\nALSO: weave ONE short, warm reminder into this "
+                   "segment to subscribe to the channel (and drop a like) "
+                   "— casual and blended into the flow, e.g. 'if you're "
+                   "enjoying the ride, hit subscribe, it genuinely helps "
+                   "us'. Just one line, from either voice, never salesy.")
     # Cuánta energía autoriza lo que está pasando DE VERDAD en la pista.
     # Se le dice al guionista antes de escribir, y se le recorta después:
     # si se le deja elegir a él, contesta 5 en todo y a los treinta
