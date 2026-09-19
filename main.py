@@ -6082,13 +6082,15 @@ THE DUO:
 - {NARRADOR} (narrador): play-by-play commentator, but NOT a formal \
 broadcaster — he sounds like a passionate friend telling you the race. \
 Warm, conversational, enthusiastic, sometimes ironic. Colloquial language, \
-short direct phrases, the occasional spontaneous laugh (write it: "Haha," \
-or "Oh man,"). Fast and agile when the action heats up; eases off and \
-breathes when explaining. Lives for the big moments and for the drivers' \
+short direct phrases. Fast and agile when the action heats up; eases off \
+and breathes when explaining. Lives for the big moments and for the drivers' \
 emotions.
 - {ANALISTA} (analista): color commentator, a woman with deep technical \
-knowledge. Calm, sharp, explains strategy in simple terms, dry humor, \
-corrects {NARRADOR} when needed and teases him when he gets carried away.
+knowledge. Quick, sharp and with real energy — she cuts in because she \
+has spotted something, not to fill a gap. Explains strategy in simple \
+terms, commits to her reads instead of hedging them, corrects \
+{NARRADOR} when he is wrong and teases him when he gets carried away. \
+She rises with the moment the way he does; what she never is, is flat.
 
 CONVERSATION RULES:
 - Write 1 to 4 SHORT lines per segment. Not every segment needs both \
@@ -6109,9 +6111,14 @@ a line short.
 - BREATHE. In wheel-to-wheel battles they sound breathless: "...phew.", \
 "my heart, honestly...", a gasp before the words come out. After a big \
 shout, a short recovery line.
-- LAUGH LIKE HUMANS, never as a written token. No "Haha," as a word. \
-Real laughter breaks into the sentence: "oh— hahaha no way,", "pfff—", \
-"hah! fair enough." It should read like it escaped, not like a line read.
+- LAUGH LIKE HUMANS, never as a written token. A laugh that arrives as \
+its own tidy word — "Haha," at the head of a sentence — gets read out by \
+the voice AS a word, and it lands as a machine pretending to be amused. \
+Real laughter breaks INTO the sentence and damages it: "oh— hahaha no \
+way,", "pfff—", "hah! fair enough.", "I'm sorry I— that is ridiculous". \
+It should read like it escaped mid-thought, not like a line that was \
+read. And it should be RARE: someone who laughs every segment is not \
+amused, they are nervous.
 - They get annoyed at bad strategy ("Oh come on, why would they box him \
 NOW?"), they tease each other. Everyday colloquial language.
 - Add insight, don't just describe: tyre strategy, likely undercuts, what \
@@ -6290,6 +6297,47 @@ def _situacion(eventos):
     if eventos:
         return "normal racing — engaged"
     return "quiet stint — relaxed, low gear"
+
+
+#: Los temas de RELLENO del directo: de qué se habla cuando en pista no
+#: pasa nada. Va aparte porque lo usan la charla en vivo y el modo radio,
+#: y tenerlo escrito dos veces acaba en dos versiones distintas.
+#:
+#: La línea que hay que entender: UNA OPINIÓN ES GRATIS, UNA CIFRA NO.
+#: Discutir si un piloto de los ochenta habría ganado hoy no necesita
+#: ningún dato — es una conversación, y de eso vive una retransmisión
+#: cuando los coches van en fila. Decir cuántas carreras ganó ese piloto
+#: sí necesita el dato, y si no está dado, no se dice. El dúo puede
+#: argumentar todo lo que quiera; lo que no puede es poner un número.
+#:
+#: El cotilleo de parrilla es lo mismo pero más delicado. Los contratos,
+#: las cláusulas y las broncas son de lo que más engancha, y también el
+#: sitio exacto donde un modelo se inventa un detalle que suena
+#: verosímil. Así que solo se habla de lo que ESTÉ en los titulares
+#: reales, dicho como lo que es —lo que se está publicando— y nunca con
+#: una cifra de contrato ni una cláusula que no venga en el titular.
+CHARLA_DIRECTO = (
+    "  • THE PAST, as an argument and not as a quiz: a race from another "
+    "era, two great drivers compared, whether a car from back then would "
+    "get near this lap. Take a SIDE. You may argue anything you like — "
+    "an opinion costs no data — but a FIGURE has to come from the facts "
+    "you were given. If you want a number you were not given, make the "
+    "same point without it;\n"
+    "  • THIS KIND OF CORNER, THIS KIND OF STRAIGHT: what a banked "
+    "corner, a long flat-out run or a street section asks of a car, and "
+    "which circuits of the past asked the same thing;\n"
+    "  • PADDOCK TALK — contracts, clauses, a seat that is moving, a "
+    "fallout between a driver and his team. This is what people lean in "
+    "for. But ONLY what is in the real headlines below, said as what it "
+    "is: what is being REPORTED. Never a contract figure, a clause or a "
+    "private conversation that is not in the headline. 'It's being "
+    "reported that…' is honest; inventing the detail that makes the "
+    "story better is how a channel loses the only thing it has;\n"
+    "  • AND YOUR OWN OPINION, plainly. Who was wrong, which call you "
+    "would not have made, who is being underrated. Alex and Sam should "
+    "disagree out loud — two people arguing is better television than "
+    "two people agreeing, and neither of them needs a statistic to have "
+    "a view;\n")
 
 
 SUSCRIBIR_SEGUNDOS = float(os.environ.get("SUSCRIBIR_MINUTOS", "20")) * 60
@@ -6819,6 +6867,7 @@ async def narrar_datos(client: anthropic.AsyncAnthropic, eventos):
             "  • how the 2026 cars and tyres change this kind of track;\n"
             "  • a driver storyline, a rivalry, the championship picture;\n"
             "  • a real headline below, discussed properly;\n"
+            + CHARLA_DIRECTO +
             "  • an honest OPINION each — Alex and Sam can disagree, and "
             "two people arguing is better radio than one reading facts.\n"
             "Three to five short lines. Keep it moving.\n"
@@ -6855,6 +6904,7 @@ async def narrar_datos(client: anthropic.AsyncAnthropic, eventos):
             "argument is a better minute of radio than a fact read twice; "
             "opinions are free, figures are not;\n"
             "  • a specific driver storyline or a bit of circuit history;\n"
+            + CHARLA_DIRECTO +
             "  • Formula 2 or Formula 3 — ONLY when a headline below is "
             "about them; you have no results feed, so nothing on those "
             "series comes from memory.\n"

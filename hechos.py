@@ -119,6 +119,30 @@ HECHOS = {
                  "fixed the number of wheels at four.",
          "fuente": "FIA regulation history"},
     ],
+    # Las eras del reglamento. Se eligen a propósito hechos ESTABLES: un
+    # año de prohibición no cambia nunca, mientras que "lleva N victorias"
+    # envejece cada domingo y una cifra caducada es una cifra falsa. Por
+    # eso aquí no hay ni un contador de carrera de nadie.
+    "History": [
+        {"dato": "Refuelling during a race was banned once between 1984 and "
+                 "1993, brought back for 1994, and banned again from 2010 — "
+                 "on safety and cost grounds, after a run of pit lane fires.",
+         "fuente": "FIA regulation history"},
+        {"dato": "Turbocharged engines were banned outright from 1989, after "
+                 "a decade in which power, cost and safety all climbed "
+                 "together. They came back in 2014.",
+         "fuente": "FIA regulation history"},
+        {"dato": "The V10 era ended in 2006, when the rules mandated a "
+                 "2.4-litre V8 with a fixed 90-degree V-angle. The decision "
+                 "was taken at the end of 2004, and it was about cost, not "
+                 "speed.",
+         "fuente": "FIA technical regulations, 2006"},
+        {"dato": "Side skirts were banned for 1981 and a 6 cm ground "
+                 "clearance imposed; by 1983 ground effect was outlawed "
+                 "altogether with mandatory flat floors. It was brought back "
+                 "deliberately in 2022.",
+         "fuente": "FIA regulation history"},
+    ],
     "Tech history": [
         {"dato": "Ground effect was understood in F1 by the late 1970s, "
                  "banned in 1983, and brought back deliberately in 2022 to "
