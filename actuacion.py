@@ -322,7 +322,8 @@ class Curva:
         self.ultimo_motivo = ""  # para no cobrar dos veces el mismo evento
 
     def objetivo(self, *, eventos=None, situacion="", duelo=None,
-                 vuelta=0, total_vueltas=0, prerace=False, postsesion=False):
+                 vuelta=0, total_vueltas=0, prerace=False, postsesion=False,
+                 bandera=None):
         """Devuelve {"velocidad", "intensidad", "motivo"}."""
         texto = " ".join(eventos or []).upper()
         motivo, vel, ints = "steady racing", 3, 2
@@ -334,8 +335,17 @@ class Curva:
             # retransmisión. Aquí gritar suena a que no se ha enterado de
             # que la carrera terminó.
             motivo, vel, ints = "post-race analysis", 2, 2
-        elif "RED FLAG" in texto:
+        elif "RED FLAG" in texto or bandera == "RED":
             motivo, vel, ints = "red flag", 3, 4
+        elif bandera in ("SC", "VSC") and not texto:
+            # Neutralización que SIGUE, sin evento nuevo. Ni el grito del
+            # momento en que sale ni la calma de "steady racing": tensión
+            # contenida, que lo que se juega es quién para. Antes caía en
+            # el valor por defecto, 3/2, y el dúo narraba un coche de
+            # seguridad como una vuelta cualquiera.
+            motivo, vel, ints = "under the safety car — who stops?", 3, 3
+        elif bandera == "YELLOW" and not texto:
+            motivo, vel, ints = "yellow flag still out", 3, 3
         elif any(p in texto for p in ("CRASH", "ACCIDENT", "SAFETY CAR")):
             motivo, vel, ints = "incident / safety car", 4, 4
         elif any(p in texto for p in ("OVERTAKE", "PASSES", "TAKES P")):

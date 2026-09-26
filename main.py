@@ -6279,6 +6279,30 @@ def _situacion(eventos):
     """Clasifica el momento de carrera para calibrar la energía del dúo."""
     texto = " ".join(eventos or []).upper()
     tele = estado.tele
+    # La bandera que SIGUE puesta, no solo la que se acaba de anunciar.
+    # Antes esto miraba únicamente el lote de eventos de este ciclo: la
+    # amarilla llegaba una vez, y al ciclo siguiente —sin evento nuevo—
+    # caía hasta el final y devolvía "quiet stint — relaxed, low gear".
+    # O sea que en plena neutralización, que es cuando TODO el mundo está
+    # pensando si parar, al dúo se le decía que bajara una marcha.
+    b = None
+    with contextlib.suppress(Exception):
+        b = tele.bandera() if tele else None
+    if b == "RED":
+        return ("RED FLAG — the race is STOPPED. Cars in the pit lane, "
+                "teams can change tyres for free. Explain what just "
+                "happened and what this does to the race")
+    if b == "SC":
+        return ("SAFETY CAR on track — the field is bunched up and a pit "
+                "stop now costs far less than under green. This is the "
+                "most strategic moment of the race: who stops, who stays "
+                "out, who just lost their lead")
+    if b == "VSC":
+        return ("VIRTUAL SAFETY CAR — everyone at a fixed delta, gaps "
+                "frozen, and a cheaper stop than usual. Who takes it?")
+    if b == "YELLOW":
+        return ("YELLOW FLAG — no overtaking in that sector, something has "
+                "happened. Concerned first, then what it could turn into")
     if "SAFETY CAR" in texto or "RED FLAG" in texto:
         return "SAFETY CAR / RED FLAG deployed — urgent, explain the impact"
     if any(p in texto for p in ("YELLOW", "INCIDENT", "ACCIDENT", "CRASH")):
@@ -6782,6 +6806,12 @@ async def narrar_datos(client: anthropic.AsyncAnthropic, eventos):
     # En radio no hay imagen: si el dúo calla, no queda NADA, y el canal
     # suena a que se ha colgado.
     radio = (t is None) and estado.carrera_en_vivo
+    # La bandera vigente, si la hay. Va por delante del resto de ramas
+    # salvo los eventos nuevos: bajo neutralización, la pregunta no es
+    # "quién va rápido" sino "quién para".
+    bandera = None
+    with contextlib.suppress(Exception):
+        bandera = t.bandera() if (t and not postsesion) else None
     if eventos:
         pedido = "NEW EVENTS (from live telemetry):\n" + "\n".join(eventos)
     elif postsesion:
@@ -6809,6 +6839,42 @@ async def narrar_datos(client: anthropic.AsyncAnthropic, eventos):
             "Two to three short lines. Only if every angle above is already "
             "in the memory, return an EMPTY lineas array and let it breathe "
             "— but that should take a good while to happen.")
+    elif bandera:
+        # BAJO BANDERA la retransmisión tiene MÁS que contar, no menos.
+        # Aquí no se puede devolver vacío: sin coches peleando, la
+        # conversación es lo único que llena la pantalla, y el que está
+        # mirando está esperando a saber qué va a pasar.
+        que = {"RED": "the RED FLAG",
+               "SC": "the SAFETY CAR",
+               "VSC": "the VIRTUAL SAFETY CAR",
+               "YELLOW": "the YELLOW FLAG"}[bandera]
+        desde = ""
+        with contextlib.suppress(Exception):
+            if t.bandera_vuelta:
+                desde = f" It came out on lap {t.bandera_vuelta}."
+        pedido = (
+            f"UNDER {que.upper()} RIGHT NOW.{desde} The racing has "
+            "stopped, and that is when a broadcast has the MOST to say, "
+            "not the least. NEVER return an empty lineas array under a "
+            "flag: nobody is overtaking, so if you go quiet the screen is "
+            "just cars in a line and the viewer thinks the stream froze.\n"
+            "Pick ONE angle not in the memory:\n"
+            "  • what happened — ONLY from the RACE CONTROL messages in the "
+            "context. If they do not say who or why, say that you do not "
+            "know yet; do NOT invent a crash, a driver or a cause;\n"
+            "  • the STRATEGY this opens: a stop under a safety car or a "
+            "VSC costs far less time than under green, so who dives in, "
+            "who stays out and gambles on track position, who is on old "
+            "tyres and must be tempted;\n"
+            "  • what the restart will look like: the gaps are gone, who "
+            "is suddenly right behind whom, where the first attack will "
+            "come;\n"
+            "  • who this HURTS and who it SAVES — the leader who had a "
+            "cushion, the car that had just lost a place;\n"
+            "  • concern for the driver, if a car is stopped — briefly, "
+            "and only as far as race control says.\n"
+            "Two to four short lines. Measured, alert, not shouting — the "
+            "tension here is about what happens next.")
     elif prerace:
         # PRE-CARRERA: los coches aún no salen. Hay que ANIMAR el ambiente
         # como una previa de TV, sin quedarse callados y sin repetir.
@@ -6963,7 +7029,7 @@ async def narrar_datos(client: anthropic.AsyncAnthropic, eventos):
         eventos=eventos, situacion=situacion, duelo=pel,
         vuelta=(t.vuelta if t else 0),
         total_vueltas=(t.total_vueltas if t else 0),
-        prerace=prerace, postsesion=postsesion)
+        prerace=prerace, postsesion=postsesion, bandera=bandera)
     entrega = (
         f"\n\nDELIVERY FOR THIS SEGMENT — the track says speed "
         f"{objetivo['velocidad']}, intensity {objetivo['intensidad']} "
@@ -16648,8 +16714,18 @@ async def bucle_narracion():
                 # En pre-carrera (coches aún sin salir) rellenar más seguido
                 # para animar la previa; en carrera, el ritmo normal
                 relleno_int = RELLENO_SEGUNDOS
+                bajo_bandera = False
+                with contextlib.suppress(Exception):
+                    bajo_bandera = bool(estado.tele.bandera())
                 if estado.tele.vuelta < 1:
                     relleno_int = min(RELLENO_SEGUNDOS, RADIO_SEGUNDOS)
+                elif bajo_bandera:
+                    # Bajo bandera no hay adelantamientos que narrar, así
+                    # que con el hueco normal de 90 s el directo se quedaba
+                    # minuto y medio callado con los coches en fila — justo
+                    # cuando la pregunta de quién para está abierta. Aquí
+                    # la charla ES la emisión, igual que en la previa.
+                    relleno_int = RADIO_SEGUNDOS
                 elif en_resumen:
                     # Terminada la carrera, el análisis va seguido: con los
                     # 90 s de siempre el resumen tardaba minuto y medio en

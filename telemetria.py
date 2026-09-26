@@ -536,6 +536,16 @@ class Telemetria:
         self.total_vueltas = 0
         self.mejor_vuelta = None  # (duración, numero de piloto)
         self.incidentes = []      # últimos avisos de dirección de carrera
+        # La bandera que hay AHORA, no la última que se anunció. Los avisos
+        # de dirección de carrera llegan una vez —"YELLOW IN TRACK SECTOR
+        # 7"— y el canal solo se enteraba en ese instante: al ciclo
+        # siguiente ya no había evento nuevo y el dúo recibía "quiet
+        # stint, relaxed, low gear" en mitad de una neutralización. Aquí
+        # se lleva la cuenta de qué sigue abierto hasta que se anuncia que
+        # se cierra.
+        self._sectores_amarilla = set()
+        self._neutralizada = None       # "SC", "VSC" o "RED"
+        self.bandera_vuelta = 0          # vuelta en que empezó la actual
         self.gaps = {}            # numero -> intervalo con el coche de delante
         self.gaps_anteriores = {} # numero -> intervalo de la lectura previa
         self.ultimo_pit = None    # {"vuelta", "nombre"} de la última parada
@@ -908,11 +918,82 @@ class Telemetria:
                 return None  # las banderas azules son puro ruido
             self.incidentes.append({"vuelta": self.vuelta, "texto": msj})
             del self.incidentes[:-8]
+            self._leer_bandera(msj)
             quien = ""
             if dato.get("driver_number"):
                 quien = f" (afecta a {self._nombre(dato['driver_number'])})"
             return f"DIRECCIÓN DE CARRERA: {msj}{quien}"
         return None
+
+    _RE_SECTOR = re.compile(r"SECTOR\s+(\d+)")
+
+    def _leer_bandera(self, msj):
+        """Actualiza la bandera vigente con un aviso de dirección de carrera.
+
+        Los avisos son texto, y lo que importa es qué ABRE y qué CIERRA:
+
+          · "YELLOW IN TRACK SECTOR 7"       abre amarilla en el 7
+          · "CLEAR IN TRACK SECTOR 7"        la cierra
+          · "SAFETY CAR DEPLOYED"            abre coche de seguridad
+          · "SAFETY CAR IN THIS LAP"         lo cierra (entra a boxes)
+          · "VIRTUAL SAFETY CAR DEPLOYED"    abre el virtual
+          · "VIRTUAL SAFETY CAR ENDING"      lo cierra
+          · "RED FLAG"                       para la carrera
+          · "TRACK CLEAR" / "GREEN"          cierra todo
+
+        Las amarillas se llevan POR SECTOR y no como una sola casilla. Con
+        dos amarillas a la vez, el "CLEAR" de una de ellas no puede apagar
+        la otra: el dúo diría "ya está despejado" con un coche todavía
+        parado en el muro del sector de al lado.
+        """
+        m = (msj or "").upper()
+        if not m:
+            return
+        antes = self.bandera()
+        # Lo que cierra va primero: un mensaje puede nombrar el safety car
+        # para decir que se va, y leerlo como apertura sería al revés.
+        if "RED FLAG" in m:
+            self._neutralizada = "RED"
+        elif ("VIRTUAL SAFETY CAR" in m or "VSC" in m):
+            if "ENDING" in m or "END" in m.split():
+                self._neutralizada = None
+            elif "DEPLOYED" in m:
+                self._neutralizada = "VSC"
+        elif "SAFETY CAR" in m:
+            if "IN THIS LAP" in m or "ENDING" in m:
+                self._neutralizada = None
+            elif "DEPLOYED" in m:
+                self._neutralizada = "SC"
+        if ("TRACK CLEAR" in m or m.startswith("GREEN")
+                or "GREEN FLAG" in m or "RESTART" in m):
+            self._sectores_amarilla.clear()
+            if self._neutralizada == "RED":
+                self._neutralizada = None
+        sec = self._RE_SECTOR.search(m)
+        if "YELLOW" in m and "CLEAR" not in m:
+            self._sectores_amarilla.add(int(sec.group(1)) if sec else 0)
+        elif "CLEAR" in m and sec:
+            self._sectores_amarilla.discard(int(sec.group(1)))
+        despues = self.bandera()
+        if despues and despues != antes:
+            self.bandera_vuelta = self.vuelta
+
+    def bandera(self):
+        """La bandera vigente: "RED", "SC", "VSC", "YELLOW" o None.
+
+        En ese orden de prioridad: si hay coche de seguridad y además una
+        amarilla en un sector, lo que manda para la carrera es el coche de
+        seguridad.
+        """
+        if self._neutralizada:
+            return self._neutralizada
+        if self._sectores_amarilla:
+            return "YELLOW"
+        return None
+
+    def sectores_amarilla(self):
+        """Los sectores con amarilla ahora mismo (0 = sin sector dicho)."""
+        return sorted(self._sectores_amarilla)
 
     def tabla(self):
         """Leaderboard completo (los 20): [{pos, acr, nombre, color, gap,
