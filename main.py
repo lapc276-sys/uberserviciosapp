@@ -70,28 +70,18 @@ INTERVALO_NARRACION = 10   # segundos entre narraciones con eventos
 # Segundos detrás del borde de datos al saltar al vivo (deja margen para la
 # demora de OpenF1 y para tener algo que narrar). Ajustable por Secret.
 LIVE_BUFFER = float(os.environ.get("LIVE_BUFFER", "25"))
-# Sin eventos, cada cuánto considerar rellenar (configurable por Secret)
-# Sin eventos nuevos en pista, cada cuánto vuelve a hablar el directo.
-# Estuvo en 90 s, y con eso una carrera en verde sin adelantamientos —que
-# es la mayor parte de cualquier Gran Premio— sonaba a minuto y medio de
-# silencio entre frase y frase. Una retransmisión de verdad no calla
-# nunca con los coches en pista. Ojo: si el Secret RELLENO_SEGUNDOS está
-# puesto, manda él sobre este valor por defecto.
-RELLENO_SEGUNDOS = float(os.environ.get("RELLENO_SEGUNDOS", "25"))
-# Caída la bandera a cuadros, el análisis va SEGUIDO, no cada minuto y
-# medio: son los minutos en los que la gente sigue delante de la pantalla
-# esperando la lectura de la carrera. Empieza en cuanto se acaba, sin
-# esperar el hueco de relleno normal.
-RESUMEN_SEGUNDOS = float(os.environ.get("RESUMEN_SEGUNDOS", "30"))
-# Modo radio (en el aire sin telemetría) y previa: aquí la conversación ES
-# la emisión, no el relleno entre adelantamientos. Con los 90 s normales
-# quedaban huecos de minuto y medio en los que no se veía nada y no se oía
-# nada, y eso no suena a pausa dramática: suena a que el canal se colgó.
-RADIO_SEGUNDOS = float(os.environ.get("RADIO_SEGUNDOS", "25"))
-# Y si el guionista devuelve VACÍO, no se espera la ventana completa. Antes
-# el reloj se marcaba ANTES de llamar, así que una respuesta vacía costaba
-# 90 s de silencio y dos seguidas, tres minutos.
-REINTENTO_VACIO = float(os.environ.get("REINTENTO_VACIO", "12"))
+# Sin eventos nuevos en pista NO hay reloj fijo. Antes se esperaba un
+# hueco (90 s, luego 25) contado desde que EMPEZABA a hablar, así que una
+# tanda de 20 s dejaba el resto del hueco en silencio. Ahora el siguiente
+# segmento se prepara cuando el audio del actual está a punto de acabar:
+# la charla es continua, como en una retransmisión de verdad.
+# ANTICIPO_S: cuánto antes del final se empieza a escribir el siguiente
+# (lo que tardan guion + voz). Si es mayor que eso, el nuevo pisaría al
+# actual y el reproductor cortaría sus últimas frases.
+ANTICIPO_S = float(os.environ.get("ANTICIPO_S", "3"))
+# MIN_ENTRE_S: freno de seguridad. Si el guionista devuelve vacío o la voz
+# falla, no se martilla la API cada 2 s.
+MIN_ENTRE_S = float(os.environ.get("MIN_ENTRE_S", "8"))
 # Fuera de vivo: cada cuánto anuncia el dúo la próxima sesión (segundos)
 ANUNCIO_SEGUNDOS = float(os.environ.get("ANUNCIO_SEGUNDOS", "600"))
 # Por defecto el canal NO narra el calendario en voz cuando no hay carrera
@@ -6260,7 +6250,25 @@ He carries the whole broadcast on his own, so he does both jobs: he
 calls the action AND he gives the read — the strategy call, the tyre
 trend, the opinion. A good solo commentator argues with himself out
 loud: "and you could say they should have stopped — I don't buy it, and
-here's why." That is what keeps one voice from sounding like a list."""
+here's why." That is what keeps one voice from sounding like a list.
+
+HE NEVER RUNS OUT OF THINGS TO SAY. The broadcast is continuous: the moment
+one segment ends, the next one starts. When the track is quiet he does
+NOT pad with "nothing much happening" — he shoots the breeze like a mate
+down the pub who happens to know everything about racing:
+- hot takes and playful arguments with himself ("best overtake of the
+  decade? I'll die on this hill…"),
+- a funny or strange story from racing history that is really on record,
+- what he would do on the pit wall right now, and why he'd probably be
+  fired for it,
+- a corner of this track and what it feels like from the cockpit,
+- F2/F3 kids to watch, old rivalries, the paddock headlines being reported,
+- throwing questions at the chat and teasing them a little, good-natured.
+Tone: loose, warm, witty, a grin in the voice. Short punchy sentences,
+little self-deprecating jokes, the occasional "honestly?" or "look—".
+Never a lecture, never a list, never the same joke twice.
+The rules above still stand: every number, result, contract or quote he
+states must be real. The jokes are his; the facts are not invented."""
 
 
 DUO_SCHEMA = {
@@ -16639,6 +16647,15 @@ async def difundir(lineas):
             lineas_ws.append(l)
     estado.audios = audios
     estado.segmento_id += 1
+    # Cuándo termina de sonar esto: el bucle prepara lo siguiente justo
+    # antes, en vez de esperar un reloj fijo. MP3 de voz ≈ 128 kbps
+    # (16 kB/s); si la voz falló, se estima por lo que tarda en leerse el
+    # subtítulo. +0,22 s entre frases (el reproductor) y +2 s del sondeo.
+    duracion = 2.0
+    for (l, _, _), audio in zip(preparadas, audios):
+        duracion += max(len(audio or b"") / 16000.0,
+                        len(l["texto"]) / 15.0) + 0.22
+    estado.habla_hasta = time.time() + duracion
     mensaje = json.dumps({"tipo": "dialogo", "idioma": IDIOMA,
                           "lineas": lineas_ws})
     for ws in list(estado.clientes_mac):
@@ -16682,6 +16699,13 @@ def _recap_pendiente():
     return None
 
 
+def _libre_para_hablar(ahora):
+    """True cuando lo que está sonando acaba en menos de ANTICIPO_S: es el
+    momento de escribir y sintetizar lo siguiente para que entre justo
+    detrás, sin hueco y sin pisarlo."""
+    return ahora >= getattr(estado, "habla_hasta", 0.0) - ANTICIPO_S
+
+
 async def bucle_narracion():
     """Narra por telemetría (eventos) y por visión como respaldo."""
     if not os.environ.get("ANTHROPIC_API_KEY"):
@@ -16690,13 +16714,11 @@ async def bucle_narracion():
     client = anthropic.AsyncAnthropic()
     if MODELO_VIVO == MODELO_AHORRO:
         log.info("Narración activada (modelo fijo %s, eventos cada %ds, "
-                 "relleno cada %ds)", MODELO_VIVO, INTERVALO_NARRACION,
-                 RELLENO_SEGUNDOS)
+                 "charla continua)", MODELO_VIVO, INTERVALO_NARRACION)
     else:
         log.info("Narración activada — modo ahorro: carrera en vivo %s, "
-                 "resto %s (eventos cada %ds, relleno cada %ds)",
-                 MODELO_VIVO, MODELO_AHORRO, INTERVALO_NARRACION,
-                 RELLENO_SEGUNDOS)
+                 "resto %s (eventos cada %ds, charla continua)",
+                 MODELO_VIVO, MODELO_AHORRO, INTERVALO_NARRACION)
     ultimo_frame_narrado = 0.0
     ultimo_relleno = 0.0
     pausa_api_hasta = 0.0   # si Claude falla por créditos, pausar hasta aquí
@@ -16763,33 +16785,15 @@ async def bucle_narracion():
                     log.info("💬 Respondiendo a %s en el aire",
                              pregunta["autor"])
             elif estado.tele is not None:
-                # En pre-carrera (coches aún sin salir) rellenar más seguido
-                # para animar la previa; en carrera, el ritmo normal
-                relleno_int = RELLENO_SEGUNDOS
-                bajo_bandera = False
-                with contextlib.suppress(Exception):
-                    bajo_bandera = bool(estado.tele.bandera())
-                if estado.tele.vuelta < 1:
-                    relleno_int = min(RELLENO_SEGUNDOS, RADIO_SEGUNDOS)
-                elif bajo_bandera:
-                    # Bajo bandera no hay adelantamientos que narrar, así
-                    # que con el hueco normal de 90 s el directo se quedaba
-                    # minuto y medio callado con los coches en fila — justo
-                    # cuando la pregunta de quién para está abierta. Aquí
-                    # la charla ES la emisión, igual que en la previa.
-                    relleno_int = RADIO_SEGUNDOS
-                elif en_resumen:
-                    # Terminada la carrera, el análisis va seguido: con los
-                    # 90 s de siempre el resumen tardaba minuto y medio en
-                    # empezar y salían cuatro frases sueltas en veinte
-                    # minutos, con la gente marchándose entre una y otra.
-                    relleno_int = RESUMEN_SEGUNDOS
+                # Sin eventos, la charla sigue en cuanto acaba la frase
+                # anterior — previa, bandera, verde o análisis final: sin
+                # reloj fijo que deje huecos muertos.
                 if estado.eventos and desde_ultima >= INTERVALO_NARRACION:
                     lote = estado.eventos[:6]
                     del estado.eventos[:6]
                     texto = await narrar_datos(client, lote)
-                elif (desde_ultima >= relleno_int
-                        and ahora - ultimo_relleno >= relleno_int):
+                elif (_libre_para_hablar(ahora)
+                        and ahora - ultimo_relleno >= MIN_ENTRE_S):
                     ultimo_relleno = ahora
                     texto = await narrar_datos(client, None)
                 else:
@@ -16812,11 +16816,10 @@ async def bucle_narracion():
             elif estado.carrera_en_vivo:
                 # Sesión real sin telemetría NI frames: modo radio — el dúo
                 # conversa (noticias reales, contexto, predicciones) para
-                # que el directo nunca quede mudo. Y con SU intervalo: aquí
-                # la charla es lo único que hay, así que el hueco de los
-                # adelantamientos no vale.
-                if (desde_ultima >= RADIO_SEGUNDOS
-                        and ahora - ultimo_relleno >= RADIO_SEGUNDOS):
+                # que el directo nunca quede mudo: en cuanto acaba de
+                # hablar, sigue.
+                if (_libre_para_hablar(ahora)
+                        and ahora - ultimo_relleno >= MIN_ENTRE_S):
                     ultimo_relleno = ahora
                     texto = await narrar_datos(client, None)
                 else:
@@ -16864,16 +16867,6 @@ async def bucle_narracion():
                 await difundir(texto)
             except Exception as e:
                 log.error("Difusión falló (%s) — se sigue", e)
-        else:
-            # El guionista no devolvió nada. A veces es la decisión
-            # correcta (hay imagen y el silencio la deja respirar), pero
-            # el reloj del relleno se marcó ANTES de llamar, así que un
-            # vacío costaba la ventana COMPLETA: 90 s sin una palabra, y
-            # dos vacíos seguidos, tres minutos. Se retrocede el reloj
-            # para reintentar pronto en vez de tragarse el hueco entero.
-            ultimo_relleno = min(ultimo_relleno,
-                                 ahora - max(0.0, RADIO_SEGUNDOS
-                                             - REINTENTO_VACIO))
 
 
 def _es_error_creditos(e):
