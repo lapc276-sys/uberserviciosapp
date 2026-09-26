@@ -813,14 +813,40 @@ class Telemetria:
 
     def resumen(self):
         """Contexto compacto para el narrador."""
+        # TODA la parrilla, no solo los seis primeros: con el top 6 el
+        # narrador no sabía ni que existían los otros dieciséis, y en una
+        # carrera tranquila el que va 14º peleando por un punto es justo
+        # la historia que hay que contar.
         orden = sorted(self.posiciones.items(), key=lambda kv: kv[1])
-        top = ", ".join(f"P{pos} {self._nombre(n)}" for n, pos in orden[:6])
+        trozos = []
+        for n, pos in orden:
+            t = f"P{pos} {self._nombre(n)}"
+            gap = self.gaps.get(n)
+            if pos > 1 and isinstance(gap, (int, float)):
+                t += f" +{gap:.1f}s"
+            elif pos > 1 and gap:
+                t += f" {gap}"
+            nm = self.neumaticos.get(n)
+            if nm and nm.get("compuesto"):
+                t += f" [{nm['compuesto']}{nm.get('vueltas', '')}]"
+            trozos.append(t)
         s = self.sesion
         vueltas = (f"Lap {self.vuelta} of {self.total_vueltas}"
                    if self.total_vueltas else f"Lap {self.vuelta}")
-        return (f"{s.get('country_name', '?')} Grand Prix at "
-                f"{s.get('circuit_short_name', '?')}. {vueltas}. "
-                f"Order: {top or 'no data yet'}.")
+        texto = (f"{s.get('country_name', '?')} Grand Prix at "
+                 f"{s.get('circuit_short_name', '?')}. {vueltas}. "
+                 f"FULL ORDER ({len(trozos)} cars; gap = to the car ahead; "
+                 f"[tyre + laps on it]): "
+                 f"{', '.join(trozos) or 'no data yet'}.")
+        # Lo último de dirección de carrera: banderas (amarilla, roja,
+        # negra, blanca y negra), investigaciones, sanciones, límites de
+        # pista. Antes solo llegaba una vez como evento y al ciclo
+        # siguiente se había olvidado.
+        if self.incidentes:
+            texto += (" RACE CONTROL, latest messages: " + " | ".join(
+                f"lap {i['vuelta']}: {i['texto']}"
+                for i in self.incidentes[-5:]) + ".")
+        return texto
 
     # ---------- replay ----------
 
@@ -830,7 +856,7 @@ class Telemetria:
             numero, pos = dato["driver_number"], dato["position"]
             anterior = self.posiciones.get(numero)
             self.posiciones[numero] = pos
-            if anterior is not None and pos < anterior and pos <= 10 \
+            if anterior is not None and pos < anterior \
                     and self.vuelta >= 1:
                 return (f"ADELANTAMIENTO: {self._nombre(numero)} gana la "
                         f"posición {pos} (venía {anterior}º)")

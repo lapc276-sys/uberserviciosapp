@@ -2717,11 +2717,18 @@ async def lecho_mp3():
 
 @app.get("/audio/{seg}/{idx}")
 async def audio_linea(seg: int, idx: int):
-    """MP3 de una línea del segmento actual (para el visor web)."""
-    if (seg != estado.segmento_id or idx < 0
-            or idx >= len(estado.audios) or not estado.audios[idx]):
+    """MP3 de una línea del segmento actual o de los anteriores recientes
+    (para el visor web). Los anteriores hacen falta porque el reproductor
+    TERMINA el segmento que está sonando antes de pasar al nuevo: si al
+    publicarse el siguiente se borraban sus audios, el resto de frases del
+    que sonaba daba 404 y el narrador decía dos palabras y se callaba."""
+    if seg == estado.segmento_id:
+        audios = estado.audios
+    else:
+        audios = getattr(estado, "audios_hist", {}).get(seg) or []
+    if idx < 0 or idx >= len(audios) or not audios[idx]:
         return Response(status_code=404)
-    return Response(content=estado.audios[idx], media_type="audio/mpeg")
+    return Response(content=audios[idx], media_type="audio/mpeg")
 
 
 @app.get("/diag/audio")
@@ -5630,7 +5637,13 @@ async function reproducirSegmento(seg, lineas, idioma) {
   reproduciendo = true;
   while (pendiente) {
     const t = pendiente; pendiente = null;
-    for (let i = 0; i < t.lineas.length && !pendiente && !mudo; i++) {
+    // El segmento que suena se TERMINA entero; el nuevo espera su turno.
+    // Antes el nuevo tiraba el resto del viejo, y con eventos cada pocos
+    // segundos el narrador decía una frase y lo demás se perdía. El ritmo
+    // ya lo lleva el servidor (prepara lo siguiente cuando esto acaba), y
+    // solo se guarda UNO pendiente: el más nuevo, así que no se acumula
+    // retraso.
+    for (let i = 0; i < t.lineas.length && !mudo; i++) {
       mostrarLinea(t.lineas, i);  // el subtítulo sigue a la voz
       // Un respiro al cambiar de voz. Pegadas al milisegundo las dos
       // pistas suenan a archivo de audio, no a dos personas hablando.
@@ -6710,6 +6723,20 @@ async def narrar_recap(client: anthropic.AsyncAnthropic, pct: int):
         return []
 
 
+#: En solo, las instrucciones de arriba que hablan de "Alex y Sam" se
+#: reinterpretan aquí, y se pide SUSTANCIA: con "keep it short" y una sola
+#: voz salían dos palabras sueltas y luego nada.
+_SOLO_SEGMENTO = "" if DUO_EN_DIRECTO else (
+    f"\n\nSOLO BROADCAST: every line is quien=\"narrador\" ({NARRADOR}). "
+    f"Wherever this asks {NARRADOR} and {ANALISTA} to disagree, {NARRADOR} "
+    "argues both sides himself. Write 3 to 5 lines, each a real spoken "
+    "sentence of roughly 12 to 30 words — never a two-word line, never a "
+    "bare exclamation on its own. Talk like a person, keep it flowing, "
+    "and do not repeat anything already in the memory: if the track "
+    "story is covered, move to a different driver further down the "
+    "field, a corner, the past, the paddock or the chat.")
+
+
 async def narrar_datos(client: anthropic.AsyncAnthropic, eventos):
     """Genera el siguiente segmento de conversación del dúo.
 
@@ -6788,16 +6815,44 @@ async def narrar_datos(client: anthropic.AsyncAnthropic, eventos):
                 contexto += ficha
         # Curva destacada: la más lenta del circuito, medida del trazado real.
         # Es donde menos se adelanta, y da pie a explicar el trazado al aire.
+        # Va ROTANDO por todas las curvas: con la charla continua, la misma
+        # curva lenta en cada llamada hacía que el narrador repitiera la
+        # misma explicación una y otra vez.
+        giro = getattr(estado, "giro_charla", 0)
         if estado.curvas:
-            lenta = min(estado.curvas, key=lambda c: c["velocidad_rel"])
+            por_vel = sorted(estado.curvas, key=lambda c: c["velocidad_rel"])
+            c = por_vel[giro % len(por_vel)]
+            rango = ("the slowest corner on the lap" if c is por_vel[0]
+                     else "one of the fastest corners on the lap"
+                     if c is por_vel[-1] else "a corner on this lap")
             contexto += (
                 f"\nCORNER SPOTLIGHT (measured from this circuit's own GPS "
-                f"trace): turn {lenta['numero']} is the slowest corner on the "
-                f"lap — a {int(lenta['angulo'])}° "
-                f"{lenta['direccion']}-hander taken at roughly "
-                f"{int(lenta['velocidad_rel'] * 100)}% of the lap's top speed. "
-                f"Good moment to explain why a corner like that is so hard to "
-                f"overtake into.")
+                f"trace): turn {c['numero']} is {rango} — a "
+                f"{int(c['angulo'])}° {c['direccion']}-hander taken at "
+                f"roughly {int(c['velocidad_rel'] * 100)}% of the lap's top "
+                f"speed. What the driver is doing there: braking, gear, "
+                f"where he can attack.")
+        # Y un piloto EN FOCO, rotando por TODA la parrilla: no solo los de
+        # delante. Son 22 coches y cada uno tiene su carrera.
+        with contextlib.suppress(Exception):
+            orden = sorted(estado.tele.posiciones.items(),
+                           key=lambda kv: kv[1])
+            if orden:
+                n, pos = orden[(giro * 7) % len(orden)]
+                nm = estado.tele.neumaticos.get(n) or {}
+                gap = estado.tele.gaps.get(n)
+                datos = [f"running P{pos}"]
+                if pos > 1 and isinstance(gap, (int, float)):
+                    datos.append(f"{gap:.1f}s behind the car ahead")
+                if nm.get("compuesto"):
+                    datos.append(f"on the {nm['compuesto']} tyre, "
+                                 f"{nm.get('vueltas', '?')} laps old")
+                paradas = len(estado.tele._pit_laps.get(n, ()))
+                datos.append(f"{paradas} pit stop(s) so far")
+                contexto += (
+                    f"\nDRIVER IN FOCUS for a quiet moment (real data): "
+                    f"{estado.tele._nombre(n)}, " + ", ".join(datos) + ". "
+                    f"If nothing hotter is happening, talk about HIS race.")
         # Dónde se está adelantando DE VERDAD hoy. Contado por nosotros, no
         # sacado de ninguna estadística ajena — por eso se puede decir al aire.
         if estado.pases_total >= 3 and estado.pases:
@@ -6838,7 +6893,9 @@ async def narrar_datos(client: anthropic.AsyncAnthropic, eventos):
                          f"{clima.get('pista')}°C.")
     situacion = _situacion(eventos)
     # Memoria amplia para NO repetir: si un tema ya salió, se descarta
-    memoria = "\n".join(estado.diario[-18:]) or "(nothing said yet)"
+    memoria = "\n".join(estado.diario[-40:]) or "(nothing said yet)"
+    if not eventos:
+        estado.giro_charla = getattr(estado, "giro_charla", 0) + 1
     t = estado.tele
     prerace = bool(t) and t.vuelta < 1
     # Post-sesión: por el reloj (ventana post-show) O porque la carrera ya
@@ -7026,6 +7083,11 @@ async def narrar_datos(client: anthropic.AsyncAnthropic, eventos):
             "If an incident, a safety car or a red flag is in the events, "
             "that comes FIRST and everything else waits: concern for the "
             "driver, then what it changes for the race.\n"
+            "RACE CONTROL in the context is live and real: a yellow, a "
+            "black-and-white flag (a warning for driving), a black flag "
+            "(disqualified), a penalty, an investigation, track limits — "
+            "when one is there, name the driver, say what it means in plain "
+            "words and what it costs him. Only what the message says.\n"
             "ONLY OCCASIONALLY (and never twice in a row), a short off-track "
             "aside using a REAL headline below — but if you've chatted news "
             "recently in the memory, DON'T; go back to the track instead.\n"
@@ -7091,7 +7153,7 @@ async def narrar_datos(client: anthropic.AsyncAnthropic, eventos):
         f"be pulled back down, so spend it where it counts.")
     response = await client.messages.create(
         model=modelo_actual(),
-        max_tokens=500,
+        max_tokens=900,
         system=SYSTEM_DUO_VIVO,
         output_config={"format": {"type": "json_schema",
                                   "schema": DUO_SCHEMA}},
@@ -7100,7 +7162,7 @@ async def narrar_datos(client: anthropic.AsyncAnthropic, eventos):
             "content": (f"RACE CONTEXT: {contexto}\n"
                         f"SITUATION: {situacion}\n\n"
                         f"WHAT THE DUO ALREADY SAID (memory):\n{memoria}\n\n"
-                        f"{pedido}{cta}{entrega}\n\n"
+                        f"{pedido}{cta}{entrega}{_SOLO_SEGMENTO}\n\n"
                         "Write the next segment of the conversation."),
         }],
     )
@@ -16600,12 +16662,15 @@ async def difundir(lineas):
     for l in lineas:
         if not DUO_EN_DIRECTO and l.get("quien") == "analista":
             # La segunda voz está fuera del directo. Si el guionista se
-            # despista y escribe una línea para ella, se QUITA en vez de
-            # pasársela al narrador: reasignada, él diría con su propia
-            # voz algo escrito para ella —"no te emociones, Alex"—, y
-            # eso es peor que una línea menos.
-            log.info("🎙️  Línea de la analista descartada (directo en solo)")
-            continue
+            # despista y escribe una línea para ella, la dice el narrador —
+            # tirarlas todas dejaba segmentos enteros sin una palabra (el
+            # guionista a veces las escribe TODAS para ella). Solo se quita
+            # la que le habla a él por su nombre ("no te emociones, Alex"),
+            # que en su propia boca no tendría sentido.
+            if NARRADOR.lower() in (l.get("texto") or "").lower():
+                log.info("🎙️  Línea de la analista descartada (solo)")
+                continue
+            l = {**l, "quien": "narrador"}
         marcado = _limpiar_linea(l.get("texto", ""))
         limpio = actuacion.limpiar(marcado)
         if not limpio:
@@ -16616,6 +16681,7 @@ async def difundir(lineas):
              "intensidad": l.get("intensidad"),
              "emocion": l.get("emocion")}))
     if not preparadas:
+        log.warning("🎙️  Segmento vacío: no quedó ninguna línea que decir")
         return
     lineas = [p[0] for p in preparadas]
     estado.lineas = lineas
@@ -16633,7 +16699,7 @@ async def difundir(lineas):
         marca = (f" [v{l['velocidad']}i{l['intensidad']}]"
                  if l.get("intensidad") else "")
         log.info("🎙️  %s:%s %s", _nombre_de(l["quien"]), marca, l["texto"])
-    del estado.diario[:-24]
+    del estado.diario[:-60]
     lineas_ws = []
     audios = []
     for l, marcado, entrega in preparadas:
@@ -16645,6 +16711,11 @@ async def difundir(lineas):
                 {**l, "audio": base64.standard_b64encode(audio).decode()})
         else:
             lineas_ws.append(l)
+    hist = getattr(estado, "audios_hist", {})
+    hist[estado.segmento_id] = estado.audios
+    for viejo in sorted(hist)[:-3]:
+        del hist[viejo]
+    estado.audios_hist = hist
     estado.audios = audios
     estado.segmento_id += 1
     # Cuándo termina de sonar esto: el bucle prepara lo siguiente justo
@@ -16654,7 +16725,7 @@ async def difundir(lineas):
     duracion = 2.0
     for (l, _, _), audio in zip(preparadas, audios):
         duracion += max(len(audio or b"") / 16000.0,
-                        len(l["texto"]) / 15.0) + 0.22
+                        len(l["texto"]) / 14.0) + 0.22
     estado.habla_hasta = time.time() + duracion
     mensaje = json.dumps({"tipo": "dialogo", "idioma": IDIOMA,
                           "lineas": lineas_ws})
@@ -16756,7 +16827,8 @@ async def bucle_narracion():
         # así que los espectadores quedaban sin respuesta. Ahora el chat
         # tiene su turno intercalado con la narración de la pista.
         chat_listo = (estado.chat_pendientes
-                      and ahora - estado.chat_ultima >= CHAT_RESPUESTA_CADA)
+                      and ahora - estado.chat_ultima >= CHAT_RESPUESTA_CADA
+                      and _libre_para_hablar(ahora))
         try:
             if (estado.apertura_pendiente
                     and (estado.tele is not None or estado.carrera_en_vivo)):
@@ -16788,9 +16860,18 @@ async def bucle_narracion():
                 # Sin eventos, la charla sigue en cuanto acaba la frase
                 # anterior — previa, bandera, verde o análisis final: sin
                 # reloj fijo que deje huecos muertos.
-                if estado.eventos and desde_ultima >= INTERVALO_NARRACION:
-                    lote = estado.eventos[:6]
-                    del estado.eventos[:6]
+                # Los eventos también esperan a que acabe la frase en curso
+                # (salvo bandera roja, safety car o accidente): antes
+                # entraban cada 10 s y cortaban lo que se estaba diciendo.
+                # Mientras espera, se quedan los MÁS RECIENTES.
+                urgente = any(
+                    p in e.upper() for e in estado.eventos
+                    for p in ("RED FLAG", "SAFETY CAR", "CRASH", "ACCIDENT",
+                              "BLACK FLAG"))
+                if (estado.eventos and desde_ultima >= INTERVALO_NARRACION
+                        and (urgente or _libre_para_hablar(ahora))):
+                    lote = estado.eventos[-6:]
+                    estado.eventos.clear()
                     texto = await narrar_datos(client, lote)
                 elif (_libre_para_hablar(ahora)
                         and ahora - ultimo_relleno >= MIN_ENTRE_S):
