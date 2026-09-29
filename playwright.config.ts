@@ -19,6 +19,13 @@ const SYSTEM_CHROMIUM = '/opt/pw-browsers/chromium';
 
 export default defineConfig({
   testDir: './tests',
+  /**
+   * Only .spec.ts. The unit tests next door are `.test.ts` and run under
+   * node:test via tsx; Playwright's default pattern matches both, so it was
+   * launching a browser to execute files that never touch one and burying the
+   * real results in their output.
+   */
+  testMatch: '**/*.spec.ts',
   // The walkthrough has real waits in it — a nine-second settle timeout per
   // step is deliberate behaviour, not slowness to be tuned away.
   timeout: 180_000,

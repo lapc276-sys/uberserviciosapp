@@ -275,6 +275,37 @@ export function HostedQuote({
               ))}
             </ul>
 
+            {/*
+              The engine's own warnings, which this page declared and never
+              rendered.
+
+              The one that matters: with no vision model configured the
+              analyzer falls back to a heuristic that invents rooms and soil
+              levels, and says so — "Demo estimate, not a real inspection". On
+              our own /quote/video that warning was shown. Here, on the page a
+              cleaning company puts in their Instagram bio, a stranger was
+              handed a fabricated price with nothing to indicate it.
+
+              Amber rather than grey, and above the disclaimer rather than
+              below it: these are not fine print, they are the reason not to
+              trust the number directly above them.
+            */}
+            {quote.warnings.length > 0 && (
+              <div className="mt-4 rounded-xl bg-amber-50 p-3 dark:bg-amber-950/30">
+                <p className="text-xs font-semibold text-amber-900 dark:text-amber-200">
+                  Ten en cuenta
+                </p>
+                <ul className="mt-1 space-y-1">
+                  {quote.warnings.map((w, i) => (
+                    <li key={i} className="flex gap-1.5 text-xs text-amber-800 dark:text-amber-300">
+                      <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
+                      <span>{w}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
             {/* Said plainly, because a surprise on arrival is what destroys
                 the trust that made them book from a video. */}
             <p className="mt-4 rounded-xl bg-slate-50 p-3 text-xs text-slate-500 dark:bg-white/5 dark:text-slate-400">

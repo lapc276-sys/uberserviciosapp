@@ -78,6 +78,7 @@ export function PilotCapture({ capturedBy }: { capturedBy: string }) {
   const [capturePlan, setCapturePlan] = useState<CaptureStep[] | null>(null);
   const [quality, setQuality] = useState<{ score: number; verdict: string; summary: string } | null>(null);
   const [actualMinutes, setActualMinutes] = useState('');
+  const [onSiteMinutes, setOnSiteMinutes] = useState('');
   const [jobSequence, setJobSequence] = useState('1');
   const [hoursWorkedToday, setHoursWorkedToday] = useState('0');
   const [crewSize, setCrewSize] = useState('1');
@@ -254,6 +255,7 @@ export function PilotCapture({ capturedBy }: { capturedBy: string }) {
           corrected: { ...predicted, rooms },
           afterAnalysis: afterAnalysis ?? undefined,
           actualMinutes: minutes,
+          onSiteMinutes: Number(onSiteMinutes) || undefined,
           jobSequence: Number(jobSequence) || undefined,
           hoursWorkedToday: Number(hoursWorkedToday) || undefined,
           crewSize: Number(crewSize) || 1,
@@ -719,11 +721,26 @@ export function PilotCapture({ capturedBy }: { capturedBy: string }) {
               </span>
               <p className="mt-1 text-xl font-semibold">{formatDuration(predicted?.totalMinutes ?? 0)}</p>
             </div>
+            {/*
+              Two numbers, not one.
+
+              This was a single "actual minutes" box, and nobody could say
+              which quantity it held. A stopwatch run per task measures the
+              tasks; an invoice covers arriving to leaving. Those differ by
+              20-40% in cleaning — travel between rooms, unpacking supplies,
+              moving furniture, setup and teardown — and the model predicts the
+              second one. Comparing it against the first made every job look
+              wildly overestimated, which is exactly the conclusion that nearly
+              got the time constants cut in half.
+            */}
             <div>
-              <label className="text-sm font-medium">Actual minutes worked</label>
+              <label className="text-sm font-medium" htmlFor="task-min">
+                Time on the tasks
+              </label>
               <div className="mt-2 flex items-center gap-2">
                 <Clock className="h-5 w-5 text-slate-400" />
                 <input
+                  id="task-min"
                   type="number"
                   inputMode="numeric"
                   min={1}
@@ -735,8 +752,41 @@ export function PilotCapture({ capturedBy }: { capturedBy: string }) {
                 />
               </div>
               <p className="mt-1.5 text-xs text-slate-400">
-                Total person-minutes. Two cleaners for an hour is 120.
+                Person-minutes of actual cleaning. Two cleaners for an hour is 120.
               </p>
+            </div>
+
+            <div>
+              <label className="text-sm font-medium" htmlFor="site-min">
+                Time on site, door to door
+              </label>
+              <div className="mt-2 flex items-center gap-2">
+                <Clock className="h-5 w-5 text-slate-400" />
+                <input
+                  id="site-min"
+                  type="number"
+                  inputMode="numeric"
+                  min={1}
+                  max={1440}
+                  value={onSiteMinutes}
+                  onChange={(e) => setOnSiteMinutes(e.target.value)}
+                  placeholder="e.g. 190"
+                  className="flex-1 rounded-xl border bg-white px-4 py-3 text-base outline-none focus:border-brand-400 dark:bg-white/5"
+                />
+              </div>
+              <p className="mt-1.5 text-xs text-slate-400">
+                Arriving to leaving, including setup, moving things and packing up. This is the number
+                the estimate is trying to predict.
+              </p>
+              {Number(onSiteMinutes) > 0 && Number(actualMinutes) > 0 && (
+                <p className="mt-1.5 text-xs font-medium text-brand-600 dark:text-brand-400">
+                  Overhead:{' '}
+                  {Math.round(
+                    ((Number(onSiteMinutes) - Number(actualMinutes)) / Number(onSiteMinutes)) * 100,
+                  )}
+                  % of the visit
+                </p>
+              )}
             </div>
 
             {/*

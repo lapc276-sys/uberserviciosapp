@@ -339,7 +339,22 @@ model TrainingSample {
   corrected  Json
 
   predictedMinutes    Int
+  /**
+   * Person-minutes spent on the tasks themselves.
+   * What a stopwatch-per-activity measures, and what ActivitySegment sums.
+   */
   actualMinutes       Int
+  /**
+   * Person-minutes from arriving to leaving.
+   * The two are not the same number and the gap is not small: travel between
+   * rooms, unpacking and repacking supplies, moving furniture, setup and
+   * teardown run 20-40% of a cleaning day. A stopwatch never counts them and
+   * an invoice always does.
+   * Until this exists the time model cannot be calibrated at all, because the
+   * thing it predicts (billable time) and the thing that was measured (task
+   * time) are different quantities. One field, and it unblocks the rest.
+   */
+  onSiteMinutes       Int?
   /**
    * Mean absolute soil-score correction across all rooms, 0-100.
    */
@@ -353,6 +368,7 @@ model TrainingSample {
    * what lets the time model explain variance that pure vision never will.
    */
   /**
+   * /**
    * /**
    * /**
    * /**

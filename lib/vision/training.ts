@@ -33,7 +33,16 @@ export interface TrainingSampleInput extends OperatorContext {
   corrected: PropertyAnalysis;
   afterAnalysis?: PropertyAnalysis;
   qualityScore?: number;
+  /** Person-minutes on the tasks themselves. */
   actualMinutes: number;
+  /**
+   * Person-minutes from arriving to leaving.
+   *
+   * Optional only because older samples predate the split. Everything new
+   * should carry it: without it `actualMinutes` cannot be compared to a
+   * prediction of billable time, which is what the model outputs.
+   */
+  onSiteMinutes?: number;
   notes?: string;
 }
 
@@ -44,6 +53,7 @@ export interface TrainingSampleRecord {
   city: string | null;
   predictedMinutes: number;
   actualMinutes: number;
+  onSiteMinutes: number | null;
   correctionMagnitude: number;
   frameCount: number;
   jobSequence: number | null;
@@ -82,6 +92,7 @@ export async function saveTrainingSample(input: TrainingSampleInput): Promise<st
     city: input.city ?? null,
     predictedMinutes: input.predicted.totalMinutes,
     actualMinutes: input.actualMinutes,
+    onSiteMinutes: input.onSiteMinutes ?? null,
     correctionMagnitude: magnitude,
     frameCount: input.frameCount,
     jobSequence: input.jobSequence ?? null,
@@ -110,6 +121,7 @@ export async function saveTrainingSample(input: TrainingSampleInput): Promise<st
       corrected: input.corrected as unknown as object,
       predictedMinutes: input.predicted.totalMinutes,
       actualMinutes: input.actualMinutes,
+      onSiteMinutes: input.onSiteMinutes,
       correctionMagnitude: magnitude,
       jobSequence: input.jobSequence,
       hoursWorkedToday: input.hoursWorkedToday,
@@ -327,6 +339,7 @@ export async function getTrainingReport(): Promise<TrainingReport> {
         city: r.city,
         predictedMinutes: r.predictedMinutes,
         actualMinutes: r.actualMinutes,
+        onSiteMinutes: r.onSiteMinutes,
         correctionMagnitude: r.correctionMagnitude,
         frameCount: r.frameCount,
         jobSequence: r.jobSequence,

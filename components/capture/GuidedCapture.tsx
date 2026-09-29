@@ -15,7 +15,7 @@ import {
   type SpaceSelection,
 } from '@/lib/capture/guide';
 import { SettleWatcher, signatureOf, spreadPick, type Signature } from '@/lib/capture/scene';
-import { getRecognition, speak, stopSpeaking, synthesisSupported, type SpeechRecognitionLike } from '@/lib/speech';
+import { getRecognition, isSpeaking, speak, stopSpeaking, synthesisSupported, type SpeechRecognitionLike } from '@/lib/speech';
 import { normalize } from '@/lib/vision/voice-commands';
 
 /**
@@ -100,8 +100,22 @@ const DEPTH_OPTIONS = [
   },
 ];
 
-/** Spoken words that mean "take the shot" and "I don't have that one". */
-const SAY_CAPTURE = ['listo', 'ya', 'ahora', 'foto', 'toma', 'dale', 'ok', 'okay', 'ready'];
+/**
+ * Spoken words that mean "take the shot" and "I don't have that one".
+ *
+ * `ya`, `ahora` and `ok` used to be here and are deliberately gone. Two
+ * separate problems, and the second survives even with the microphone muted
+ * while the phone talks:
+ *
+ *   The app said them. Six instructions open with "Ahora" and every
+ *   confirmation is "Listo, ya puedes cerrarlo", so the speaker triggered the
+ *   next step through its own microphone.
+ *
+ *   People say them. Somebody walking a homeowner through their kitchen says
+ *   "ya", "ok" and "ahora" constantly without addressing the app at all. A
+ *   command has to be a word you would not say by accident.
+ */
+const SAY_CAPTURE = ['listo', 'foto', 'toma', 'dale', 'ready'];
 const SAY_SKIP = ['saltar', 'salta', 'no tengo', 'no hay', 'siguiente', 'pasa', 'skip'];
 
 /** How often the stream is sampled while looking for the shot. */
@@ -136,6 +150,8 @@ export function GuidedCapture({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const listeningRef = useRef(false);
+  /** When the current step began, for the voice lead-in guard. */
+  const stepStartedAt = useRef(0);
 
   const [stage, setStage] = useState<Stage>('plan');
   const [selection, setSelection] = useState<SpaceSelection>({ kitchen: 1, bathroom: 1, living_room: 1 });
@@ -292,6 +308,7 @@ export function GuidedCapture({
     if (stage !== 'guiding' || !current) return;
 
     speak(current.spoken);
+    stepStartedAt.current = Date.now();
     setWatching('waiting');
 
     const watcher = new SettleWatcher();
@@ -374,6 +391,16 @@ export function GuidedCapture({
       const results = Array.from(event.results as ArrayLike<ArrayLike<{ transcript: string }>>);
       const transcript = results[results.length - 1]?.[0]?.transcript ?? '';
       if (!transcript) return;
+
+      // The phone's speaker reaches its own microphone. Anything heard while
+      // it is talking is the app hearing itself, not the person.
+      if (isSpeaking()) return;
+
+      // The same grace period the shutter honours. A command arriving before
+      // the instruction has finished landing is almost always the tail of the
+      // previous step, and it would shoot at whatever the camera is pointed at
+      // while somebody is still walking.
+      if (Date.now() - stepStartedAt.current < LEAD_IN_MS) return;
 
       const text = normalize(transcript);
       setHeard(transcript);

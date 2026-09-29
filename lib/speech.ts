@@ -42,6 +42,33 @@ export function synthesisSupported(): boolean {
 }
 
 /**
+ * When the phone expects to stop talking.
+ *
+ * The walkthrough listens and speaks at once, and a phone's speaker feeds its
+ * own microphone. Without this the app hears itself: six instructions begin
+ * with "Ahora" and every confirmation says "Listo, ya puedes cerrarlo" — all
+ * words that mean "take the shot". The step fired while reading its own
+ * instruction, pointed at wherever the camera happened to be.
+ *
+ * A deadline rather than a boolean, because `onend` does not fire reliably on
+ * every browser and a stuck flag would kill voice control for the rest of the
+ * walkthrough. The worst case here is that the guard expires slightly early.
+ */
+let speakingUntil = 0;
+
+/** Roughly how long an utterance takes, so the guard clears itself. */
+function spokenDurationMs(text: string, rate: number): number {
+  // ~13 characters a second at rate 1, plus a margin for the tail of the
+  // sound reaching the microphone.
+  return (text.length / 13 / rate) * 1000 + 600;
+}
+
+/** True while the phone is talking, so the recogniser can ignore itself. */
+export function isSpeaking(): boolean {
+  return Date.now() < speakingUntil;
+}
+
+/**
  * Says something out loud in Spanish.
  *
  * The guided walkthrough depends on this: the phone is held up facing a room,
@@ -61,6 +88,15 @@ export function speak(text: string, { rate = 0.95 }: { rate?: number } = {}): vo
     utterance.lang = 'es-US';
     utterance.rate = rate;
 
+    speakingUntil = Date.now() + spokenDurationMs(text, rate);
+    // Clear early when the browser tells us, late by the estimate otherwise.
+    utterance.onend = () => {
+      speakingUntil = Date.now() + 250;
+    };
+    utterance.onerror = () => {
+      speakingUntil = 0;
+    };
+
     // Pick a Spanish voice when the platform has one. Without this, some
     // Android builds read Spanish text with an English voice, which is close
     // to unintelligible.
@@ -76,6 +112,7 @@ export function speak(text: string, { rate = 0.95 }: { rate?: number } = {}): vo
 }
 
 export function stopSpeaking(): void {
+  speakingUntil = 0;
   if (!synthesisSupported()) return;
   try {
     window.speechSynthesis.cancel();

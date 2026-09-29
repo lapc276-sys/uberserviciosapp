@@ -108,7 +108,7 @@ export const SPACE_TEMPLATES: SpaceTemplate[] = [
       {
         title: 'Dentro del microondas',
         spoken: 'Abre el microondas y apunta adentro. Sujeta el teléfono quieto un segundo.',
-        after: 'Listo, ya puedes cerrarlo.',
+        after: 'Muy bien, puedes cerrarlo.',
         optional: true,
       },
       {
@@ -234,7 +234,7 @@ export const SPACE_TEMPLATES: SpaceTemplate[] = [
       {
         title: 'Estantes de abajo',
         spoken: 'Ahora los de abajo y el suelo del armario.',
-        after: 'Listo, ya puedes cerrarlo.',
+        after: 'Perfecto, puedes cerrarlo.',
       },
     ],
   },
