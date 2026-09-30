@@ -92,6 +92,24 @@ CATALOGO = [
      "titulo": "Nobody has ever raced this track #Shorts #F1",
      "tarjetas": [("PAST RACES HERE", "0", ""),
                   ("FIRST NEW TRACK SINCE", "2023", "Las Vegas")]},
+    # Serie de sensores, materiales y proveedores. Cifras cruzadas en
+    # hechos.py (Electronics / Materials / Suppliers).
+    {"id": "m13", "etiquetas": "formula 1 halo cockpit titanium",
+     "titulo": "The F1 halo holds 12 tonnes #Shorts #F1",
+     "tarjetas": [("HALO TEST LOAD", "125", "kN"),
+                  ("THAT IS ABOUT", "12", "tonnes")]},
+    {"id": "m14", "etiquetas": "formula 1 car underside floor",
+     "titulo": "A wooden plank can disqualify an F1 car #Shorts #F1",
+     "tarjetas": [("PLANK THICKNESS", "10", "mm"),
+                  ("BELOW THIS AFTER THE RACE", "9", "mm = OUT")]},
+    {"id": "m15", "etiquetas": "formula 1 sensors electronics data",
+     "titulo": "One F1 car, around 300 sensors #Shorts #F1",
+     "tarjetas": [("SENSORS ON THE CAR", "~300", ""),
+                  ("SETTINGS CHANGED FROM THE PIT", "0", "banned 2003")]},
+    {"id": "m16", "etiquetas": "formula 1 pirelli tyres wheels",
+     "titulo": "Parts every F1 team must share #Shorts #F1",
+     "tarjetas": [("SAME TYRES FOR ALL SINCE", "2011", "Pirelli"),
+                  ("SAME ECU FOR ALL SINCE", "2008", "McLaren Applied")]},
 ]
 
 DESCRIPCION = (

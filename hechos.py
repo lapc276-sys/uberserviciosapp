@@ -143,6 +143,97 @@ HECHOS = {
                  "deliberately in 2022.",
          "fuente": "FIA regulation history"},
     ],
+    # ── Serie de sensores, electrónica, materiales y proveedores ─────────
+    # Aquí la tentación de inventar es máxima: "cuánto cable lleva", "cuánto
+    # cuesta el volante", "cuántos gigas por carrera". Circulan cifras de
+    # todo tipo y casi ninguna tiene fuente firme, así que NO entran. Lo que
+    # hay es reglamento, historia comprobable y lo que los proveedores
+    # oficiales publican de sí mismos. Un proveedor se nombra solo si es un
+    # suministro ÚNICO y público (neumático, centralita, llanta, motor): lo
+    # que cada equipo compra a quién es secreto, y se dice que es secreto.
+    "Electronics": [
+        {"dato": "Every car on the grid runs the same standard ECU, supplied "
+                 "by McLaren Applied. It became mandatory in 2008, and it is "
+                 "how the FIA finally policed traction control out of F1.",
+         "fuente": "FIA technical regulations, 2008 standard ECU"},
+        {"dato": "Two-way telemetry — engineers changing settings on the car "
+                 "from the pit wall — has been banned since 2003. Data flows "
+                 "from the car to the garage, never the other way.",
+         "fuente": "FIA sporting regulations, 2003"},
+        {"dato": "Teams say a modern F1 car carries around 300 sensors, "
+                 "measuring pressures, temperatures, loads and speeds all "
+                 "over the car.",
+         "fuente": "Figures published by F1 teams (McLaren, Mercedes)"},
+        {"dato": "The rear brakes are brake-by-wire: the pedal is only an "
+                 "input, and a computer decides how much of the stopping is "
+                 "done by the friction brakes and how much by the electric "
+                 "motor recovering energy.",
+         "fuente": "FIA technical regulations, from 2014"},
+        {"dato": "Every car carries an FIA accident data recorder — a "
+                 "black box, like an aircraft's — that logs the forces of "
+                 "any crash so the next car can be made safer.",
+         "fuente": "FIA technical regulations"},
+        {"dato": "Drivers wear biometric gloves: sensors in the glove send "
+                 "their pulse and blood-oxygen level to the medical team "
+                 "during the race.",
+         "fuente": "FIA safety equipment standard"},
+        {"dato": "In practice sessions teams bolt on aero rakes — grids of "
+                 "small pressure sensors behind a part of the car — to "
+                 "measure the airflow. The bright flow-vis paint is the "
+                 "low-tech version of the same test.",
+         "fuente": "Standard practice, visible in any Friday practice"},
+        {"dato": "Every wheel carries a sensor for tyre pressure and "
+                 "temperature, and the data goes to the team and to the "
+                 "FIA.",
+         "fuente": "FIA technical regulations"},
+    ],
+    "Materials": [
+        {"dato": "The first carbon-fibre chassis in F1 was the McLaren "
+                 "MP4/1 in 1981. Today every monocoque is a carbon-fibre "
+                 "composite.",
+         "fuente": "F1 technical history"},
+        {"dato": "The halo is made of titanium, has been mandatory since "
+                 "2018, and has to withstand a load of 125 kN in the FIA "
+                 "test — about the weight of 12 tonnes.",
+         "fuente": "FIA halo homologation test"},
+        {"dato": "The brake discs and pads are carbon-carbon, not steel. "
+                 "They only grip properly when hot and can run at around "
+                 "1000 °C.",
+         "fuente": "Brake supplier published data"},
+        {"dato": "Under the car runs the plank, made of a wood-based "
+                 "composite called Jabroc. It is 10 mm thick and must still "
+                 "be at least 9 mm after the race — at the 2023 US Grand "
+                 "Prix, Hamilton and Leclerc were disqualified for wearing "
+                 "theirs too thin.",
+         "fuente": "FIA technical regulations; 2023 US GP stewards decision"},
+        {"dato": "Beryllium alloys, once used in F1 engines for being light "
+                 "and stiff, are banned by the FIA's list of permitted "
+                 "materials.",
+         "fuente": "FIA technical regulations, permitted materials"},
+        {"dato": "Since 2022 the cars run 18-inch wheels, up from 13-inch, "
+                 "made of forged magnesium.",
+         "fuente": "FIA 2022 technical regulations"},
+    ],
+    "Suppliers": [
+        {"dato": "Pirelli has been Formula 1's sole tyre supplier since "
+                 "2011. Every team runs the same tyres.",
+         "fuente": "FIA tender / Formula 1 record"},
+        {"dato": "The standard ECU that every car uses is supplied by "
+                 "McLaren Applied — the same box in a Ferrari and in a "
+                 "Williams.",
+         "fuente": "FIA standard supply"},
+        {"dato": "Since 2022 the wheel rims are a standard part from a "
+                 "single supplier, BBS.",
+         "fuente": "FIA standard supply tender, 2022"},
+        {"dato": "In 2026 five manufacturers build power units: Mercedes, "
+                 "Ferrari, Honda, Red Bull Ford and Audi. Every other team "
+                 "buys its engine from one of them.",
+         "fuente": "2026 Formula 1 entry list"},
+        {"dato": "Most parts are NOT standard. Which company makes a team's "
+                 "sensors, looms or composites is usually confidential — "
+                 "the supply chain is part of the competition.",
+         "fuente": "FIA list of listed and standard parts"},
+    ],
     "Tech history": [
         {"dato": "Ground effect was understood in F1 by the late 1970s, "
                  "banned in 1983, and brought back deliberately in 2022 to "
@@ -223,6 +314,10 @@ ALIAS_CATEGORIA = {
     "aero": "Aero", "aerodinamica": "Aero", "aerodinámica": "Aero",
     "historia": "Tech history", "tech history": "Tech history",
     "prohibida": "Banned tech", "banned tech": "Banned tech",
+    "electronica": "Electronics", "electrónica": "Electronics",
+    "sensores": "Electronics", "electronics": "Electronics",
+    "materiales": "Materials", "materials": "Materials",
+    "proveedores": "Suppliers", "suppliers": "Suppliers",
 }
 
 #: Lo que hace falta para que un short ENSEÑE algo, en vez de afirmarlo.

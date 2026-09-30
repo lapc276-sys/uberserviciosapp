@@ -10254,6 +10254,40 @@ _TEMAS_TECNICOS = [
      "formula 1 engine history"),
     ("Engine", "why modern hybrids are the most efficient engines ever built",
      "formula 1 power unit hybrid"),
+    # ── SENSORES, ELECTRÓNICA, MATERIALES Y PROVEEDORES ────────────────
+    # Serie pedida por el dueño. Las cifras que se pueden decir están en
+    # hechos.py (Electronics / Materials / Suppliers); lo demás se explica
+    # como mecanismo, sin números.
+    ("Electronics", "the standard ECU: why every team uses the same brain",
+     "formula 1 electronics steering wheel"),
+    ("Electronics", "around 300 sensors: what an F1 car measures every lap",
+     "formula 1 car sensors engineers data"),
+    ("Electronics", "telemetry: why engineers can read the car but not "
+     "touch it", "formula 1 pit wall screens telemetry"),
+    ("Electronics", "aero rakes and flow-vis paint: how teams see the air",
+     "formula 1 aero rake flow vis"),
+    ("Electronics", "brake-by-wire: when a computer decides how you stop",
+     "formula 1 brakes glowing"),
+    ("Electronics", "the black box in every F1 car and what it records",
+     "formula 1 crash safety"),
+    ("Electronics", "biometric gloves: the sensor on the driver's hand",
+     "formula 1 driver gloves"),
+    ("Materials", "carbon fibre: why the whole car is made of it",
+     "carbon fiber composite formula 1"),
+    ("Materials", "the titanium halo that holds 12 tonnes",
+     "formula 1 halo"),
+    ("Materials", "carbon-carbon brakes: useless when cold, brilliant hot",
+     "formula 1 carbon brake disc"),
+    ("Materials", "the wooden plank under the car that disqualifies drivers",
+     "formula 1 car underside plank"),
+    ("Materials", "why magnesium wheels and why they grew to 18 inches",
+     "formula 1 wheel rim 18 inch"),
+    ("Suppliers", "the parts every team must buy from the same supplier",
+     "formula 1 garage parts"),
+    ("Suppliers", "five engine makers, eleven teams: who supplies whom",
+     "formula 1 power unit 2026"),
+    ("Suppliers", "why a team's supply chain is kept secret",
+     "formula 1 factory composites"),
 ]
 _SHORTS_TEMAS_USADOS = "shorts_temas_usados.json"
 
@@ -15020,12 +15054,21 @@ async def _guion_tema(client, tema):
     Devuelve (titulo_final, lineas) o (None, [])."""
     titulo_final = None
     lineas = []
+    # Si el episodio trae categoría (la serie de sensores, materiales y
+    # proveedores la trae), se le dan los datos VERIFICADOS de esa
+    # categoría. Es justo el tema en el que más cifras falsas circulan, y
+    # sin esto el guionista las rellenaría de memoria.
+    datos = ""
+    if tema.get("categoria"):
+        with contextlib.suppress(Exception):
+            datos = _hechos.bloque(tema["categoria"], n=8,
+                                   semilla=tema.get("id"))
     for nombre, indicacion, palabras in _SECCIONES_TEMA:
         contexto = "\n".join(l for l in lineas[-6:]) or "(episode start)"
         pedido = (
             f"EPISODE TOPIC (may be in Spanish — translate/adapt "
             f"faithfully into {IDIOMA_NOMBRE}): {tema['titulo']}\n"
-            f"OWNER'S INTRO (the angle to honor): {tema['intro']}\n\n"
+            f"OWNER'S INTRO (the angle to honor): {tema['intro']}{datos}\n\n"
             f"SECTION TO WRITE NOW — {indicacion}\n"
             f"Target length: about {palabras} words.\n"
             f"Last lines already narrated (continue naturally, never "

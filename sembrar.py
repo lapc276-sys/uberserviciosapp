@@ -11,6 +11,7 @@ que lo que se siembre aquí es lo próximo que se publique.
 Uso, en el Shell de Replit:
 
     python3 sembrar.py                      # los temas de ACTUALIDAD de abajo
+    python3 sembrar.py --serie electronica  # sensores/materiales/proveedores
     python3 sembrar.py --ver                # ver qué hay en cola, sin tocar
     python3 sembrar.py --limpiar            # vaciar la cola
     python3 sembrar.py --tema "Aero" "Why the 2026 floor is different" \
@@ -100,6 +101,113 @@ ACTUALIDAD = [
 ]
 
 
+# ── Serie: SENSORES, ELECTRÓNICA, MATERIALES Y PROVEEDORES ──────────────
+# `python3 sembrar.py --serie electronica` pone los SHORTS de abajo al
+# principio de la cola prioritaria y los EPISODIOS LARGOS al principio de
+# temas_cola.json. Los datos que el guionista puede decir están en
+# hechos.py (Electronics / Materials / Suppliers) y le llegan solos por la
+# categoría: cantidad de cable, precio del volante o gigas por carrera NO
+# están, porque no hay fuente firme, y por eso no se dicen.
+SERIE_ELECTRONICA_SHORTS = [
+    ("Electronics", "Every F1 team uses the SAME computer brain — the "
+     "standard ECU, and how it killed traction control",
+     "formula 1 electronics steering wheel"),
+    ("Electronics", "Around 300 sensors on one car: what they measure and "
+     "why engineers can read them but not touch the car",
+     "formula 1 pit wall telemetry screens"),
+    ("Electronics", "Those metal grids on Friday practice cars are aero "
+     "rakes — pressure sensors that let teams see the air",
+     "formula 1 aero rake practice"),
+    ("Electronics", "Brake-by-wire: when the driver presses the pedal, a "
+     "computer decides how the car actually stops",
+     "formula 1 brakes glowing disc"),
+    ("Electronics", "The black box every F1 car carries, and the biometric "
+     "gloves that send the driver's pulse to the doctors",
+     "formula 1 driver gloves helmet"),
+    ("Materials", "The halo is titanium and must hold about 12 tonnes — "
+     "the test it has to pass", "formula 1 halo cockpit"),
+    ("Materials", "A plank of wood-based composite under the car got two "
+     "drivers disqualified in Austin 2023 — here is why",
+     "formula 1 car underside floor plank"),
+    ("Materials", "Carbon-carbon brakes are useless cold and brilliant at "
+     "1000 °C", "formula 1 carbon brake disc glowing"),
+    ("Materials", "Why the first carbon-fibre chassis in 1981 changed F1 "
+     "safety forever", "McLaren MP4/1 carbon fibre"),
+    ("Suppliers", "The only parts every team MUST buy from the same "
+     "company: tyres, ECU and wheels", "formula 1 pirelli tyres wheels"),
+    ("Suppliers", "Five engine makers, eleven teams in 2026 — who buys "
+     "their engine from whom, and why that matters",
+     "formula 1 2026 power unit"),
+]
+
+SERIE_ELECTRONICA_LARGOS = [
+    ("Electronics",
+     "The Nervous System of an F1 Car: Sensors, ECU and Telemetry",
+     "An F1 car talks to its engineers every second of every lap. We "
+     "follow the signal from the sensors on the car, through the standard "
+     "ECU every team shares, to the screens on the pit wall — and explain "
+     "why engineers can read everything but touch nothing.",
+     "formula 1 telemetry pit wall engineers screens"),
+    ("Electronics",
+     "How F1 Teams See the Air: Aero Rakes, Flow-Vis and Pressure Sensors",
+     "Air is invisible, and the whole car is designed around it. Here is "
+     "how teams measure what the airflow is doing on track — the sensor "
+     "grids, the fluorescent paint, and what they are looking for on a "
+     "Friday.", "formula 1 aero rake flow vis paint"),
+    ("Materials",
+     "What an F1 Car Is Made Of: Carbon Fibre, Titanium and Magnesium",
+     "Carbon fibre chassis, a titanium halo, forged magnesium wheels and "
+     "brakes that only work red hot. A tour of the materials that make a "
+     "Formula 1 car — and the ones the rules have banned.",
+     "carbon fiber composite formula 1 chassis"),
+    ("Materials",
+     "The Safety Materials That Keep F1 Drivers Alive",
+     "The halo, the carbon survival cell and the black box that records "
+     "every crash. How materials and sensors turned the most dangerous "
+     "sport into one where drivers walk away from huge accidents.",
+     "formula 1 halo crash safety"),
+    ("Suppliers",
+     "Who Really Builds an F1 Car? Standard Parts and Secret Suppliers",
+     "Every team uses the same tyres, the same ECU and the same wheels — "
+     "and almost everything else is a closely guarded secret. Inside the "
+     "Formula 1 supply chain: what is shared, what is bought and what is "
+     "never revealed.", "formula 1 factory production composites"),
+    ("Electronics",
+     "Brake-by-Wire Explained: How an F1 Car Decides How to Stop",
+     "The driver presses the pedal, but a computer splits the braking "
+     "between carbon discs and an electric motor that harvests energy. "
+     "How brake-by-wire works, and why it made braking harder to master.",
+     "formula 1 braking brake disc glowing"),
+]
+
+TEMAS_COLA = "temas_cola.json"
+
+
+def sembrar_largos(serie):
+    """Pone los episodios largos de la serie al PRINCIPIO de la cola de
+    temas, para que sean los siguientes en producirse."""
+    cola = {"temas": []}
+    with contextlib.suppress(Exception):
+        with open(TEMAS_COLA) as f:
+            cola = json.load(f)
+    temas = cola.get("temas", [])
+    hechos_ya = {t.get("titulo", "").lower() for t in temas}
+    nuevos = []
+    for i, (cat, titulo, intro, consulta) in enumerate(serie):
+        if titulo.lower() in hechos_ya:
+            continue
+        nuevos.append({"id": f"elec{i + 1:02d}", "titulo": titulo,
+                       "intro": intro, "consulta": consulta,
+                       "categoria": cat, "estado": "pendiente"})
+    cola["temas"] = nuevos + temas
+    with open(TEMAS_COLA, "w") as f:
+        json.dump(cola, f, ensure_ascii=False, indent=1)
+    print(f"🎓 {len(nuevos)} episodio(s) largo(s) al principio de "
+          f"{TEMAS_COLA}:")
+    for t in nuevos:
+        print(f"   · [{t['categoria']}] {t['titulo']}")
+
+
 def cargar():
     with contextlib.suppress(Exception):
         with open(ARCHIVO) as f:
@@ -134,9 +242,18 @@ def main():
                    action="append", help="añadir un tema suelto")
     p.add_argument("--al-final", action="store_true",
                    help="añadir al final en vez de al principio")
+    p.add_argument("--serie", choices=["electronica"],
+                   help="sembrar una serie completa (shorts + largos)")
     args = p.parse_args()
 
     d = cargar()
+    if args.serie == "electronica":
+        # Sin duplicar si se ejecuta dos veces
+        ya = {tuple(t[:2]) for t in d.get("temas", [])}
+        args.tema = [list(t) for t in SERIE_ELECTRONICA_SHORTS
+                     if tuple(t[:2]) not in ya]
+        sembrar_largos(SERIE_ELECTRONICA_LARGOS)
+        print()
     if args.ver:
         ver(d)
         return 0
@@ -146,7 +263,8 @@ def main():
         print("Cola vaciada.")
         return 0
 
-    nuevos = [list(t) for t in (args.tema or ACTUALIDAD)]
+    nuevos = [list(t) for t in (args.tema if args.tema is not None
+                                else ACTUALIDAD)]
     # Al PRINCIPIO por defecto: lo de actualidad pierde valor cada hora que
     # pasa, así que se cuela delante de lo que ya hubiera en cola.
     d["temas"] = (d.get("temas", []) + nuevos if args.al_final
