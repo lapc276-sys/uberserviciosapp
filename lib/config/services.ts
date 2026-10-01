@@ -52,11 +52,11 @@ export const services: Service[] = [
     includes: ['Baseboards & trim', 'Inside oven & fridge', 'Grout & tile scrub', 'Vents & fans', 'Interior windows', 'Cabinet fronts'],
     popular: true,
     faqs: [
-      { q: 'How is deep cleaning different from standard cleaning?', a: 'Deep cleaning covers everything a standard clean does, plus detailed work like inside appliances, baseboards, grout and vents. We recommend it for your first Homigo visit.' },
+      { q: 'How is deep cleaning different from standard cleaning?', a: 'Deep cleaning covers everything a standard clean does, plus detailed work like inside appliances, baseboards, grout and vents. We recommend it for your first Klaudy visit.' },
       { q: 'How long does a deep clean take?', a: 'Typically 3–5 hours depending on home size and condition. Your instant quote estimates this for you.' },
     ],
     seo: {
-      title: 'Deep Cleaning Service — Book Online in 60 Seconds | Homigo',
+      title: 'Deep Cleaning Service — Book Online in 60 Seconds | Klaudy',
       description: 'Professional deep cleaning by insured, background-checked pros. Instant online quote, flexible scheduling, satisfaction guaranteed.',
       keywords: ['deep cleaning service', 'deep house cleaning', 'professional deep clean near me'],
     },
@@ -71,7 +71,7 @@ export const services: Service[] = [
     icon: 'Home',
     summary: 'Recurring or one-time cleaning that keeps home effortless.',
     description:
-      'Reliable standard cleaning for kitchens, bathrooms, bedrooms and living spaces. Set it weekly, bi-weekly or monthly and never think about it again — Homigo remembers, reminds and shows up.',
+      'Reliable standard cleaning for kitchens, bathrooms, bedrooms and living spaces. Set it weekly, bi-weekly or monthly and never think about it again — Klaudy remembers, reminds and shows up.',
     pricing: { base: 99, perBedroom: 25, perBathroom: 22, perSqftThousand: 18, estimatedHours: '2–3 hrs' },
     includes: ['Dusting all surfaces', 'Kitchen & counters', 'Bathrooms sanitized', 'Floors vacuumed & mopped', 'Trash removed', 'Beds made'],
     popular: true,
@@ -80,7 +80,7 @@ export const services: Service[] = [
       { q: 'Can I get the same cleaner each time?', a: 'Yes — recurring plans are matched to the same pro whenever possible.' },
     ],
     seo: {
-      title: 'House Cleaning Service — Recurring & One-Time | Homigo',
+      title: 'House Cleaning Service — Recurring & One-Time | Klaudy',
       description: 'Trusted house cleaning with instant pricing and automated scheduling. Weekly, bi-weekly, monthly or one-time. Book online now.',
       keywords: ['house cleaning service', 'maid service near me', 'recurring house cleaning'],
     },
@@ -102,7 +102,7 @@ export const services: Service[] = [
       { q: 'Do you clean studio apartments?', a: 'Absolutely. Our instant quote adjusts to any size, including studios.' },
     ],
     seo: {
-      title: 'Apartment Cleaning Service — Book Online | Homigo',
+      title: 'Apartment Cleaning Service — Book Online | Klaudy',
       description: 'Affordable apartment & condo cleaning with instant online pricing. Insured pros, flexible times, satisfaction guaranteed.',
       keywords: ['apartment cleaning', 'condo cleaning service', 'apartment cleaners near me'],
     },
@@ -124,7 +124,7 @@ export const services: Service[] = [
       { q: 'Should I book before or after moving furniture in?', a: 'Before — an empty home lets us clean every surface with nothing in the way.' },
     ],
     seo: {
-      title: 'Move In Cleaning Service — Book Online | Homigo',
+      title: 'Move In Cleaning Service — Book Online | Klaudy',
       description: 'Move-in cleaning that makes your new home spotless before you unpack. Instant quote, insured pros, book online in minutes.',
       keywords: ['move in cleaning', 'move in cleaning service near me', 'new home cleaning'],
     },
@@ -147,7 +147,7 @@ export const services: Service[] = [
       { q: 'Do you follow a move-out checklist?', a: 'Yes. We use a landlord-standard checklist and send photo proof, which many property managers accept.' },
     ],
     seo: {
-      title: 'Move Out Cleaning Service — Deposit-Back Clean | Homigo',
+      title: 'Move Out Cleaning Service — Deposit-Back Clean | Klaudy',
       description: 'Move-out cleaning built to landlord standards so you get your deposit back. Instant pricing, photo proof, book online.',
       keywords: ['move out cleaning', 'end of lease cleaning', 'move out cleaning service near me'],
     },
@@ -169,7 +169,7 @@ export const services: Service[] = [
       { q: 'Can you sync with my booking calendar?', a: 'Yes — connect your calendar and turnovers auto-schedule after each checkout.' },
     ],
     seo: {
-      title: 'Airbnb & Short-Term Rental Cleaning | Homigo',
+      title: 'Airbnb & Short-Term Rental Cleaning | Klaudy',
       description: 'Automated Airbnb turnover cleaning synced to your calendar. Restocking, staging, photo proof. Keep your 5-star rating.',
       keywords: ['airbnb cleaning service', 'short term rental cleaning', 'vacation rental turnover cleaning'],
     },
@@ -191,7 +191,7 @@ export const services: Service[] = [
       { q: 'Can you clean after business hours?', a: 'Yes — evening and early-morning slots keep your team uninterrupted.' },
     ],
     seo: {
-      title: 'Office & Commercial Cleaning Service | Homigo',
+      title: 'Office & Commercial Cleaning Service | Klaudy',
       description: 'Reliable recurring office cleaning scheduled around your hours. Vetted crews, transparent pricing, easy invoicing.',
       keywords: ['office cleaning service', 'commercial cleaning near me', 'janitorial service'],
     },
@@ -213,7 +213,7 @@ export const services: Service[] = [
       { q: 'Do you handle heavy construction dust?', a: 'Yes — we use HEPA vacuums and a multi-pass process to capture fine dust that settles for days.' },
     ],
     seo: {
-      title: 'Post-Construction Cleaning Service | Homigo',
+      title: 'Post-Construction Cleaning Service | Klaudy',
       description: 'Post-construction & post-renovation cleaning that turns a job site into a move-in-ready space. Instant quote, book online.',
       keywords: ['post construction cleaning', 'post renovation cleaning', 'construction cleanup service'],
     },
@@ -235,7 +235,7 @@ export const services: Service[] = [
       { q: 'Do you service multiple locations?', a: 'Yes — multi-site programs roll up to one dashboard and one invoice.' },
     ],
     seo: {
-      title: 'Commercial Cleaning Service — Retail, Medical & More | Homigo',
+      title: 'Commercial Cleaning Service — Retail, Medical & More | Klaudy',
       description: 'Scalable commercial cleaning programs with consistent standards and digital reporting. Request a tailored quote.',
       keywords: ['commercial cleaning service', 'retail cleaning', 'medical office cleaning'],
     },

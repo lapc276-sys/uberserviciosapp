@@ -10,7 +10,7 @@ import { getAccountStatus, isStripeConfigured } from '@/lib/stripe';
 import { formatCurrency } from '@/lib/utils';
 import { PayoutOnboarding } from '@/components/pros/PayoutOnboarding';
 
-export const metadata: Metadata = buildMetadata({ title: 'Payouts | Homigo Pros', path: '/pros/payouts', noindex: true });
+export const metadata: Metadata = buildMetadata({ title: 'Payouts | Klaudy Pros', path: '/pros/payouts', noindex: true });
 export const dynamic = 'force-dynamic';
 
 export default async function PayoutsPage() {
@@ -69,7 +69,7 @@ export default async function PayoutsPage() {
                   {accountId ? 'Finish your payout setup' : 'Set up payouts'}
                 </h2>
                 <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-                  Stripe collects your bank and tax details securely — Homigo never sees or stores them. It takes about
+                  Stripe collects your bank and tax details securely — Klaudy never sees or stores them. It takes about
                   three minutes, and you need it before we can send your first payment.
                 </p>
                 {!isStripeConfigured && (
@@ -86,7 +86,7 @@ export default async function PayoutsPage() {
           </div>
 
           <p className="mt-6 text-xs text-slate-400">
-            You’re an independent contractor. Homigo doesn’t withhold taxes — Stripe issues your 1099 when you meet the
+            You’re an independent contractor. Klaudy doesn’t withhold taxes — Stripe issues your 1099 when you meet the
             reporting threshold.
           </p>
         </div>

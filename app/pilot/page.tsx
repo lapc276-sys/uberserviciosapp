@@ -10,7 +10,7 @@ import { PilotCapture } from '@/components/pilot/PilotCapture';
 import { site } from '@/lib/config/site';
 
 export const metadata: Metadata = buildMetadata({
-  title: 'Field Capture | Homigo Pilot',
+  title: 'Field Capture | Klaudy Pilot',
   path: '/pilot',
   noindex: true,
 });

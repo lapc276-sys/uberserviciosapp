@@ -74,7 +74,7 @@ export const cities: City[] = [
     neighborhoods: ['Upper East Side', 'Upper West Side', 'Chelsea', 'SoHo', 'Tribeca', 'Harlem', 'Financial District', 'Murray Hill'],
     zipCodes: ['10001', '10011', '10016', '10021', '10023', '10128'],
     geo: { lat: 40.7831, lng: -73.9712 },
-    blurb: 'From Tribeca lofts to Upper East Side classic sixes, Homigo brings vetted, insured cleaners to every Manhattan doorman building and walk-up.',
+    blurb: 'From Tribeca lofts to Upper East Side classic sixes, Klaudy brings vetted, insured cleaners to every Manhattan doorman building and walk-up.',
   },
   {
     slug: 'brooklyn-ny',
@@ -129,7 +129,7 @@ export const cities: City[] = [
     neighborhoods: ['Brickell', 'Wynwood', 'Coral Gables', 'Little Havana', 'Edgewater', 'Coconut Grove'],
     zipCodes: ['33101', '33125', '33130', '33137', '33145'],
     geo: { lat: 25.7617, lng: -80.1918 },
-    blurb: 'From Brickell high-rises to Coral Gables homes, Homigo brings vetted, insured cleaners to every corner of Miami.',
+    blurb: 'From Brickell high-rises to Coral Gables homes, Klaudy brings vetted, insured cleaners to every corner of Miami.',
   },
   {
     slug: 'miami-beach-fl',

@@ -8,8 +8,8 @@ import { Icon } from '@/components/ui/Icon';
 import { formatCurrency } from '@/lib/utils';
 
 export const metadata: Metadata = buildMetadata({
-  title: 'Cleaning Services — Deep, Move-Out, Airbnb & More | Homigo',
-  description: 'Explore Homigo cleaning services with transparent, upfront pricing. Book insured, background-checked pros online in 60 seconds.',
+  title: 'Cleaning Services — Deep, Move-Out, Airbnb & More | Klaudy',
+  description: 'Explore Klaudy cleaning services with transparent, upfront pricing. Book insured, background-checked pros online in 60 seconds.',
   path: '/services',
   keywords: ['cleaning services', 'house cleaning', 'deep cleaning', 'move out cleaning', 'airbnb cleaning'],
 });
@@ -45,7 +45,7 @@ export default function ServicesIndex() {
 
           <div className="mt-16 rounded-3xl border bg-slate-50/60 p-8 dark:bg-white/[0.02]">
             <h2 className="text-xl font-semibold">Beyond cleaning — coming soon</h2>
-            <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">Homigo is built to power every home service. Same account, same instant booking.</p>
+            <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">Klaudy is built to power every home service. Same account, same instant booking.</p>
             <div className="mt-6 flex flex-wrap gap-3">
               {verticals.filter((v) => v.status === 'soon').map((v) => (
                 <span key={v.slug} className="inline-flex items-center gap-2 rounded-full border bg-white px-4 py-2 text-sm text-slate-500 dark:bg-white/[0.03] dark:text-slate-400">

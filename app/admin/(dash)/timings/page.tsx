@@ -5,7 +5,7 @@ import { ROOM_BASE_MINUTES } from '@/lib/vision/model';
 import { ROOM_LABELS, type RoomType } from '@/lib/vision/types';
 
 export const metadata: Metadata = buildMetadata({
-  title: 'Timings | Homigo Admin',
+  title: 'Timings | Klaudy Admin',
   path: '/admin/timings',
   noindex: true,
 });

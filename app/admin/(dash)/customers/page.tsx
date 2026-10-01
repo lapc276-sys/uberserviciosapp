@@ -3,7 +3,7 @@ import { buildMetadata } from '@/lib/seo';
 import { listCustomers } from '@/lib/data';
 import { formatCurrency } from '@/lib/utils';
 
-export const metadata: Metadata = buildMetadata({ title: 'Customers | Homigo Admin', path: '/admin/customers', noindex: true });
+export const metadata: Metadata = buildMetadata({ title: 'Customers | Klaudy Admin', path: '/admin/customers', noindex: true });
 export const dynamic = 'force-dynamic';
 
 export default async function CustomersPage() {

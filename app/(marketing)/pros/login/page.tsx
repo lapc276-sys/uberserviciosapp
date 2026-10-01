@@ -4,7 +4,7 @@ import { buildMetadata } from '@/lib/seo';
 import { ProLoginForm } from '@/components/pros/ProLoginForm';
 
 export const metadata: Metadata = buildMetadata({
-  title: 'Pro Sign In | Homigo',
+  title: 'Pro Sign In | Klaudy',
   description: 'Sign in to see your job offers and schedule.',
   path: '/pros/login',
   noindex: true,
@@ -47,7 +47,7 @@ export default async function ProLoginPage({
             <ProLoginForm />
           </div>
           <p className="mt-6 text-center text-sm text-slate-500 dark:text-slate-400">
-            Not a Homigo Pro yet?{' '}
+            Not a Klaudy Pro yet?{' '}
             <Link href="/pros/apply" className="text-brand-600 underline">Apply to join</Link>
           </p>
           <p className="mt-2 text-center text-sm text-slate-500 dark:text-slate-400">

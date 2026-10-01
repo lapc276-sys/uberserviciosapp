@@ -3,8 +3,8 @@ import { buildMetadata } from '@/lib/seo';
 import { Button } from '@/components/ui/Button';
 
 export const metadata: Metadata = buildMetadata({
-  title: 'Careers — Join Homigo',
-  description: 'Join Homigo. We’re hiring cleaning pros and building a team that’s reinventing home services.',
+  title: 'Careers — Join Klaudy',
+  description: 'Join Klaudy. We’re hiring cleaning pros and building a team that’s reinventing home services.',
   path: '/careers',
 });
 

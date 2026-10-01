@@ -3,8 +3,8 @@ import Link from 'next/link';
 import { buildMetadata } from '@/lib/seo';
 
 export const metadata: Metadata = buildMetadata({
-  title: 'Blog — Cleaning Tips & Home Care | Homigo',
-  description: 'Practical cleaning tips, checklists and home-care guides from the Homigo team.',
+  title: 'Blog — Cleaning Tips & Home Care | Klaudy',
+  description: 'Practical cleaning tips, checklists and home-care guides from the Klaudy team.',
   path: '/blog',
 });
 

@@ -4,8 +4,8 @@ import { LegalPage } from '@/components/layout/LegalPage';
 import { site } from '@/lib/config/site';
 
 export const metadata: Metadata = buildMetadata({
-  title: 'Terms of Service | Homigo',
-  description: 'The terms that govern your use of Homigo services.',
+  title: 'Terms of Service | Klaudy',
+  description: 'The terms that govern your use of Klaudy services.',
   path: '/terms',
   noindex: true,
 });

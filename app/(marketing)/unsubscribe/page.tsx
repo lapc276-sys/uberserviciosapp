@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/Button';
 import { site } from '@/lib/config/site';
 
 export const metadata: Metadata = buildMetadata({
-  title: 'Unsubscribe | Homigo',
+  title: 'Unsubscribe | Klaudy',
   description: 'Manage your email preferences.',
   path: '/unsubscribe',
   noindex: true,

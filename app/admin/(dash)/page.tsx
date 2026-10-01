@@ -4,7 +4,7 @@ import { buildMetadata } from '@/lib/seo';
 import { getDashboardStats, listBookings, listCustomers } from '@/lib/data';
 import { formatCurrency } from '@/lib/utils';
 
-export const metadata: Metadata = buildMetadata({ title: 'Admin Dashboard | Homigo', path: '/admin', noindex: true });
+export const metadata: Metadata = buildMetadata({ title: 'Admin Dashboard | Klaudy', path: '/admin', noindex: true });
 export const dynamic = 'force-dynamic';
 
 const STATUS_STYLES: Record<string, string> = {

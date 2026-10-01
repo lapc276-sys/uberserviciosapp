@@ -4,7 +4,7 @@ import { listPros, listBookings } from '@/lib/data';
 import { getCity } from '@/lib/config/cities';
 import { ProsManager } from '@/components/admin/ProsManager';
 
-export const metadata: Metadata = buildMetadata({ title: 'Pros | Homigo Admin', path: '/admin/pros', noindex: true });
+export const metadata: Metadata = buildMetadata({ title: 'Pros | Klaudy Admin', path: '/admin/pros', noindex: true });
 export const dynamic = 'force-dynamic';
 
 export default async function ProsPage() {

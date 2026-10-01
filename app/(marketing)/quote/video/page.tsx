@@ -6,7 +6,7 @@ import { JsonLd } from '@/components/seo/JsonLd';
 import { faqSchema } from '@/lib/schema';
 
 export const metadata: Metadata = buildMetadata({
-  title: 'Instant AI Quote from a Video — No Home Visit | Homigo',
+  title: 'Instant AI Quote from a Video — No Home Visit | Klaudy',
   description:
     'Record a 60-second walkthrough and our AI estimates rooms, condition, cleaning time and price instantly. No in-person estimate, no waiting for a callback.',
   path: '/quote/video',

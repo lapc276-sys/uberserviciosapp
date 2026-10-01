@@ -3,7 +3,7 @@ import { site } from './config/site';
 /**
  * Transactional email via Resend. Env-gated: no-ops (dry-run) without
  * RESEND_API_KEY so the app runs everywhere. Set RESEND_API_KEY and
- * RESEND_FROM (e.g. "Homigo <hello@homigo.com>") to activate.
+ * RESEND_FROM (e.g. "Klaudy <hello@homigo.com>") to activate.
  */
 export const isEmailConfigured = Boolean(process.env.RESEND_API_KEY);
 

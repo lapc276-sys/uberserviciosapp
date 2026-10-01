@@ -21,7 +21,7 @@ export async function generateMetadata({ params }: { params: Promise<{ city: str
   const city = getCity(slug);
   if (!city) return buildMetadata({ title: 'Area not found' });
   return buildMetadata({
-    title: `House Cleaning in ${city.name}, ${city.region} — Book Online | Homigo`,
+    title: `House Cleaning in ${city.name}, ${city.region} — Book Online | Klaudy`,
     description: `Top-rated cleaning services in ${city.name}, ${city.region}. Insured, background-checked pros, instant quotes and automated scheduling. Serving ${city.neighborhoods.slice(0, 3).join(', ')} and more.`,
     path: `/areas/${city.slug}`,
     keywords: [

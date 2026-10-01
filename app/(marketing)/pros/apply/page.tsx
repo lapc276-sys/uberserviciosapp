@@ -7,9 +7,9 @@ import { faqSchema } from '@/lib/schema';
 import { site } from '@/lib/config/site';
 
 export const metadata: Metadata = buildMetadata({
-  title: 'Become a Homigo Pro — Cleaning Jobs Near You, On Your Schedule',
+  title: 'Become a Klaudy Pro — Cleaning Jobs Near You, On Your Schedule',
   description:
-    'Join Homigo as an independent cleaning professional. Pick your own areas and schedule, accept the jobs you want, and get paid fast. Free to apply.',
+    'Join Klaudy as an independent cleaning professional. Pick your own areas and schedule, accept the jobs you want, and get paid fast. Free to apply.',
   path: '/pros/apply',
   keywords: ['cleaning jobs nyc', 'house cleaner jobs near me', 'independent cleaner work', 'flexible cleaning jobs'],
 });
@@ -22,8 +22,8 @@ const benefits = [
 ];
 
 const faqs = [
-  { q: 'How much does it cost to join?', a: 'Nothing. Applying and using Homigo is free — we only earn when you complete a job.' },
-  { q: 'Am I an employee?', a: 'No. Homigo Pros are independent contractors. You choose your own service areas, set your own availability, and are free to accept or decline any job.' },
+  { q: 'How much does it cost to join?', a: 'Nothing. Applying and using Klaudy is free — we only earn when you complete a job.' },
+  { q: 'Am I an employee?', a: 'No. Klaudy Pros are independent contractors. You choose your own service areas, set your own availability, and are free to accept or decline any job.' },
   { q: 'Do I need my own supplies?', a: 'Most jobs expect you to bring standard cleaning supplies. Any exceptions are noted in the job details before you accept.' },
   { q: 'How do I get jobs?', a: 'Once approved, jobs in your chosen areas arrive by text. The first pro to accept gets the job, so quick responses win more work.' },
   { q: 'How fast do I get paid?', a: 'Payouts are issued after the job is completed and confirmed, on a weekly cycle.' },
@@ -42,7 +42,7 @@ export default function ProApplyPage() {
               Steady cleaning work, on your schedule
             </h1>
             <p className="mt-5 text-lg text-slate-600 dark:text-slate-300">
-              Homigo brings the customers. You pick the jobs that fit your day. Free to join, no minimum hours —
+              Klaudy brings the customers. You pick the jobs that fit your day. Free to join, no minimum hours —
               now onboarding pros across New York and Florida.
             </p>
           </div>

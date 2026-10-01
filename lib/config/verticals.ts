@@ -1,5 +1,5 @@
 /**
- * Verticals = the business lines Homigo can operate.
+ * Verticals = the business lines Klaudy can operate.
  * Cleaning is live today. The rest are pre-modeled so launching a new
  * vertical is a data change (flip `status` to 'live') — never a rewrite.
  *

@@ -4,7 +4,7 @@ import { buildMetadata } from '@/lib/seo';
 import { BookingForm } from '@/components/booking/BookingForm';
 
 export const metadata: Metadata = buildMetadata({
-  title: 'Book Online — Instant Quote in 60 Seconds | Homigo',
+  title: 'Book Online — Instant Quote in 60 Seconds | Klaudy',
   description: 'Book your cleaning in under a minute. Choose a service, see an instant price, pick a time — insured pros, satisfaction guaranteed.',
   path: '/book',
 });

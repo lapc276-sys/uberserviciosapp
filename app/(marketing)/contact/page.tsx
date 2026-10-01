@@ -5,8 +5,8 @@ import { Button } from '@/components/ui/Button';
 import { site } from '@/lib/config/site';
 
 export const metadata: Metadata = buildMetadata({
-  title: 'Contact Homigo — We’re Here to Help',
-  description: 'Reach Homigo by phone, email or chat. Or skip the wait and book online in 60 seconds.',
+  title: 'Contact Klaudy — We’re Here to Help',
+  description: 'Reach Klaudy by phone, email or chat. Or skip the wait and book online in 60 seconds.',
   path: '/contact',
 });
 

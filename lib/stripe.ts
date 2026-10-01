@@ -47,7 +47,7 @@ export async function createInvoiceForBooking(p: {
     customer: customer.id,
     amount: String(cents),
     currency: 'usd',
-    description: `${p.serviceName} — Homigo booking ${p.ref}`,
+    description: `${p.serviceName} — Klaudy booking ${p.ref}`,
   });
   const invoice = await stripe('/invoices', {
     customer: customer.id,

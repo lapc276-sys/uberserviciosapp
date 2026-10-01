@@ -11,7 +11,7 @@ import { formatDuration } from '@/lib/vision/estimate';
 import { formatCurrency } from '@/lib/utils';
 import { ProSignOut } from '@/components/pros/ProSignOut';
 
-export const metadata: Metadata = buildMetadata({ title: 'My jobs | Homigo Pros', path: '/pros', noindex: true });
+export const metadata: Metadata = buildMetadata({ title: 'My jobs | Klaudy Pros', path: '/pros', noindex: true });
 export const dynamic = 'force-dynamic';
 
 const STATUS_STYLES: Record<string, string> = {

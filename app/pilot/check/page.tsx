@@ -10,7 +10,7 @@ import { DeviceCheck } from '@/components/pilot/DeviceCheck';
 import { site } from '@/lib/config/site';
 
 export const metadata: Metadata = buildMetadata({
-  title: 'Device Check | Homigo Pilot',
+  title: 'Device Check | Klaudy Pilot',
   path: '/pilot/check',
   noindex: true,
 });

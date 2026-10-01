@@ -11,7 +11,7 @@ import { MINUTES_PER_PRO } from '@/lib/vision/model';
 import { formatCurrency } from '@/lib/utils';
 import { JobOfferActions } from '@/components/pros/JobOfferActions';
 
-export const metadata: Metadata = buildMetadata({ title: 'Job offer | Homigo Pros', path: '/pros/jobs', noindex: true });
+export const metadata: Metadata = buildMetadata({ title: 'Job offer | Klaudy Pros', path: '/pros/jobs', noindex: true });
 export const dynamic = 'force-dynamic';
 
 /**

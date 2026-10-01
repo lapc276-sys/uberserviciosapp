@@ -4,7 +4,7 @@ import { listTenants, getUsage, countTenantLeads } from '@/lib/tenants/store';
 import { TenantsManager } from '@/components/admin/TenantsManager';
 
 export const metadata: Metadata = buildMetadata({
-  title: 'Licensing | Homigo Admin',
+  title: 'Licensing | Klaudy Admin',
   path: '/admin/tenants',
   noindex: true,
 });

@@ -5,7 +5,7 @@ import { getTrainingReport } from '@/lib/vision/training';
 import { formatDuration } from '@/lib/vision/estimate';
 import { formatCurrency } from '@/lib/utils';
 
-export const metadata: Metadata = buildMetadata({ title: 'AI Vision | Homigo Admin', path: '/admin/vision', noindex: true });
+export const metadata: Metadata = buildMetadata({ title: 'AI Vision | Klaudy Admin', path: '/admin/vision', noindex: true });
 export const dynamic = 'force-dynamic';
 
 /**

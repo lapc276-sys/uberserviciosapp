@@ -5,7 +5,7 @@ import { segmentCustomers } from '@/lib/marketing/campaigns';
 import { promos } from '@/lib/marketing/promos';
 import { formatCurrency } from '@/lib/utils';
 
-export const metadata: Metadata = buildMetadata({ title: 'Marketing | Homigo Admin', path: '/admin/marketing', noindex: true });
+export const metadata: Metadata = buildMetadata({ title: 'Marketing | Klaudy Admin', path: '/admin/marketing', noindex: true });
 export const dynamic = 'force-dynamic';
 
 const SEGMENT_LABELS: Record<string, string> = {

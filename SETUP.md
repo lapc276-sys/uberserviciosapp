@@ -1,4 +1,4 @@
-# 🚀 Guía de puesta en marcha — Homigo
+# 🚀 Guía de puesta en marcha — Klaudy
 
 Esta guía te lleva de cero a un negocio **en vivo y cobrando**, paso a paso.
 Cada pieza se activa sola al pegar su variable de entorno — no hay que tocar código.
@@ -147,7 +147,7 @@ Después, cada pro entra a `tudominio.com/pros/payouts` y completa su registro e
 3. **API Keys → Create API Key** → copia la key (`re_…`).
 4. En Vercel:
    - `RESEND_API_KEY` = `re_…`
-   - `RESEND_FROM` = `Homigo <hello@tudominio.com>`
+   - `RESEND_FROM` = `Klaudy <hello@tudominio.com>`
 5. Redeploy.
 
 ✅ **Resultado:** confirmaciones, recordatorios 24h/2h, solicitudes de reseña y win-back **por email, solos**.
@@ -346,7 +346,7 @@ habitación es una muestra etiquetada. Un trabajo pasa de valer 1 dato a valer
 
 1. Abre Telegram y busca **@BotFather** (el oficial, con marca azul).
 2. Escríbele **`/newbot`**.
-3. Te pide un nombre — pon el que quieras, por ejemplo `Tiempos Homigo`.
+3. Te pide un nombre — pon el que quieras, por ejemplo `Tiempos Klaudy`.
 4. Te pide un usuario — tiene que terminar en `bot`, por ejemplo
    `homigo_tiempos_bot`.
 5. Te devuelve un **token** con este aspecto:

@@ -5,8 +5,8 @@ import { cities } from '@/lib/config/cities';
 import { buildMetadata } from '@/lib/seo';
 
 export const metadata: Metadata = buildMetadata({
-  title: 'Areas We Serve — Home Cleaning Near You | Homigo',
-  description: 'Homigo provides trusted, insured cleaning across Florida and beyond. Find your city and book online in 60 seconds.',
+  title: 'Areas We Serve — Home Cleaning Near You | Klaudy',
+  description: 'Klaudy provides trusted, insured cleaning across Florida and beyond. Find your city and book online in 60 seconds.',
   path: '/areas',
   keywords: ['cleaning near me', 'house cleaning service areas', 'local cleaning company'],
 });

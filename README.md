@@ -1,4 +1,4 @@
-# Homigo — a quoting engine for cleaning companies
+# Klaudy — a quoting engine for cleaning companies
 
 A cleaning company points a phone at a room and gets back a defensible price:
 how long the job takes, how many people it needs, and what it costs to fulfil.
@@ -48,7 +48,7 @@ Deploy target: **Vercel** + Cloudflare. Data layer (Phase 2): **Supabase / Postg
 > models are what turn an estimate into an assigned job. It is not where the
 > product is being pointed today.
 
-Homigo operates as a **marketplace**, not an employer. Pros are independent
+Klaudy operates as a **marketplace**, not an employer. Pros are independent
 contractors who apply, choose their own service areas, and are **free to accept
 or decline every job**. That right to decline is modeled explicitly (`JobOffer`)
 rather than implied — it is a core product mechanic and a factor in worker
@@ -282,4 +282,4 @@ lib/
 
 ---
 
-© Homigo Home Services LLC. Built to sell.
+© Klaudy Home Services LLC. Built to sell.

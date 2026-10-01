@@ -4,14 +4,14 @@ import { JsonLd } from '@/components/seo/JsonLd';
 import { faqSchema } from '@/lib/schema';
 
 export const metadata: Metadata = buildMetadata({
-  title: 'FAQ — Cleaning Services Questions Answered | Homigo',
-  description: 'Answers about Homigo pricing, scheduling, cancellations, payment, insurance and more.',
+  title: 'FAQ — Cleaning Services Questions Answered | Klaudy',
+  description: 'Answers about Klaudy pricing, scheduling, cancellations, payment, insurance and more.',
   path: '/faq',
 });
 
 const faqs = [
-  { q: 'How does Homigo pricing work?', a: 'Pricing is transparent and upfront, based on your service, number of bedrooms and bathrooms, and home size. You see the exact price before you book — no hidden fees.' },
-  { q: 'Are cleaners insured and background-checked?', a: 'Yes. Every Homigo pro is background-checked, vetted and covered by insurance. Your satisfaction is guaranteed.' },
+  { q: 'How does Klaudy pricing work?', a: 'Pricing is transparent and upfront, based on your service, number of bedrooms and bathrooms, and home size. You see the exact price before you book — no hidden fees.' },
+  { q: 'Are cleaners insured and background-checked?', a: 'Yes. Every Klaudy pro is background-checked, vetted and covered by insurance. Your satisfaction is guaranteed.' },
   { q: 'Do I need to be home during the cleaning?', a: 'No. You can share entry instructions once and we handle the rest. You’ll receive before/after photos.' },
   { q: 'What is your cancellation policy?', a: 'You can reschedule or cancel free up to 24 hours before your appointment, directly from your confirmation.' },
   { q: 'How do I pay?', a: 'We accept all major credit and debit cards through secure checkout. You’re only charged after the service is completed.' },

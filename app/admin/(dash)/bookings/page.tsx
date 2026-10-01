@@ -3,7 +3,7 @@ import { buildMetadata } from '@/lib/seo';
 import { listBookings } from '@/lib/data';
 import { BookingsManager } from '@/components/admin/BookingsManager';
 
-export const metadata: Metadata = buildMetadata({ title: 'Bookings | Homigo Admin', path: '/admin/bookings', noindex: true });
+export const metadata: Metadata = buildMetadata({ title: 'Bookings | Klaudy Admin', path: '/admin/bookings', noindex: true });
 export const dynamic = 'force-dynamic';
 
 export default async function BookingsPage() {

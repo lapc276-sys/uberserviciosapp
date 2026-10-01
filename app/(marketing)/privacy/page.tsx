@@ -4,8 +4,8 @@ import { LegalPage } from '@/components/layout/LegalPage';
 import { site } from '@/lib/config/site';
 
 export const metadata: Metadata = buildMetadata({
-  title: 'Privacy Policy | Homigo',
-  description: 'How Homigo collects, uses and protects your information.',
+  title: 'Privacy Policy | Klaudy',
+  description: 'How Klaudy collects, uses and protects your information.',
   path: '/privacy',
   noindex: true,
 });

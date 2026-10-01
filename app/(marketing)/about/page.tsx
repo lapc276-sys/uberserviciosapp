@@ -4,8 +4,8 @@ import { Button } from '@/components/ui/Button';
 import { site } from '@/lib/config/site';
 
 export const metadata: Metadata = buildMetadata({
-  title: 'About Homigo — Home Services, Automated',
-  description: 'Homigo is building the most automated home-services company in America — starting with cleaning and expanding to every home service.',
+  title: 'About Klaudy — Home Services, Automated',
+  description: 'Klaudy is building the most automated home-services company in America — starting with cleaning and expanding to every home service.',
   path: '/about',
 });
 

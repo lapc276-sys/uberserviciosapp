@@ -4,7 +4,7 @@ import { site } from './config/site';
 import { calculateQuote } from './quote';
 
 /**
- * The Homigo assistant brain — shared by every channel (web chat, WhatsApp,
+ * The Klaudy assistant brain — shared by every channel (web chat, WhatsApp,
  * and future voice). One knowledge base, one pricing source, one personality,
  * so a quote on the website matches a quote on WhatsApp to the dollar.
  */

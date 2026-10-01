@@ -3,7 +3,7 @@ import { buildMetadata } from '@/lib/seo';
 import { getAnalytics } from '@/lib/data';
 import { formatCurrency } from '@/lib/utils';
 
-export const metadata: Metadata = buildMetadata({ title: 'Analytics | Homigo Admin', path: '/admin/analytics', noindex: true });
+export const metadata: Metadata = buildMetadata({ title: 'Analytics | Klaudy Admin', path: '/admin/analytics', noindex: true });
 export const dynamic = 'force-dynamic';
 
 /**
