@@ -584,19 +584,6 @@ def _id_episodio(tipo, titulo, num_lineas):
     return hashlib.md5(s.encode()).hexdigest()[:12]
 
 
-def _cargar_episodio_cache(tipo, titulo, num_lineas):
-    """Carga episodio guardado si existe."""
-    ep_id = _id_episodio(tipo, titulo, num_lineas)
-    ruta = f"episodes/ep_{ep_id}.json"
-    if os.path.exists(ruta):
-        try:
-            with open(ruta, "r") as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return None
-
-
 def _guardar_episodio_cache(ep_id, datos):
     """Guarda episodio en caché."""
     ruta = f"episodes/ep_{ep_id}.json"
@@ -6969,14 +6956,13 @@ async def narrar_datos(client: anthropic.AsyncAnthropic, eventos):
     prerace = bool(t) and t.vuelta < 1
     # Post-sesión: por el reloj (ventana post-show) O porque la carrera ya
     # completó todas sus vueltas (el estimado de fin suele llegar después)
-    carrera_terminada = bool(t and t.total_vueltas
-                             and t.vuelta >= t.total_vueltas)
+    carrera_terminada = bool(t and t.terminada())
     # Pero si las vueltas dicen que la carrera NO ha terminado (bandera
     # roja larga, salida retrasada), manda la pista y no el reloj: si no,
     # con la carrera parada el narrador diría "se acabó" y dejaría de
     # hablar de la bandera.
-    sin_terminar = bool(t and t.total_vueltas
-                        and 0 < t.vuelta < t.total_vueltas)
+    sin_terminar = bool(t and t._es_carrera() and t.total_vueltas
+                        and t.vuelta > 0 and not t.terminada())
     postsesion = carrera_terminada or (estado.postsesion and not sin_terminar)
     # MODO RADIO: la sesión está en el aire pero no hay telemetría (OpenF1
     # caído, o una sesión que no la publica). Es el caso que dejaba huecos
@@ -16011,8 +15997,8 @@ def _sigue_rodando():
     # terminada en la vuelta 20 de 56 y salía el podio.
     with contextlib.suppress(Exception):
         t0 = estado.tele
-        if t0.total_vueltas and t0.vuelta:
-            return t0.vuelta < t0.total_vueltas
+        if t0._es_carrera() and t0.total_vueltas and t0.vuelta:
+            return not t0.terminada()
     if time.time() - estado.mapa_ts > SIN_DATOS_FIN:
         return False
     # Y si la carrera tiene un número de vueltas conocido, se cierra en
@@ -16033,13 +16019,22 @@ def _sigue_rodando():
     # en el generador, en OpenF1 y en las claves; estaba en esta línea.
     t = estado.tele
     with contextlib.suppress(Exception):
-        if t.total_vueltas and t.vuelta:
-            return t.vuelta < t.total_vueltas
+        if t._es_carrera() and t.total_vueltas and t.vuelta:
+            return not t.terminada()
     # Sin número de vueltas conocido (libres, clasificación) no se puede
     # decidir por las vueltas, y manda lo único que hay: siguen llegando
     # posiciones, así que hay sesión. El reloj de la parrilla y el corte
     # por datos rancios de arriba son los que la cierran.
     return True
+
+
+def _vueltas_completas():
+    """True si la sesión en curso tiene vueltas conocidas y ya se dieron
+    todas (o cayó la bandera a cuadros, que fija el total)."""
+    t = estado.tele
+    with contextlib.suppress(Exception):
+        return bool(t and t.terminada())
+    return False
 
 
 def _analisis_final():
@@ -16060,7 +16055,7 @@ def _analisis_final():
     if estado.postsesion:
         return True
     with contextlib.suppress(Exception):
-        if t.total_vueltas and t.vuelta and t.vuelta >= t.total_vueltas:
+        if t.terminada():
             return True
     return False
 
@@ -16282,6 +16277,7 @@ async def bucle_programacion():
     cierre_hecho_para = None   # session_key con el post-show ya montado
     despedida_hecha_para = None  # session_key ya despedida (evita repetir)
     fin_real = None            # cuándo terminó DE VERDAD la sesión en curso
+    en_aire = None             # la sesión (dict del horario) puesta al aire
     while True:
         ahora = dt.datetime.now(dt.timezone.utc)
         s = sesion_en_ventana(ahora, _horario_en_vivo(), PRESHOW_MINUTOS,
@@ -16292,12 +16288,15 @@ async def bucle_programacion():
         # y la parrilla cerraba la sesión: fuera la carrera, a documentales.
         # Mientras la telemetría diga que sigue, la ventana se alarga; y el
         # post-show cuenta desde el final REAL, no desde el previsto.
-        if estado.sesion_actual is not None and (
-                s is None or s["session_key"] == estado.sesion_actual):
-            actual = next((x for x in _horario_en_vivo()
-                           if x["session_key"] == estado.sesion_actual),
-                          None)
-            if actual and ahora >= actual["fin"]:
+        # Se usa la sesión EXACTA que se puso al aire (`en_aire`), no una
+        # búsqueda por clave: con el calendario de respaldo (Jolpica) todas
+        # las sesiones se llaman "latest" y la búsqueda devolvía la primera
+        # del año.
+        actual = en_aire if estado.sesion_actual is not None else None
+        if actual and (s is None or (
+                s["session_key"] == actual["session_key"]
+                and s["inicio"] == actual["inicio"])):
+            if ahora >= actual["fin"]:
                 # Tope: ninguna sesión dura más de 4 h desde su salida
                 # prevista (carrera: 2 h de carrera, 3 h con bandera roja,
                 # más el retraso). Que unos datos que siguen llegando no
@@ -16334,11 +16333,16 @@ async def bucle_programacion():
                                       "circuito": s.get("circuito", "")}
                 log.info("🗓️  Es hora de %s en %s → al aire",
                         s["sesion"], s["pais"])
+                en_aire = dict(s)
                 tarea_carrera = asyncio.create_task(
                     _correr_sesion(s["session_key"]))
             # Post-show: la sesión ya terminó pero seguimos en la ventana
             # de cortesía (POSTSHOW_MINUTOS) — análisis post + despedida
-            elif ahora >= s["fin"] and not _sigue_rodando():
+            # Post-show cuando pasa la hora de fin... o ANTES, si la carrera
+            # ya completó sus vueltas (lo normal: un GP dura ~90 min de los
+            # 120 previstos, y el podio esperaba media hora a la hora fijada).
+            elif ((ahora >= s["fin"] or _vueltas_completas())
+                  and not _sigue_rodando()):
                 estado.postsesion = True   # análisis calmado, sin bucle
                 if cierre_hecho_para != s["session_key"]:
                     cierre_hecho_para = s["session_key"]

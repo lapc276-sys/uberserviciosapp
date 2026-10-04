@@ -699,8 +699,8 @@ class Telemetria:
         # timeline ordenada por fecha.
         self._stints = sorted(stints, key=lambda s: s.get("lap_start") or 0)
         vista = max((v.get("lap_number") or 0 for v in vueltas), default=0)
-        cuadros = any("CHEQUERED" in (c.get("message") or "").upper()
-                      for c in control)
+        cuadros = self._es_carrera() and any(
+            "CHEQUERED" in (c.get("message") or "").upper() for c in control)
         prog = vueltas_programadas(sesion)
         if cuadros:
             # Sesión ya terminada: lo que se ve es el total de verdad
@@ -948,6 +948,7 @@ class Telemetria:
             n = dato.get("lap_number") or 0
             if n > self.vuelta:
                 self.vuelta = n
+                self._vuelta_fecha = self.fecha_actual
                 for s in self._stints:
                     if (s.get("lap_start") or 0) <= n:
                         self.neumaticos[s["driver_number"]] = {
@@ -1025,8 +1026,12 @@ class Telemetria:
             # La bandera a cuadros es lo que DE VERDAD termina la carrera:
             # también cuando se acorta por el límite de dos horas o por
             # una bandera roja. A partir de aquí el total es esta vuelta.
-            if "CHEQUERED" in msj.upper() and self.vuelta:
+            if ("CHEQUERED" in msj.upper() and self.vuelta
+                    and self._es_carrera()):
+                # Solo en carrera y sprint: en clasificación hay bandera a
+                # cuadros al final de Q1, de Q2 y de Q3.
                 self.total_vueltas = self.vuelta
+                self.cuadros = True
             # Las SANCIONES van aparte y se guardan más: entre los avisos de
             # límites de pista y de DRS, una sanción desaparecía del panel
             # (y del contexto del narrador) en un par de minutos.
@@ -1094,6 +1099,29 @@ class Telemetria:
         despues = self.bandera()
         if despues and despues != antes:
             self.bandera_vuelta = self.vuelta
+
+    def _es_carrera(self):
+        return (self.sesion.get("session_name") or "").strip().lower() in (
+            "race", "sprint")
+
+    def terminada(self):
+        """¿Ha terminado la carrera / sprint? Una sola respuesta para todo
+        el canal (post-show, podio, narrador, parrilla).
+
+        Manda la bandera a cuadros de dirección de carrera. Si no llega,
+        respaldo: se alcanzó la última vuelta y han pasado 3 min de datos
+        desde entonces — "vuelta 56 de 56" se marca cuando el líder EMPIEZA
+        la última, no cuando la termina. Fuera de carrera/sprint, False:
+        esas sesiones las cierra el reloj."""
+        if not self._es_carrera():
+            return False
+        if getattr(self, "cuadros", False):
+            return True
+        if self.total_vueltas and self.vuelta >= self.total_vueltas:
+            desde = getattr(self, "_vuelta_fecha", None)
+            if desde and self.fecha_actual:
+                return (self.fecha_actual - desde).total_seconds() > 180
+        return False
 
     def bandera(self):
         """La bandera vigente: "RED", "SC", "VSC", "YELLOW" o None.
