@@ -2564,6 +2564,7 @@ async def apex():
         "programa": estado.programa,
         "leaderboard": t.tabla() if t else [],
         "incidentes": list(reversed(t.incidentes)) if t else [],
+        "sanciones": list(reversed(getattr(t, "sanciones", []))) if t else [],
         "lineas": [{**l, "nombre": _nombre_de(l["quien"])}
                    for l in estado.lineas],
         "segmento": estado.segmento_id,
@@ -3336,6 +3337,9 @@ async def visor():
                      font-size: .82rem; color: var(--dim); }
   #incidentes .inc:last-child { border-bottom: none; }
   .inc .lapn { color: var(--amber); white-space: nowrap; }
+  #incidentes .inc.pen { border-left: 3px solid #e10600; padding-left: 7px;
+    background: rgba(225, 6, 0, 0.12); font-weight: 600; }
+  #incidentes .inc.pen .lapn { color: #ff4d4d; }
   #right-col { display: flex; flex-direction: column; gap: 14px; }
   /* Duelo cara a cara. El primero va grande (es el que se está contando);
      los demás quedan compactos debajo para dar contexto sin robar sitio. */
@@ -6009,10 +6013,20 @@ async function tick() {
   // sola vez que no lo hiciera esta línea tiraba tick() entera y con
   // ella el subtítulo, el ticker y el relevo de voz. Los tres campos de
   // esta función que se recorren sin red llevan ahora su respaldo.
-  for (const i of (d.incidentes || []).slice(0, 6)) {
-    const el = document.createElement('div'); el.className = 'inc';
-    el.innerHTML = '<span class="lapn">L' + i.vuelta + '</span><span>' +
-      i.texto + '</span>';
+  // Las sanciones van FIJAS arriba y en rojo (hasta 3); el resto de
+  // mensajes rellena hasta 6. Si no, los límites de pista las tapaban.
+  const sanc = (d.sanciones || []).slice(0, 3);
+  const vistas = new Set(sanc.map(i => i.vuelta + '|' + i.texto));
+  const resto = (d.incidentes || []).filter(
+    i => !vistas.has(i.vuelta + '|' + i.texto));
+  for (const [i, pen] of sanc.map(x => [x, true]).concat(
+         resto.slice(0, 6 - sanc.length).map(x => [x, false]))) {
+    const el = document.createElement('div');
+    el.className = pen ? 'inc pen' : 'inc';
+    const sp = document.createElement('span'); sp.className = 'lapn';
+    sp.textContent = 'L' + i.vuelta;
+    const tx = document.createElement('span'); tx.textContent = i.texto;
+    el.appendChild(sp); el.appendChild(tx);
     inc.appendChild(el);
   }
   // frame de la Mac (solo si existe)

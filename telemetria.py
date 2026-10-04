@@ -65,6 +65,15 @@ async def _auth_headers(client):
             if _token["valor"] else {})
 
 
+#: Mensajes de dirección de carrera que son una SANCIÓN o pueden acabar en
+#: una. "NO FURTHER ACTION" y "NO INVESTIGATION NECESSARY" cierran el caso,
+#: pero se guardan igual: que alguien se libre también es noticia.
+_ES_SANCION = re.compile(
+    r"PENALTY|DISQUALIFIED|BLACK AND WHITE|BLACK FLAG|UNDER INVESTIGATION|"
+    r"NOTED|REPRIMAND|NO FURTHER ACTION|DRIVE THROUGH|STOP AND GO|"
+    r"STOP/GO|GRID DROP")
+
+
 def _fecha(texto):
     return dt.datetime.fromisoformat(texto.replace("Z", "+00:00"))
 
@@ -846,6 +855,12 @@ class Telemetria:
             texto += (" RACE CONTROL, latest messages: " + " | ".join(
                 f"lap {i['vuelta']}: {i['texto']}"
                 for i in self.incidentes[-5:]) + ".")
+        sanc = getattr(self, "sanciones", [])
+        if sanc:
+            texto += (" PENALTIES AND INVESTIGATIONS so far (stewards, "
+                      "real): " + " | ".join(
+                          f"lap {i['vuelta']}: {i['texto']}"
+                          for i in sanc[-4:]) + ".")
         return texto
 
     # ---------- replay ----------
@@ -949,6 +964,14 @@ class Telemetria:
                 return None  # las banderas azules son puro ruido
             self.incidentes.append({"vuelta": self.vuelta, "texto": msj})
             del self.incidentes[:-8]
+            # Las SANCIONES van aparte y se guardan más: entre los avisos de
+            # límites de pista y de DRS, una sanción desaparecía del panel
+            # (y del contexto del narrador) en un par de minutos.
+            if _ES_SANCION.search(msj.upper()):
+                if not hasattr(self, "sanciones"):
+                    self.sanciones = []
+                self.sanciones.append({"vuelta": self.vuelta, "texto": msj})
+                del self.sanciones[:-6]
             self._leer_bandera(msj)
             quien = ""
             if dato.get("driver_number"):
@@ -1448,6 +1471,10 @@ class Telemetria:
                 break
             if "RED FLAG" in m:
                 out.append({"txt": "RED FLAG — race stopped", "nivel": "hot"})
+                break
+            if _ES_SANCION.search(m) and "PENALTY" in m:
+                out.append({"txt": f"PENALTY: {inc['texto']}",
+                            "nivel": "hot"})
                 break
             if any(k in m for k in ("INCIDENT", "ACCIDENT", "CRASH",
                                     "COLLISION")):
