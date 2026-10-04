@@ -5797,6 +5797,7 @@ async function tick() {
     : (!d.en_vivo && px_ ? cuentaRegresiva(px_.inicia) : '');
   const c = d.clima || {};
   document.getElementById('clima').textContent =
+    (c.lluvia ? 'RAIN  ' : '') +
     (c.aire != null ? 'AIR ' + Math.round(c.aire) + '°C  ' : '') +
     (c.pista != null ? 'TRACK ' + Math.round(c.pista) + '°C' : '');
   document.getElementById('dot').style.display = d.en_vivo ? '' : 'none';

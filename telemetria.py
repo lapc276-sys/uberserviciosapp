@@ -862,6 +862,11 @@ class Telemetria:
                         f"posición {pos} (venía {anterior}º)")
             return None
         if tipo == "clima":
+            antes = bool(getattr(self, "clima", {}).get("lluvia"))
+            if bool(dato.get("rainfall")) != antes:
+                log.info("🌧️  Estación de pista: %s",
+                         "EMPIEZA A LLOVER" if dato.get("rainfall")
+                         else "deja de llover")
             self.clima = {"aire": dato.get("air_temperature"),
                          "pista": dato.get("track_temperature"),
                          "lluvia": bool(dato.get("rainfall"))}
