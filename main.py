@@ -16005,6 +16005,14 @@ def _sigue_rodando():
     """
     if estado.tele is None:
         return False
+    # Con las vueltas conocidas MANDAN las vueltas, por delante del corte
+    # por datos rancios: si OpenF1 tardaba más de 150 s en mandar las
+    # posiciones del mapa (pasa en directo), la carrera se daba por
+    # terminada en la vuelta 20 de 56 y salía el podio.
+    with contextlib.suppress(Exception):
+        t0 = estado.tele
+        if t0.total_vueltas and t0.vuelta:
+            return t0.vuelta < t0.total_vueltas
     if time.time() - estado.mapa_ts > SIN_DATOS_FIN:
         return False
     # Y si la carrera tiene un número de vueltas conocido, se cierra en
@@ -16341,6 +16349,20 @@ async def bucle_programacion():
                         and ahora >= fin_ventana - dt.timedelta(seconds=120)):
                     despedida_hecha_para = s["session_key"]
                     estado.cierre_pendiente = True
+            elif estado.postsesion or estado.podio:
+                # Falsa alarma: se dio por terminada pero la carrera SIGUE
+                # (salida retrasada, datos que tardaron). Se retira el
+                # podio y se vuelve a narrar en vivo; el post-show se
+                # volverá a montar cuando acabe de verdad.
+                log.warning("🏁 La carrera sigue (vuelta %s/%s) — se retira "
+                            "el podio y vuelve el directo",
+                            getattr(estado.tele, "vuelta", "?"),
+                            getattr(estado.tele, "total_vueltas", "?"))
+                estado.postsesion = False
+                estado.podio = None
+                estado.cierre_pendiente = False
+                cierre_hecho_para = None
+                despedida_hecha_para = None
         else:
             # Se acabó la cortesía del post-show: el podio se retira. Si no,
             # se quedaba encima de los documentales que vienen después.
