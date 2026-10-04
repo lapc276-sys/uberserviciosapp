@@ -1050,12 +1050,12 @@ class Telemetria:
         return sorted(self._sectores_amarilla)
 
     def tabla(self):
-        """Leaderboard completo (los 20): [{pos, acr, nombre, color, gap,
+        """Leaderboard completo (los 22): [{pos, acr, nombre, color, gap,
         mejor, pelea, neumatico}]. `mejor` es la mejor vuelta personal —
         el dato clave en libres/clasificación."""
         orden = sorted(self.posiciones.items(), key=lambda kv: kv[1])
         filas = []
-        for n, pos in orden[:20]:
+        for n, pos in orden[:22]:
             p = self.pilotos.get(n, {})
             gap = self.gaps.get(n)
             if pos == 1 or gap is None:
