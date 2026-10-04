@@ -6173,10 +6173,12 @@ concerned first, analysis second. Battle for the lead: maximum \
 intensity, short punchy lines. Final laps: building excitement, \
 counting down. Quiet mid-race stint: relaxed, conversational, lower \
 gear. The situation is given in the context — use it.
-- SILENCE IS PROFESSIONAL. If asked to fill a quiet moment and you have \
-nothing genuinely interesting left (memory shows recent filler already \
-covered strategy, history, tyres), return an EMPTY lineas array instead \
-of forcing chatter. Real broadcasters let the race breathe.
+- NEVER GO SILENT DURING A LIVE SESSION. Not in a quiet stint, not \
+under a safety car, not under a red flag. If the track story is covered, \
+change subject — another driver further down the order, a corner, the \
+strategy question, a story from the past, the paddock, the chat — but \
+always say something. Dead air on a live stream sounds like the stream \
+froze, and viewers leave.
 
 WRITTEN FOR THE EAR (text-to-speech will read it):
 - Numbers as words: "one point two seconds", "lap twenty-eight", "third \
@@ -6902,7 +6904,13 @@ async def narrar_datos(client: anthropic.AsyncAnthropic, eventos):
     # completó todas sus vueltas (el estimado de fin suele llegar después)
     carrera_terminada = bool(t and t.total_vueltas
                              and t.vuelta >= t.total_vueltas)
-    postsesion = estado.postsesion or carrera_terminada
+    # Pero si las vueltas dicen que la carrera NO ha terminado (bandera
+    # roja larga, salida retrasada), manda la pista y no el reloj: si no,
+    # con la carrera parada el narrador diría "se acabó" y dejaría de
+    # hablar de la bandera.
+    sin_terminar = bool(t and t.total_vueltas
+                        and 0 < t.vuelta < t.total_vueltas)
+    postsesion = carrera_terminada or (estado.postsesion and not sin_terminar)
     # MODO RADIO: la sesión está en el aire pero no hay telemetría (OpenF1
     # caído, o una sesión que no la publica). Es el caso que dejaba huecos
     # de minutos: sin `tele` no hay prerace ni eventos, así que caía en la
@@ -6919,7 +6927,15 @@ async def narrar_datos(client: anthropic.AsyncAnthropic, eventos):
     with contextlib.suppress(Exception):
         bandera = t.bandera() if (t and not postsesion) else None
     if eventos:
-        pedido = "NEW EVENTS (from live telemetry):\n" + "\n".join(eventos)
+        pedido = ("NEW EVENTS (from live telemetry):\n" + "\n".join(eventos)
+                  + "\nCall them, explain what they change, and NEVER "
+                  "return an empty lineas array.")
+        if bandera:
+            que_b = {"RED": "a RED FLAG", "SC": "the SAFETY CAR",
+                     "VSC": "the VIRTUAL SAFETY CAR",
+                     "YELLOW": "a YELLOW FLAG"}.get(bandera, bandera)
+            pedido += (f"\nThe race is currently under {que_b} — say what "
+                       "it means for strategy and the restart.")
     elif postsesion:
         # POST-SESIÓN: la carrera terminó, la tabla ya no cambia. NO repetir
         # el resultado en bucle — análisis variado y ritmo calmado, se puede
@@ -6942,9 +6958,10 @@ async def narrar_datos(client: anthropic.AsyncAnthropic, eventos):
             "  • what the midfield order says about the last upgrade;\n"
             "  • what this track rewarded, and how the next one differs;\n"
             "  • a look ahead to the next round.\n"
-            "Two to three short lines. Only if every angle above is already "
-            "in the memory, return an EMPTY lineas array and let it breathe "
-            "— but that should take a good while to happen.")
+            "Two to three short lines. NEVER return an empty lineas array: "
+            "if every angle above is in the memory, go wider — a driver "
+            "further down the order, the next race, a story from the past, "
+            "or a question to the chat.")
     elif bandera:
         # BAJO BANDERA la retransmisión tiene MÁS que contar, no menos.
         # Aquí no se puede devolver vacío: sin coches peleando, la
@@ -7151,29 +7168,43 @@ async def narrar_datos(client: anthropic.AsyncAnthropic, eventos):
         f"drop below it for a reflective line, and go one step above it "
         f"only on the single word that deserves it. Anything higher will "
         f"be pulled back down, so spend it where it counts.")
-    response = await client.messages.create(
-        model=modelo_actual(),
-        max_tokens=900,
-        system=SYSTEM_DUO_VIVO,
-        output_config={"format": {"type": "json_schema",
-                                  "schema": DUO_SCHEMA}},
-        messages=[{
-            "role": "user",
-            "content": (f"RACE CONTEXT: {contexto}\n"
-                        f"SITUATION: {situacion}\n\n"
-                        f"WHAT THE DUO ALREADY SAID (memory):\n{memoria}\n\n"
-                        f"{pedido}{cta}{entrega}{_SOLO_SEGMENTO}\n\n"
-                        "Write the next segment of the conversation."),
-        }],
-    )
-    if response.stop_reason == "refusal":
-        return []
-    texto = next((b.text for b in response.content if b.type == "text"), "")
-    try:
-        lineas = json.loads(texto).get("lineas", [])
-    except json.JSONDecodeError:
-        log.error("Respuesta del dúo no parseable: %.200s", texto)
-        return []
+    contenido = (f"RACE CONTEXT: {contexto}\n"
+                 f"SITUATION: {situacion}\n\n"
+                 f"WHAT THE DUO ALREADY SAID (memory):\n{memoria}\n\n"
+                 f"{pedido}{cta}{entrega}{_SOLO_SEGMENTO}\n\n"
+                 "Write the next segment of the conversation.")
+    # Red de seguridad: en directo un vacío NO se acepta. Si el guionista
+    # devuelve nada (o algo ilegible), se le pide otra vez en el acto con
+    # la orden explícita, en vez de esperar al siguiente ciclo en silencio.
+    en_directo = bool(t) or estado.carrera_en_vivo
+    lineas = []
+    for intento in range(2 if en_directo else 1):
+        if intento:
+            log.warning("🎙️  Guion vacío en directo — se pide otra vez")
+            contenido += (
+                "\n\nYOUR LAST ANSWER WAS EMPTY. That is not allowed on a "
+                "live broadcast. Write 3 spoken lines NOW: pick a driver "
+                "from the FULL ORDER you have not mentioned, say where he "
+                "is and what his race looks like, and give your opinion.")
+        response = await client.messages.create(
+            model=modelo_actual(),
+            max_tokens=900,
+            system=SYSTEM_DUO_VIVO,
+            output_config={"format": {"type": "json_schema",
+                                      "schema": DUO_SCHEMA}},
+            messages=[{"role": "user", "content": contenido}],
+        )
+        if response.stop_reason == "refusal":
+            return []
+        texto = next((b.text for b in response.content
+                      if b.type == "text"), "")
+        try:
+            lineas = json.loads(texto).get("lineas", [])
+        except json.JSONDecodeError:
+            log.error("Respuesta del dúo no parseable: %.200s", texto)
+            lineas = []
+        if any((l.get("texto") or "").strip() for l in lineas):
+            break
     lineas = [actuacion.normalizar(l, objetivo, _curva_tension)
               for l in lineas]
     if lineas:
