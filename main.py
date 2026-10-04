@@ -2717,12 +2717,23 @@ async def lecho_mp3():
 
 
 @app.get("/audio/{seg}/{idx}")
-async def audio_linea(seg: int, idx: int):
+async def audio_linea(seg: int, idx: int, request: Request):
     """MP3 de una línea del segmento actual o de los anteriores recientes
     (para el visor web). Los anteriores hacen falta porque el reproductor
     TERMINA el segmento que está sonando antes de pasar al nuevo: si al
     publicarse el siguiente se borraban sus audios, el resto de frases del
     que sonaba daba 404 y el narrador decía dos palabras y se callaba."""
+    # Quién está reproduciendo: cada navegador que pide la voz deja aquí
+    # su huella. Dos huellas a la vez = la voz suena DOS veces (la pestaña
+    # del navegador además de OBS, dos fuentes en OBS...), que es lo que
+    # se oye como un montón de voces encima.
+    with contextlib.suppress(Exception):
+        huella = (f"{request.client.host if request.client else '?'} · "
+                  f"{(request.headers.get('user-agent') or '?')[:70]}")
+        oy = getattr(estado, "oyentes", {})
+        oy[huella] = time.time()
+        estado.oyentes = {k: v for k, v in oy.items()
+                          if time.time() - v < 120}
     if seg == estado.segmento_id:
         audios = estado.audios
     else:
@@ -2743,7 +2754,19 @@ async def diag_audio():
     que preguntárselo al canal.
     """
     con_audio = sum(1 for a in estado.audios if a)
+    ahora = time.time()
+    oyentes = sorted(k for k, v in getattr(estado, "oyentes", {}).items()
+                     if ahora - v < 120)
     return JSONResponse({
+        "7_reproductores_activos": len(oyentes) + len(estado.clientes_mac),
+        "7a_navegadores_con_voz": oyentes,
+        "7b_captura_mac_con_voz": len(estado.clientes_mac),
+        "7_que_significa": (
+            "Tiene que ser 1. Si es 2 o más, la voz suena varias veces a la "
+            "vez: cierra la pestaña del navegador (déjalo solo en OBS), "
+            "quita fuentes de navegador repetidas en OBS, o cierra "
+            "captura_mac.py si está abierto. 'OBS' sale en el user-agent "
+            "de la fuente de OBS."),
         "1_clave_de_voz": ("ElevenLabs" if os.environ.get("ELEVENLABS_API_KEY")
                            else "OpenAI" if os.environ.get("OPENAI_API_KEY")
                            else "NINGUNA — sin esto no hay voz"),
