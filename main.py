@@ -16281,10 +16281,43 @@ async def bucle_programacion():
     tarea_carrera = None
     cierre_hecho_para = None   # session_key con el post-show ya montado
     despedida_hecha_para = None  # session_key ya despedida (evita repetir)
+    fin_real = None            # cuándo terminó DE VERDAD la sesión en curso
     while True:
         ahora = dt.datetime.now(dt.timezone.utc)
         s = sesion_en_ventana(ahora, _horario_en_vivo(), PRESHOW_MINUTOS,
                               POSTSHOW_MINUTOS)
+        # PRÓRROGA. La hora de fin que da OpenF1 es la PREVISTA (salida
+        # más dos horas). Con la salida retrasada o una bandera roja larga,
+        # esa hora más el post-show pasaba con los coches todavía en pista
+        # y la parrilla cerraba la sesión: fuera la carrera, a documentales.
+        # Mientras la telemetría diga que sigue, la ventana se alarga; y el
+        # post-show cuenta desde el final REAL, no desde el previsto.
+        if estado.sesion_actual is not None and (
+                s is None or s["session_key"] == estado.sesion_actual):
+            actual = next((x for x in _horario_en_vivo()
+                           if x["session_key"] == estado.sesion_actual),
+                          None)
+            if actual and ahora >= actual["fin"]:
+                # Tope: ninguna sesión dura más de 4 h desde su salida
+                # prevista (carrera: 2 h de carrera, 3 h con bandera roja,
+                # más el retraso). Que unos datos que siguen llegando no
+                # dejen una sesión al aire para siempre.
+                tope = actual["inicio"] + dt.timedelta(hours=4)
+                if _sigue_rodando() and ahora < tope:
+                    fin_real = None
+                    s = {**actual,
+                         "fin": ahora + dt.timedelta(minutes=1)}
+                else:
+                    if fin_real is None:
+                        fin_real = ahora
+                        log.info("🏁 Fin REAL de la sesión: %s",
+                                 fin_real.strftime("%H:%M:%S UTC"))
+                    if ahora <= fin_real + dt.timedelta(
+                            minutes=POSTSHOW_MINUTOS):
+                        s = {**actual, "fin": fin_real}
+        if s is None or s["session_key"] != estado.sesion_actual:
+            if estado.sesion_actual is None or s is not None:
+                fin_real = None
         if s:
             # Toca una sesión: ponerla al aire si no está ya
             if estado.sesion_actual != s["session_key"]:
