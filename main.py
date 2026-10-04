@@ -54,6 +54,7 @@ import portada
 import telegram_bot
 import revisar
 import telemetria
+import radio_equipo
 import velocidades
 import youtube_subir
 import redes_sociales
@@ -674,7 +675,9 @@ async def lifespan(app: FastAPI):
               asyncio.create_task(bucle_metricas()),
               asyncio.create_task(bucle_microshorts()),
               asyncio.create_task(bucle_chat()),
-              asyncio.create_task(bucle_telegram())]
+              asyncio.create_task(bucle_telegram()),
+              asyncio.create_task(radio_equipo.bucle(estado,
+                                                     OPENAI_API_KEY))]
     yield
     for t in tareas:
         t.cancel()
@@ -2565,6 +2568,10 @@ async def apex():
         "leaderboard": t.tabla() if t else [],
         "incidentes": list(reversed(t.incidentes)) if t else [],
         "sanciones": list(reversed(getattr(t, "sanciones", []))) if t else [],
+        "radios": [{"acr": r["acr"], "texto": r["texto"],
+                    "vuelta": r.get("vuelta", 0)}
+                   for r in reversed(getattr(estado, "radios", [])[-2:])]
+        if t else [],
         "lineas": [{**l, "nombre": _nombre_de(l["quien"])}
                    for l in estado.lineas],
         "segmento": estado.segmento_id,
@@ -3363,6 +3370,9 @@ async def visor():
   #incidentes .inc.pen { border-left: 3px solid #e10600; padding-left: 7px;
     background: rgba(225, 6, 0, 0.12); font-weight: 600; }
   #incidentes .inc.pen .lapn { color: #ff4d4d; }
+  #incidentes .inc.radio { border-left: 3px solid #a46cff; padding-left: 7px;
+    background: rgba(164, 108, 255, 0.12); font-style: italic; }
+  #incidentes .inc.radio .lapn { color: #c9a8ff; font-style: normal; }
   #right-col { display: flex; flex-direction: column; gap: 14px; }
   /* Duelo cara a cara. El primero va grande (es el que se está contando);
      los demás quedan compactos debajo para dar contexto sin robar sitio. */
@@ -6047,6 +6057,16 @@ async function tick() {
   // esta función que se recorren sin red llevan ahora su respaldo.
   // Las sanciones van FIJAS arriba y en rojo (hasta 3); el resto de
   // mensajes rellena hasta 6. Si no, los límites de pista las tapaban.
+  // Las dos últimas radios de piloto (transcritas), en morado, arriba.
+  for (const r of (d.radios || []).slice(0, 2)) {
+    const el = document.createElement('div'); el.className = 'inc radio';
+    const sp = document.createElement('span'); sp.className = 'lapn';
+    sp.textContent = '📻 ' + r.acr;
+    const tx = document.createElement('span');
+    tx.textContent = '"' + r.texto + '"';
+    el.appendChild(sp); el.appendChild(tx);
+    inc.appendChild(el);
+  }
   const sanc = (d.sanciones || []).slice(0, 3);
   const vistas = new Set(sanc.map(i => i.vuelta + '|' + i.texto));
   const resto = (d.incidentes || []).filter(
@@ -6977,6 +6997,14 @@ async def narrar_datos(client: anthropic.AsyncAnthropic, eventos):
         pedido = ("NEW EVENTS (from live telemetry):\n" + "\n".join(eventos)
                   + "\nCall them, explain what they change, and NEVER "
                   "return an empty lineas array.")
+        if any(e.startswith("TEAM RADIO") for e in eventos):
+            pedido += (
+                "\nTEAM RADIO is an automatic transcription of the real "
+                "radio. Quote it briefly and say who said it ('Hamilton on "
+                "the radio: …'), then read between the lines — what it "
+                "tells us about tyres, strategy or mood. Never add words he "
+                "did not say, and if the line makes no sense, it may be a "
+                "transcription slip: skip it rather than guess.")
         if bandera:
             que_b = {"RED": "a RED FLAG", "SC": "the SAFETY CAR",
                      "VSC": "the VIRTUAL SAFETY CAR",
