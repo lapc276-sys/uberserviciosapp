@@ -14420,6 +14420,15 @@ def _guardar_resumen_sesion(s):
                     "Race --pais X --circuito Y --top \"1:Nombre,2:...\"",
                     s.get("sesion"))
         return
+    # Candado: en carrera/sprint con vueltas conocidas, el resumen SOLO se
+    # guarda con la carrera terminada de verdad. Un falso final (salida
+    # retrasada, datos lentos) guardaba resultados a medias, y de ahí
+    # habría salido una reseña con un podio que no es el real.
+    with contextlib.suppress(Exception):
+        if t._es_carrera() and t.total_vueltas and not t.terminada():
+            log.warning("📝 Resumen NO guardado: la carrera aún no ha "
+                        "terminado (vuelta %s/%s)", t.vuelta, t.total_vueltas)
+            return
     try:
         tabla = t.tabla()
         mejor = ""
@@ -14434,8 +14443,15 @@ def _guardar_resumen_sesion(s):
                      "acr": f["acr"]} for f in tabla[:10]],
             "mejor_vuelta": mejor,
             "incidentes": [i["texto"] for i in t.incidentes][-8:],
+            "sanciones": [i["texto"] for i in getattr(t, "sanciones", [])],
             "clima": t.clima,
-            "id": dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d_%H%M%S"),
+            # El id sale de la SESIÓN (su hora de inicio), no de ahora: si
+            # el resumen se guarda dos veces, el segundo sobrescribe al
+            # primero en vez de dejar dos reseñas del mismo Gran Premio.
+            "id": (s["inicio"].strftime("%Y%m%d_%H%M%S")
+                   if isinstance(s.get("inicio"), dt.datetime)
+                   else dt.datetime.now(dt.timezone.utc).strftime(
+                       "%Y%m%d_%H%M%S")),
         }
         os.makedirs(RESUMEN_DIR, exist_ok=True)
         ruta = os.path.join(RESUMEN_DIR, f"pendiente_{resumen['id']}.json")
@@ -14478,6 +14494,8 @@ async def _generar_recap(client, resumen):
         f"FASTEST LAP: {resumen.get('mejor_vuelta') or 'n/a'}.\n"
         f"RACE CONTROL / INCIDENTS: "
         f"{'; '.join(resumen.get('incidentes') or []) or 'none noted'}.\n"
+        f"PENALTIES AND INVESTIGATIONS (stewards, real): "
+        f"{'; '.join(resumen.get('sanciones') or []) or 'none noted'}.\n"
         f"WEATHER: {'wet' if resumen.get('clima', {}).get('lluvia') else 'dry'}.")
     lineas = []
     dicho = []
@@ -17049,7 +17067,8 @@ async def bucle_narracion():
                 # documentales, con la tabla final todavía en pantalla
                 estado.cierre_pendiente = False
                 texto = await narrar_cierre(client)
-            elif _recap_pendiente() is not None:
+            elif (_recap_pendiente() is not None
+                    and _libre_para_hablar(ahora)):
                 # Al cuarto, la mitad y las tres cuartas partes: ponerse al
                 # día. Manda sobre la narración normal — es justo cuando
                 # está entrando gente y hay que decirles qué se han perdido.
