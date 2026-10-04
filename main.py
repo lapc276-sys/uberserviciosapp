@@ -5584,6 +5584,8 @@ function pararVoz() {
 
 function reproducirLinea(seg, i) {
   return new Promise(res => {
+    // Nunca dos voces: si quedara una frase viva de antes, se apaga aquí.
+    if (audioActual) { try { audioActual.pause(); } catch (e) {} }
     const a = new Audio('/audio/' + seg + '/' + i);
     audioActual = a;
     let hecho = false, vigilante = null;
@@ -5591,6 +5593,13 @@ function reproducirLinea(seg, i) {
       if (hecho) return;            // pause() no dispara 'ended': hay que
       hecho = true;                 // asegurar que esto pasa UNA vez
       if (vigilante) clearInterval(vigilante);
+      // Una frase que se da por perdida (atasco, error) se APAGA y se
+      // suelta. Antes solo se dejaba de esperarla: si la descarga
+      // terminaba después, empezaba a sonar encima de la siguiente, y eso
+      // era el "de repente se une otra voz".
+      if (!a.ended) {
+        try { a.pause(); a.removeAttribute('src'); a.load(); } catch (e) {}
+      }
       if (audioActual === a) audioActual = null;
       cortarLinea = null;
       res(ok);
