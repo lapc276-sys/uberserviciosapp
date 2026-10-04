@@ -74,6 +74,50 @@ _ES_SANCION = re.compile(
     r"STOP/GO|GRID DROP")
 
 
+#: Vueltas de CARRERA por circuito (nombre corto de OpenF1, en minúsculas).
+#:
+#: Antes el total se sacaba como "la vuelta más alta que ha llegado", y en
+#: directo eso es la vuelta ACTUAL: en la vuelta 1 el canal creía que la
+#: carrera era de una vuelta y que ya se había acabado — podio, despedida
+#: y análisis final con los coches recién salidos. El total tiene que
+#: venir del calendario, no de los datos que van llegando.
+VUELTAS_CARRERA = {
+    "sakhir": 57, "jeddah": 50, "melbourne": 58, "suzuka": 53,
+    "shanghai": 56, "miami": 57, "imola": 63, "monte carlo": 78,
+    "monaco": 78, "catalunya": 66, "barcelona": 66, "montreal": 70,
+    "spielberg": 71, "red bull ring": 71, "silverstone": 52,
+    "hungaroring": 70, "spa-francorchamps": 44, "zandvoort": 72,
+    "monza": 53, "baku": 51, "singapore": 62, "austin": 56,
+    "mexico city": 71, "interlagos": 71, "las vegas": 50, "lusail": 57,
+    "yas marina circuit": 58, "yas marina": 58, "madring": 57,
+    "madrid": 57, "sepang": 56,
+}
+
+
+def vueltas_programadas(sesion):
+    """Vueltas previstas de una carrera o sprint; 0 si no se sabe.
+
+    Primero la tabla. Si el circuito no está, la regla del reglamento: el
+    menor número de vueltas que supera 305 km (100 km en un sprint), con
+    la longitud oficial de circuito.py.
+    """
+    nombre = (sesion.get("session_name") or "").strip().lower()
+    if nombre not in ("race", "sprint"):
+        return 0
+    clave = (sesion.get("circuit_short_name") or "").strip().lower()
+    if nombre == "race" and clave in VUELTAS_CARRERA:
+        return VUELTAS_CARRERA[clave]
+    largo = None
+    try:
+        import circuito          # aquí y no arriba: circuito importa este módulo
+        largo = circuito.LARGO_OFICIAL.get(clave)
+    except Exception:
+        pass
+    if not largo:
+        return 0
+    return math.ceil((305000 if nombre == "race" else 100000) / largo)
+
+
 def _fecha(texto):
     return dt.datetime.fromisoformat(texto.replace("Z", "+00:00"))
 
@@ -654,8 +698,22 @@ class Telemetria:
         # consultan por número de vuelta en _procesar en vez de ir en la
         # timeline ordenada por fecha.
         self._stints = sorted(stints, key=lambda s: s.get("lap_start") or 0)
-        self.total_vueltas = max(
-            (v.get("lap_number") or 0 for v in vueltas), default=0)
+        vista = max((v.get("lap_number") or 0 for v in vueltas), default=0)
+        cuadros = any("CHEQUERED" in (c.get("message") or "").upper()
+                      for c in control)
+        prog = vueltas_programadas(sesion)
+        if cuadros:
+            # Sesión ya terminada: lo que se ve es el total de verdad
+            # (aunque se acortara por el límite de dos horas).
+            self.total_vueltas = vista
+        elif prog:
+            # Si la carrera se acorta, la bandera a cuadros la cierra
+            # antes: ver _procesar.
+            self.total_vueltas = max(prog, vista)
+        else:
+            # En directo y sin tabla: desconocido. Mejor "Lap 12" que
+            # "Lap 12 of 12" y la carrera dada por acabada.
+            self.total_vueltas = 0
         tl.sort(key=lambda e: e[0])
         # Recortar la previa muerta (garaje): el replay arranca cerca del
         # inicio OFICIAL de la sesión, no cuando aparece la primera fila —
@@ -964,6 +1022,11 @@ class Telemetria:
                 return None  # las banderas azules son puro ruido
             self.incidentes.append({"vuelta": self.vuelta, "texto": msj})
             del self.incidentes[:-8]
+            # La bandera a cuadros es lo que DE VERDAD termina la carrera:
+            # también cuando se acorta por el límite de dos horas o por
+            # una bandera roja. A partir de aquí el total es esta vuelta.
+            if "CHEQUERED" in msj.upper() and self.vuelta:
+                self.total_vueltas = self.vuelta
             # Las SANCIONES van aparte y se guardan más: entre los avisos de
             # límites de pista y de DRS, una sanción desaparecía del panel
             # (y del contexto del narrador) en un par de minutos.
