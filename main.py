@@ -14815,6 +14815,7 @@ async def bucle_resumen():
     _cliente_tec = anthropic.AsyncAnthropic()
     await asyncio.sleep(45)
     trabado = None           # última razón avisada, para no repetirla
+    agotados_avisados = set()  # reseñas que agotaron sus 3 intentos
     while True:
         try:
             pend = [a for a in sorted(os.listdir(RESUMEN_DIR))
@@ -14842,19 +14843,37 @@ async def bucle_resumen():
                     if not (a.startswith("pendiente_") and a.endswith(".json")):
                         continue
                     ruta = os.path.join(RESUMEN_DIR, a)
+                    resumen = {}
                     # 1) Short técnico de datos (una vez por sesión)
                     try:
                         with open(ruta) as f:
                             resumen = json.load(f)
-                        if not resumen.get("short_tec_hecho"):
-                            if await _generar_short_tecnico(
-                                    _cliente_tec, resumen):
+                        if (not resumen.get("short_tec_hecho")
+                                and resumen.get("short_tec_intentos", 0) < 3):
+                            ok_tec = await _generar_short_tecnico(
+                                _cliente_tec, resumen)
+                            if ok_tec:
                                 resumen["short_tec_hecho"] = True
-                                with open(ruta, "w") as f:
-                                    json.dump(resumen, f, ensure_ascii=False)
+                            else:
+                                # Con límite: sin él, un resumen atascado
+                                # pedía este short cada 2 min para siempre.
+                                resumen["short_tec_intentos"] = (
+                                    resumen.get("short_tec_intentos", 0) + 1)
+                            with open(ruta, "w") as f:
+                                json.dump(resumen, f, ensure_ascii=False)
                     except Exception as e:
                         log.info("Short técnico: %s", e)
                     # 2) Video-reseña largo (borra el pendiente al subir)
+                    if resumen.get("intentos", 0) >= 3:
+                        if a not in agotados_avisados:
+                            agotados_avisados.add(a)
+                            log.warning(
+                                "📝 La reseña %s falló 3 veces y no se "
+                                "reintenta. Mira los errores de arriba; "
+                                "para volver a intentarlo, borra el campo "
+                                "\"intentos\" del archivo en %s", a,
+                                RESUMEN_DIR)
+                        continue
                     log.info("🎬 Generando video-reseña de la carrera…")
                     await _procesar_recap(ruta)
         except Exception as e:
