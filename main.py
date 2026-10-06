@@ -10595,7 +10595,31 @@ def _tema_tecnico_siguiente():
     repetitivos aunque el concepto técnico cambie."""
     prioritario = (_tema_prioritario() if random.random() < OLA_PROPORCION
                    else None)
+    _ultimo_tema_ola[0] = prioritario
     return _tema_tecnico_impl(prioritario)
+
+
+#: El último tema sacado de la cola prioritaria, para devolverlo si el
+#: short falla: antes cada intento fallido se comía un tema sembrado.
+_ultimo_tema_ola = [None]
+
+
+def _devolver_tema_ola():
+    """Devuelve a la cabeza de la cola prioritaria el último tema sacado."""
+    tema = _ultimo_tema_ola[0]
+    _ultimo_tema_ola[0] = None
+    if not tema:
+        return
+    with contextlib.suppress(Exception):
+        try:
+            with open(_OLA_ARCHIVO) as f:
+                data = json.load(f)
+        except Exception:
+            data = {"gp": "", "temas": []}
+        data["temas"] = [list(tema)] + (data.get("temas") or [])
+        with open(_OLA_ARCHIVO, "w") as f:
+            json.dump(data, f)
+        log.info("📹 Tema devuelto a la cola: %s", str(tema[1])[:60])
 
 
 # Peso de la serie "Banned tech" en el sorteo. Los datos del canal la señalan
@@ -11172,7 +11196,7 @@ SHORTS_ADELANTAR = os.environ.get("SHORTS_ADELANTAR", "on").lower() not in (
     "off", "0", "", "no")
 
 
-def _slot_short_pendiente(ahora):
+def _slot_short_pendiente(ahora, saltar=()):
     """Devuelve (slot_id, hora_slot) de una franja del día sin short guardado,
     o None si están todas hechas.
 
@@ -11184,6 +11208,8 @@ def _slot_short_pendiente(ahora):
 
     def falta(h):
         slot_id = f"{hoy}{h:02d}00"
+        if slot_id in saltar:
+            return None
         return (slot_id, h) if not os.path.exists(
             f"shorts/short_{slot_id}.json") else None
 
@@ -11215,10 +11241,19 @@ async def bucle_shorts():
              " — ADELANTANDO las franjas del día (pensado para un Repl que "
              "se duerme; con el server 24/7 pon SHORTS_ADELANTAR=off)"
              if SHORTS_ADELANTAR else "")
+    # Fallos por franja: {slot_id: (intentos, no_antes_de)}. Antes un
+    # guion vacío se reintentaba cada 2 min SIN LÍMITE, gastando API toda
+    # la noche y bloqueando el resto de franjas del día.
+    fallos = {}
     while True:
         try:
             ahora = dt.datetime.now(dt.timezone.utc)
-            pendiente = _slot_short_pendiente(ahora)
+            agotadas = {k for k, (n, _) in fallos.items() if n >= 3}
+            pendiente = _slot_short_pendiente(ahora, saltar=agotadas)
+            if pendiente and time.time() < fallos.get(
+                    pendiente[0], (0, 0.0))[1]:
+                await asyncio.sleep(120)        # en espera tras un fallo
+                continue
             # Con la bandera de "sin créditos" puesta igual se reintenta
             # cada 30 min: si ya recargaste, el primer intento que funcione
             # limpia la bandera solo (sin reiniciar el server).
@@ -11293,6 +11328,16 @@ async def bucle_shorts():
                         if t_g:
                             datos["titulo"] = t_g[:100]
                     _guardar_short(slot_id, datos)
+                    fallos.pop(slot_id, None)
+                else:
+                    n = fallos.get(slot_id, (0, 0.0))[0] + 1
+                    fallos[slot_id] = (n, time.time() + 600 * 2 ** (n - 1))
+                    if tema:
+                        _devolver_tema_ola()
+                    log.warning("📹 Short de la franja %s sin guion (intento "
+                                "%d/3)%s", slot_id, n,
+                                " — se salta" if n >= 3 else
+                                f" — reintento en {10 * 2 ** (n - 1)} min")
         except Exception as e:
             log.warning("Generador de shorts: %s", e)
         await asyncio.sleep(120)
