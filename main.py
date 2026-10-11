@@ -12901,8 +12901,9 @@ async def _vod_procesar(ruta):
             indice, hojas = await _hojas_capitulo(
                 audios, guion, ruta, anthropic.AsyncAnthropic())
     video = os.path.join(ruta, "vod.mp4")
-    ok = await youtube_subir.armar_video(audio_total, fotos, titulo, video,
-                                         horizontal=True, capitulos=hojas)
+    ok = await youtube_subir.armar_video(
+        audio_total, fotos, titulo, video, horizontal=True, capitulos=hojas,
+        tramos=youtube_subir.tramos_de(audios, guion))
     if not ok:
         meta["intentos"] = meta.get("intentos", 0) + 1
         with open(meta_ruta, "w") as f:
@@ -14665,9 +14666,10 @@ async def _procesar_recap(ruta):
     # Los capítulos, antes de montar: el índice va a la descripción y las
     # hojas van dentro del video, y los dos salen del mismo cálculo.
     indice, hojas = await _hojas_capitulo(audios, textos_ok, tmp, client)
-    ok = await youtube_subir.armar_video(audio_total, imagenes, titulo, video,
-                                         horizontal=True, con_musica=True,
-                                         capitulos=hojas)
+    ok = await youtube_subir.armar_video(
+        audio_total, imagenes, titulo, video, horizontal=True,
+        con_musica=True, capitulos=hojas,
+        tramos=youtube_subir.tramos_de(audios, textos_ok))
     if not ok:
         resumen["intentos"] = resumen.get("intentos", 0) + 1
         with open(ruta, "w") as f:
@@ -14959,9 +14961,10 @@ async def _subir_programa_video(ruta_ep):
         with contextlib.suppress(Exception):
             indice, hojas = await _hojas_capitulo(
                 audios, textos_ok, tmp, anthropic.AsyncAnthropic())
-    ok = await youtube_subir.armar_video(audio_total, fotos, titulo, video,
-                                         horizontal=True, con_musica=True,
-                                         capitulos=hojas)
+    ok = await youtube_subir.armar_video(
+        audio_total, fotos, titulo, video, horizontal=True,
+        con_musica=True, capitulos=hojas,
+        tramos=youtube_subir.tramos_de(audios, textos_ok))
     if not ok:
         ep["video_intentos"] = ep.get("video_intentos", 0) + 1
         with open(ruta_ep, "w") as f:
@@ -15327,9 +15330,10 @@ async def _producir_tema(tema):
     fotos = fotos + cola
     video = os.path.join(tmp, "video.mp4")
     indice, hojas = await _hojas_capitulo(audios, textos_ok, tmp, client)
-    if not await youtube_subir.armar_video(audio_total, fotos, titulo, video,
-                                           horizontal=True, con_musica=True,
-                                           capitulos=hojas):
+    if not await youtube_subir.armar_video(
+            audio_total, fotos, titulo, video, horizontal=True,
+            con_musica=True, capitulos=hojas,
+            tramos=youtube_subir.tramos_de(audios, textos_ok)):
         return False
     # Miniatura propia (+ posible título más curioso) para el CTR
     t_nuevo, gancho = await _titulo_y_gancho(

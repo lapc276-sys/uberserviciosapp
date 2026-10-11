@@ -36,6 +36,7 @@ import subtitulos
 log = logging.getLogger("youtube")
 
 VERT_W, VERT_H = 1080, 1920
+HORIZ_W, HORIZ_H = 1280, 720
 SCOPES_SUBIR = ["https://www.googleapis.com/auth/youtube.upload"]
 # Lectura: solo hace falta para LISTAR los videos ya subidos y re-generarles
 # la miniatura. Requiere re-autorizar (autorizar_youtube.py) una vez.
@@ -444,7 +445,21 @@ def _duracion_audio(path):
             capture_output=True, text=True, timeout=30)
         return float(out.stdout.strip())
     except Exception:
-        return 0.0
+        pass
+    # Respaldo sin ffprobe: ffmpeg también dice la duración (en stderr).
+    # Sin esto, un 0 aquí hacía que el short se tratara como de 25 s y los
+    # rótulos se repartían solo por la primera mitad.
+    try:
+        out = subprocess.run([_ffmpeg(), "-i", path], capture_output=True,
+                             text=True, timeout=30)
+        m = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)",
+                      out.stderr or "")
+        if m:
+            h, mi, se = m.groups()
+            return int(h) * 3600 + int(mi) * 60 + float(se)
+    except Exception:
+        pass
+    return 0.0
 
 
 def _envolver(texto, ancho=26):
@@ -1008,9 +1023,104 @@ TITULO_EN_VIDEO = os.environ.get("TITULO_EN_VIDEO", "off").strip().lower() in (
     "on", "1", "yes", "si", "sí", "true")
 
 
+#: Rótulos también en los videos LARGOS (horizontales). Mismo diseño
+#: plateado que los Shorts, en tamaño de subtítulo. Secret ROTULOS_LARGOS=off
+#: para quitarlos.
+ROTULOS_LARGOS_ON = os.environ.get("ROTULOS_LARGOS", "on").lower() not in (
+    "off", "0", "", "no")
+
+
+def _aplicar_rotulos_largo(video_in, tramos, w, h):
+    """Rótulos en un video largo, sincronizados FRASE A FRASE con la voz.
+
+    `tramos` = [(texto, segundos)] en el orden en que suenan: la voz se
+    une sin pausas, así que cada frase empieza donde acaba la anterior y el
+    reparto es exacto (repartir el texto entero por proporción, como en un
+    short, se desfasaría varios segundos al minuto diez).
+
+    El método de los Shorts —una entrada de ffmpeg por rótulo— con cientos
+    de rótulos se arrastra. Aquí todos los rótulos van en UNA sola pista
+    (una lista de PNG transparentes con su duración, más un PNG vacío en
+    los huecos) y se superponen en una pasada. Medido: dos minutos de video
+    en ~40 s de montaje.
+
+    Como los demás añadidos, si algo falla devuelve False y el video queda
+    tal cual.
+    """
+    if not (ROTULOS_ON and ROTULOS_LARGOS_ON and tramos and video_in
+            and os.path.exists(video_in)):
+        return False
+    from PIL import Image
+    carpeta = tempfile.mkdtemp(prefix="rot_",
+                               dir=os.path.dirname(os.path.abspath(video_in)))
+    try:
+        cues, t = [], 0.0
+        for texto, dur in tramos:
+            if not dur or dur <= 0:
+                continue
+            for a, b, linea in subtitulos.cues(texto, dur):
+                cues.append((t + a, t + b, linea))
+            t += dur
+        if not cues:
+            return False
+        vacio = os.path.join(carpeta, "vacio.png")
+        Image.new("RGBA", (w, h), (0, 0, 0, 0)).save(vacio)
+        lista, cursor = [], 0.0
+        for i, (a, b, linea) in enumerate(cues):
+            p = os.path.join(carpeta, f"r{i:05d}.png")
+            if not subtitulos.rotulo_png(linea, (w, h), p, fuentes=_FUENTES):
+                continue
+            if a > cursor + 0.01:
+                lista.append((vacio, a - cursor))
+            lista.append((p, max(0.05, b - a)))
+            cursor = b
+        if not lista:
+            return False
+        lista.append((vacio, 1.0))
+        indice = os.path.join(carpeta, "lista.txt")
+        with open(indice, "w") as f:
+            for p, du in lista:
+                f.write(f"file '{p}'\nduration {du:.3f}\n")
+            f.write(f"file '{vacio}'\n")      # el concat pide repetir el último
+        salida = video_in + ".rot.mp4"
+        r = subprocess.run(
+            [_ffmpeg(), "-y", "-i", video_in,
+             "-f", "concat", "-safe", "0", "-i", indice,
+             "-filter_complex",
+             "[1:v]format=rgba[sub];"
+             "[0:v][sub]overlay=0:0:eof_action=pass:format=auto[v]",
+             "-map", "[v]", "-map", "0:a?",
+             "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+             "-c:a", "copy", "-movflags", "+faststart", salida],
+            capture_output=True, timeout=3600)
+        if (r.returncode == 0 and os.path.exists(salida)
+                and os.path.getsize(salida) > 0):
+            os.replace(salida, video_in)
+            log.info("💬 %d rótulos quemados en el video largo", len(cues))
+            return True
+        log.info("Rótulos del video largo no aplicados (%s)",
+                 (r.stderr or b"")[-300:].decode("utf-8", "ignore"))
+    except Exception as e:
+        log.info("Rótulos del video largo no aplicados (%s)", e)
+    finally:
+        shutil.rmtree(carpeta, ignore_errors=True)
+        with contextlib.suppress(OSError):
+            os.remove(video_in + ".rot.mp4")
+    return False
+
+
+def tramos_de(audios, textos):
+    """[(texto, segundos)] a partir de los MP3 de cada frase y su texto, o
+    [] si no casan (sin el mismo número de cada no se puede sincronizar)."""
+    if not audios or not textos or len(audios) != len(textos):
+        return []
+    return [(t, _duracion_audio(a)) for a, t in zip(audios, textos)]
+
+
 async def armar_video(audio_path, fotos_urls, titulo, salida_mp4,
                       horizontal=False, con_musica=False, cta_texto=None,
-                      chip=None, capitulos=(), montaje=None, guion=None):
+                      chip=None, capitulos=(), montaje=None, guion=None,
+                      tramos=None):
     """Construye el MP4 y, si es un short vertical con `cta_texto`, le añade
     una píldora de suscripción en los últimos segundos (segunda pasada
     aislada: si falla, el video queda igual). `chip` = nombre de serie que se
@@ -1034,6 +1144,10 @@ async def armar_video(audio_path, fotos_urls, titulo, salida_mp4,
             with contextlib.suppress(Exception):
                 await asyncio.to_thread(_aplicar_cta, salida_mp4, cta_texto,
                                         dur, VERT_W, VERT_H, 30)
+    if ok and horizontal and tramos:
+        with contextlib.suppress(Exception):
+            await asyncio.to_thread(_aplicar_rotulos_largo, salida_mp4,
+                                    tramos, HORIZ_W, HORIZ_H)
     return ok
 
 
@@ -1197,7 +1311,7 @@ async def _armar_video_base(audio_path, fotos_urls, titulo, salida_mp4,
         log.warning("Sin audio: no se puede armar el video")
         return False
 
-    w, h, fps = (1280, 720, 24) if horizontal else (VERT_W, VERT_H, 30)
+    w, h, fps = (HORIZ_W, HORIZ_H, 24) if horizontal else (VERT_W, VERT_H, 30)
     dur = _duracion_audio(audio_path) or 25.0
     tmp = tempfile.mkdtemp(prefix="video_")
     try:

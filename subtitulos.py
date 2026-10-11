@@ -220,6 +220,16 @@ CUERPO_MIN = 0.044
 #: Líneas como mucho. Tres ya es un párrafo tapando la imagen.
 LINEAS_PANTALLA = 3
 
+#: En HORIZONTAL (videos largos) el rótulo es un subtítulo de tele, no un
+#: cartel: con las medidas del vertical, en 16:9 tapaba un tercio de la
+#: pantalla. Más pequeño, dos líneas como mucho y abajo del todo (en un
+#: video largo no hay interfaz encima que esquivar).
+ALTO_ROTULO_H = 0.86
+ANCHO_UTIL_H = 0.80
+CUERPO_MAX_H = 0.034
+CUERPO_MIN_H = 0.025
+LINEAS_PANTALLA_H = 2
+
 #: El degradado del relleno: de blanco puro a gris acero.
 #: Blanco arriba, acero abajo. El extremo bajo NO baja más: el encargo
 #: era "blanca tirando a plateada", y por debajo de esto deja de leerse
@@ -290,7 +300,7 @@ def _degradado(tam, paso, y0):
     return lienzo
 
 
-def rotulo_png(texto, tam, salida, fuentes=(), alto=ALTO_ROTULO):
+def rotulo_png(texto, tam, salida, fuentes=(), alto=None):
     """Un PNG transparente del tamaño del vídeo con UN rótulo dibujado.
 
     Devuelve la ruta o None. None no rompe nada: el vídeo se queda sin
@@ -302,18 +312,22 @@ def rotulo_png(texto, tam, salida, fuentes=(), alto=ALTO_ROTULO):
     try:
         from PIL import Image, ImageDraw
         w, h = tam
-        ancho_max = int(w * ANCHO_UTIL)
+        apaisado = w > h
+        if alto is None:
+            alto = ALTO_ROTULO_H if apaisado else ALTO_ROTULO
+        ancho_max = int(w * (ANCHO_UTIL_H if apaisado else ANCHO_UTIL))
+        tope_lineas = LINEAS_PANTALLA_H if apaisado else LINEAS_PANTALLA
         # Se empieza grande y se baja hasta que quepa en las líneas
         # permitidas. Al revés —elegir el cuerpo por número de letras— es
         # lo que deja una línea saliéndose por la derecha.
         medidor = ImageDraw.Draw(Image.new("L", (8, 8)))
-        cuerpo = int(w * CUERPO_MAX)
-        piso = max(12, int(w * CUERPO_MIN))
+        cuerpo = int(w * (CUERPO_MAX_H if apaisado else CUERPO_MAX))
+        piso = max(12, int(w * (CUERPO_MIN_H if apaisado else CUERPO_MIN)))
         lineas, fnt = [], None
         while cuerpo >= piso:
             fnt = _fuente_pil(fuentes, cuerpo)
             lineas = _envolver_ancho(medidor, texto, fnt, ancho_max)
-            if len(lineas) <= LINEAS_PANTALLA:
+            if len(lineas) <= tope_lineas:
                 break
             cuerpo -= max(2, cuerpo // 18)
         if not lineas or fnt is None:
