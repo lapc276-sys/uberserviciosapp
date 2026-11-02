@@ -164,6 +164,21 @@ npm run build
 npx playwright test        # tests/ — recorrido guiado y disparo automático
 ```
 
+**No ejecutes `npm run build` con `npm run dev` encendido.** Los dos escriben
+en `.next/`. El build la reescribe, el servidor de desarrollo se queda sirviendo
+404 de sus propios chunks, y la página llega al navegador como HTML sin
+JavaScript: sin React, sin cámara, sin botones. Playwright entonces falla cinco
+de seis tests con timeouts que parecen un fallo del recorrido guiado y no lo
+son. Ya pasó una vez y costó media hora de diagnóstico.
+
+Si se rompe así: `rm -rf .next`, vuelve a construir, y deja que Playwright
+arranque su propio servidor (`reuseExistingServer` reutiliza lo que haya en el
+puerto 3000, bueno o roto).
+
+Y al leer el resultado, **no canalices la salida de Playwright por una tubería**
+(`| tail`) ni la termines con otro comando: el código de salida que ves pasa a
+ser el de `tail`, siempre 0, y una ejecución con cinco fallos parece correcta.
+
 Los tests de `tests/` cubren lo que no se puede revisar leyendo: que la cámara
 dispare sola, que el botón atrás retroceda, que repetir una foto no la
 duplique, y que el detector no se active con el teléfono quieto.
