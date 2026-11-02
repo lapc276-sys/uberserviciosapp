@@ -463,6 +463,14 @@ model Tenant {
   slug         String  @unique
   name         String
   contactEmail String
+  /**
+   * Where a new lead is texted, when they gave a number.
+   *
+   * Optional because email always works and a phone number is the one field
+   * that makes somebody abandon a signup form. The notifier falls back to
+   * email alone when this is empty.
+   */
+  contactPhone String?
   plan         String  @default("trial")
   active       Boolean @default(true)
   monthlyQuota Int     @default(50)

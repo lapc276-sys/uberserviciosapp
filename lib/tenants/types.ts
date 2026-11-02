@@ -77,6 +77,8 @@ export interface Tenant {
   slug: string;
   name: string;
   contactEmail: string;
+  /** E.164, when they gave one. A new lead is texted here as well as emailed. */
+  contactPhone?: string;
   plan: TenantPlan;
   active: boolean;
   /** Quotes allowed per calendar month. */

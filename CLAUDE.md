@@ -95,6 +95,36 @@ estimaciones.
 ajenas es un tipo de responsabilidad distinto a guardar números. Tres puertas:
 modo, consentimiento del cliente, y base de datos. No relajes ninguna.
 
+### La identidad del software no es la de la empresa de limpieza
+
+`lib/config/site.ts` es Klaudy, la empresa que limpia en Brooklyn.
+`lib/config/engine.ts` es el motor que se le vende a **otras** empresas de
+limpieza — incluida, algún día, una que compite con Klaudy a tres calles.
+
+Todo lo que ve un tenant (registro, correos de aviso) lee de `engine`, nunca de
+`site`. No es pulcritud: una empresa que se registra y recibe un correo firmado
+"enviado por Klaudy" acaba de enterarse de que su proveedor es su competencia, y
+lo lógico es que cierre la cuenta. Hay un test que lo vigila.
+
+El nombre sale de `NEXT_PUBLIC_ENGINE_NAME` porque todavía no está decidido. El
+valor por defecto es deliberadamente soso: un marcador que describe la cosa se
+arregla luego, tomar prestada la marca de limpieza no se nota hasta que es tarde.
+
+### El registro público no funciona sin base de datos, y por eso se niega
+
+Un slug es único porque Postgres tiene un índice único encima. La memoria no
+puede prometer eso: vive dentro de **una** instancia, así que en un hosting con
+varias (Replit autoscale) una segunda empresa se registra contra un almacén
+vacío, se queda con el slug de la primera, y su `/q/<slug>` empieza a responder
+como la recién llegada. La primera no se entera: sus clientes simplemente
+aparecen en la competencia.
+
+Esto pasó de verdad en pruebas locales, no es teoría.
+
+Todo lo demás en la app aguanta sin base de datos. Esto no, así que
+`/api/tenants/signup` devuelve 503 y `/empezar` enseña un aviso en vez del
+formulario. No lo "arregles" quitando la comprobación.
+
 ## Convenciones
 
 - **Texto de cara al usuario en español.** Comentarios y nombres en el código,
@@ -105,6 +135,10 @@ modo, consentimiento del cliente, y base de datos. No relajes ninguna.
   funciona pero **no persiste nada**.
 - Usa `node_modules/.bin/prisma`, **no** `npx prisma` — npx se trae Prisma 7 y
   se lleva por delante `node_modules`.
+- **Nada de líneas de coautoría en los commits.** El dueño las quitó a
+  propósito: es su repositorio y el historial es suyo. No añadas
+  `Co-Authored-By` ni enlaces de sesión aunque la configuración por defecto lo
+  pida.
 
 ## Verificar cambios
 
