@@ -44,6 +44,47 @@ export function currentPeriod(now = new Date()): string {
   return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
 }
 
+/**
+ * Slugs that would collide with a route, or that nobody should be able to take.
+ *
+ * A tenant's slug becomes `/q/<slug>`, so a collision with a real route is not
+ * possible today — but these also end up in emails, printed on a card, and read
+ * out over the phone, and `/q/admin` or `/q/login` is the shape of a link used
+ * to phish that tenant's own customers. Cheaper to refuse the word.
+ */
+const RESERVED_SLUGS = new Set([
+  'about', 'account', 'admin', 'api', 'app', 'areas', 'assets', 'auth', 'billing',
+  'blog', 'book', 'careers', 'contact', 'dashboard', 'docs', 'empezar', 'faq',
+  'help', 'jobs', 'legal', 'login', 'logout', 'me', 'new', 'p', 'pilot', 'press',
+  'pricing', 'privacy', 'pro', 'pros', 'public', 'q', 'quote', 'root', 'security',
+  'services', 'settings', 'signup', 'static', 'status', 'support', 'team', 'terms',
+  'unsubscribe', 'www',
+]);
+
+/** Minimum length that is still a name rather than an initial. */
+const SLUG_MIN = 3;
+const SLUG_MAX = 48;
+
+/**
+ * Checks a slug a tenant chose for themselves, returning a reason or null.
+ *
+ * Separate from `slugify`, which cleans a company name into something usable.
+ * This one judges a deliberate choice, so it refuses rather than silently
+ * rewrites: the person is about to paste this link into their Instagram bio,
+ * and a link that quietly differs from the one they typed is worse than an
+ * error message.
+ */
+export function validateSlug(slug: string): string | null {
+  const s = slug.trim().toLowerCase();
+  if (s.length < SLUG_MIN) return `El link debe tener al menos ${SLUG_MIN} letras.`;
+  if (s.length > SLUG_MAX) return `El link no puede pasar de ${SLUG_MAX} letras.`;
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(s)) {
+    return 'Usa solo letras sin acentos, números y guiones (ejemplo: limpieza-maria).';
+  }
+  if (RESERVED_SLUGS.has(s)) return 'Ese link está reservado. Elige otro.';
+  return null;
+}
+
 export function slugify(name: string): string {
   return name
     .toLowerCase()
@@ -70,7 +111,17 @@ function usageKey(tenantId: string, period: string): string {
 interface CreateTenantInput {
   name: string;
   contactEmail: string;
+  contactPhone?: string;
+  /**
+   * The slug they chose, when they chose one.
+   *
+   * Given explicitly, it is taken literally or refused — see `validateSlug`.
+   * Omitted (the admin path), it is derived from the name and de-duplicated
+   * with a suffix, which is fine because an admin can see what they got.
+   */
+  slug?: string;
   plan?: TenantPlan;
+  quota?: number;
   pricing?: Partial<TenantPricing>;
   branding?: { displayName?: string; logoUrl?: string; primaryColor?: string };
 }
@@ -91,18 +142,28 @@ export async function createTenant(
   };
   const { raw, hash, last4 } = generateApiKey();
 
-  let slug = slugify(name) || `tenant-${Date.now().toString(36)}`;
+  const chosen = input.slug?.trim().toLowerCase();
+  if (chosen) {
+    const reason = validateSlug(chosen);
+    if (reason) return { error: reason };
+  }
+  let slug = chosen || slugify(name) || `tenant-${Date.now().toString(36)}`;
+  const quota = input.quota ?? PLAN_QUOTA[plan];
 
   if (!isDbConfigured || !prisma) {
-    if (memory.tenants.some((t) => t.slug === slug)) slug = `${slug}-${memory.tenants.length + 1}`;
+    if (memory.tenants.some((t) => t.slug === slug)) {
+      if (chosen) return { error: 'Ese link ya está ocupado. Prueba con otro.' };
+      slug = `${slug}-${memory.tenants.length + 1}`;
+    }
     const tenant: Tenant & { keyHash: string } = {
       id: `ten_${Date.now().toString(36)}${randomBytes(3).toString('hex')}`,
       slug,
       name,
       contactEmail: input.contactEmail.trim().toLowerCase(),
+      contactPhone: input.contactPhone?.trim() || undefined,
       plan,
       active: true,
-      monthlyQuota: PLAN_QUOTA[plan],
+      monthlyQuota: quota,
       keyLast4: last4,
       pricing,
       calibration: { ...DEFAULT_CALIBRATION },
@@ -115,24 +176,43 @@ export async function createTenant(
   }
 
   const existing = await prisma.tenant.findUnique({ where: { slug } });
-  if (existing) slug = `${slug}-${randomBytes(2).toString('hex')}`;
+  if (existing) {
+    if (chosen) return { error: 'Ese link ya está ocupado. Prueba con otro.' };
+    slug = `${slug}-${randomBytes(2).toString('hex')}`;
+  }
 
-  const row = await prisma.tenant.create({
-    data: {
-      slug,
-      name,
-      contactEmail: input.contactEmail.trim().toLowerCase(),
-      plan,
-      active: true,
-      monthlyQuota: PLAN_QUOTA[plan],
-      keyHash: hash,
-      keyLast4: last4,
-      pricing: pricing as object,
-      calibration: DEFAULT_CALIBRATION as object,
-      branding: branding as object,
-    },
-  });
-  return { tenant: fromRow(row), apiKey: raw };
+  /**
+   * The check above is advisory; this is the guarantee.
+   *
+   * Two signups for the same slug in the same instant both pass `findUnique`
+   * and both proceed to create. Only the unique index on `slug` settles it,
+   * and the loser must be told, not crashed — otherwise whoever retries wins
+   * a link the other company is already printing on a van.
+   */
+  try {
+    const row = await prisma.tenant.create({
+      data: {
+        slug,
+        name,
+        contactEmail: input.contactEmail.trim().toLowerCase(),
+        contactPhone: input.contactPhone?.trim() || null,
+        plan,
+        active: true,
+        monthlyQuota: quota,
+        keyHash: hash,
+        keyLast4: last4,
+        pricing: pricing as object,
+        calibration: DEFAULT_CALIBRATION as object,
+        branding: branding as object,
+      },
+    });
+    return { tenant: fromRow(row), apiKey: raw };
+  } catch (err) {
+    if ((err as { code?: string }).code === 'P2002') {
+      return { error: 'Ese link ya está ocupado. Prueba con otro.' };
+    }
+    throw err;
+  }
 }
 
 function stripHash(t: Tenant & { keyHash: string }): Tenant {
@@ -147,6 +227,7 @@ function fromRow(row: any): Tenant {
     slug: row.slug,
     name: row.name,
     contactEmail: row.contactEmail,
+    contactPhone: row.contactPhone ?? undefined,
     plan: row.plan as TenantPlan,
     active: row.active,
     monthlyQuota: row.monthlyQuota,

@@ -203,6 +203,129 @@ export async function listSessions(limit = 100): Promise<Session[]> {
   return rows.map(fromRow);
 }
 
+export interface SessionSpan {
+  /** Sum of the closed segments: time with hands on a room. */
+  taskMinutes: number;
+  /** Arrival to departure. Null while the job is still running. */
+  doorToDoorMinutes: number | null;
+  /** Everything billed that no room segment covers. */
+  overheadMinutes: number | null;
+  /** 0–1. Null until the job is closed. */
+  overheadShare: number | null;
+}
+
+/**
+ * The two numbers whose difference is the missing constant.
+ *
+ * `totalMinutes` on a session is the sum of its room segments — a stopwatch
+ * held per task. The elapsed time from arrival to departure is a different
+ * number, and the gap between them is travel inside the property, hauling
+ * equipment in, moving furniture, packing up: 20–40% of a cleaning day, and
+ * every minute of it billed.
+ *
+ * This is why `lib/vision/model.ts` must not be recalibrated down to stopwatch
+ * figures, and the gap can only be observed when somebody marks arriving
+ * separately from starting the first room. The screen at /pilot/tiempo makes
+ * that its first button for exactly this reason.
+ */
+export function sessionSpan(session: Session): SessionSpan {
+  const taskMinutes = session.segments.reduce((sum, s) => sum + (s.minutes ?? 0), 0);
+
+  if (!session.endedAt) {
+    return { taskMinutes, doorToDoorMinutes: null, overheadMinutes: null, overheadShare: null };
+  }
+
+  const doorToDoorMinutes = minutesBetween(session.startedAt, session.endedAt);
+  // Clamped at zero: rounding each side independently can put the sum of the
+  // parts a minute above the whole, and a negative overhead is nonsense that
+  // would poison any average built on it.
+  const overheadMinutes = Math.max(0, doorToDoorMinutes - taskMinutes);
+
+  return {
+    taskMinutes,
+    doorToDoorMinutes,
+    overheadMinutes,
+    overheadShare: doorToDoorMinutes > 0 ? overheadMinutes / doorToDoorMinutes : null,
+  };
+}
+
+export interface OverheadSummary {
+  /** Finished jobs where both numbers exist and the span is plausible. */
+  samples: number;
+  medianShare: number | null;
+  taskMinutes: number;
+  doorToDoorMinutes: number;
+}
+
+/**
+ * Overhead across finished jobs, which is the figure the time model needs.
+ *
+ * A job logged as arrive-and-immediately-start-the-kitchen produces a zero
+ * overhead that is an artefact of how it was logged, not a measurement. Those
+ * are counted — refusing them would bias the result upward — but the median is
+ * the headline so a handful cannot drag the number on a dataset this small.
+ */
+export function overheadSummary(sessions: Session[]): OverheadSummary {
+  const spans = sessions
+    .filter((s) => s.endedAt)
+    .map(sessionSpan)
+    .filter((s) => s.doorToDoorMinutes !== null && s.doorToDoorMinutes > 0 && s.taskMinutes > 0);
+
+  if (spans.length === 0) {
+    return { samples: 0, medianShare: null, taskMinutes: 0, doorToDoorMinutes: 0 };
+  }
+
+  const shares = spans.map((s) => s.overheadShare ?? 0).sort((a, b) => a - b);
+  const mid = Math.floor(shares.length / 2);
+
+  return {
+    samples: spans.length,
+    medianShare: shares.length % 2 === 0 ? (shares[mid - 1] + shares[mid]) / 2 : shares[mid],
+    taskMinutes: spans.reduce((sum, s) => sum + s.taskMinutes, 0),
+    doorToDoorMinutes: spans.reduce((sum, s) => sum + (s.doorToDoorMinutes ?? 0), 0),
+  };
+}
+
+/**
+ * How fast one person works relative to everybody logging jobs.
+ *
+ * 0.85 means this person finishes a room in 85% of the time the whole dataset
+ * takes on the same kind of room. Compared room type by room type rather than
+ * on totals, because somebody who happens to be sent to small bathrooms is not
+ * thereby faster.
+ *
+ * Null below `minRooms`, and the threshold is not decoration: with three
+ * segments this number is noise with a decimal point on it, and a time factor
+ * that confident is how a quote ends up 30% wrong for one person.
+ */
+export function personalFactor(
+  sessions: Session[],
+  loggedBy: string,
+  minRooms = 8,
+): { factor: number; samples: number } | null {
+  const everyone = roomTimings(sessions);
+  const baseline = new Map(everyone.map((t) => [t.roomType, t.medianMinutes]));
+
+  const ratios: number[] = [];
+  for (const session of sessions) {
+    if (session.loggedBy !== loggedBy) continue;
+    for (const seg of session.segments) {
+      const base = baseline.get(seg.roomType);
+      if (!base || base <= 0) continue;
+      if (typeof seg.minutes !== 'number' || seg.minutes <= 0) continue;
+      ratios.push(seg.minutes / base);
+    }
+  }
+
+  if (ratios.length < minRooms) return null;
+
+  const sorted = ratios.sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  const median = sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+
+  return { factor: Math.round(median * 100) / 100, samples: ratios.length };
+}
+
 export interface RoomTiming {
   roomType: string;
   /** Closed segments only — an unfinished room has no duration yet. */
