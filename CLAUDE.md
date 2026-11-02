@@ -41,6 +41,22 @@ factura**. Bajar la base a lo que dice el cronómetro subestimaría cada trabajo
 Falta un dato para resolverlo: **tiempo de puerta a puerta**. Hasta tenerlo, las
 constantes son hipótesis y así están documentadas.
 
+**Ese dato ya se puede medir: `/pilot/tiempo`.** El limpiador toca *Llegué* en
+la puerta, cada cuarto según lo empieza, *Parar* cuando no está en ninguno, y
+*Me voy* al salir. De ahí salen las dos cifras cuya diferencia es la constante
+que falta: `startedAt → endedAt` es el puerta a puerta, y la suma de los
+segmentos es el tiempo con las manos en los cuartos.
+
+**El botón de *Llegué* no es decoración.** Si la sesión arrancara con el primer
+cuarto, el puerta a puerta y el tiempo de tarea serían el mismo número y el
+sobrecoste saldría 0% siempre — mediríamos con precisión justo lo que ya
+sabíamos. Por eso es el primer botón y está separado.
+
+`overheadSummary()` da la mediana entre trabajos, no la media: un día en que
+alguien se dejó el reloj corriendo durante la comida arrastraría una media y no
+habrá muestras suficientes para que eso se diluya en mucho tiempo. El panel
+`/admin/timings` lo enseña arriba del todo y avisa por debajo de 5 trabajos.
+
 Solapamiento conocido y deliberadamente sin resolver: `countertop` y
 `backsplash` están en la tabla de objetos y `ROOM_BASE_MINUTES` probablemente
 también cubre limpiar encimeras. Está explicado en `model.ts`.
