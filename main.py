@@ -55,6 +55,7 @@ import telegram_bot
 import revisar
 import telemetria
 import radio_equipo
+import clips_f1
 import velocidades
 import youtube_subir
 import redes_sociales
@@ -664,7 +665,8 @@ async def lifespan(app: FastAPI):
               asyncio.create_task(bucle_chat()),
               asyncio.create_task(bucle_telegram()),
               asyncio.create_task(radio_equipo.bucle(estado,
-                                                     OPENAI_API_KEY))]
+                                                     OPENAI_API_KEY)),
+              asyncio.create_task(clips_f1.bucle(estado, YOUTUBE_API_KEY))]
     yield
     for t in tareas:
         t.cancel()
@@ -2555,6 +2557,8 @@ async def apex():
         "leaderboard": t.tabla() if t else [],
         "incidentes": list(reversed(t.incidentes)) if t else [],
         "sanciones": list(reversed(getattr(t, "sanciones", []))) if t else [],
+        "clip_f1": ((getattr(estado, "clips_f1", None) or [None])[-1]
+                    if t else None),
         "radios": [{"acr": r["acr"], "texto": r["texto"],
                     "vuelta": r.get("vuelta", 0)}
                    for r in reversed(getattr(estado, "radios", [])[-2:])]
@@ -3360,6 +3364,9 @@ async def visor():
   #incidentes .inc.radio { border-left: 3px solid #a46cff; padding-left: 7px;
     background: rgba(164, 108, 255, 0.12); font-style: italic; }
   #incidentes .inc.radio .lapn { color: #c9a8ff; font-style: normal; }
+  #incidentes .inc.clip { border-left: 3px solid #3fa9f5; padding-left: 7px;
+    background: rgba(63, 169, 245, 0.12); }
+  #incidentes .inc.clip .lapn { color: #8fd0ff; }
   #right-col { display: flex; flex-direction: column; gap: 14px; }
   /* Duelo cara a cara. El primero va grande (es el que se está contando);
      los demás quedan compactos debajo para dar contexto sin robar sitio. */
@@ -6044,6 +6051,16 @@ async function tick() {
   // esta función que se recorren sin red llevan ahora su respaldo.
   // Las sanciones van FIJAS arriba y en rojo (hasta 3); el resto de
   // mensajes rellena hasta 6. Si no, los límites de pista las tapaban.
+  // El último clip que ha publicado F1 (solo su título: el video no se
+  // emite), arriba del todo.
+  if (d.clip_f1 && d.clip_f1.titulo) {
+    const el = document.createElement('div'); el.className = 'inc clip';
+    const sp = document.createElement('span'); sp.className = 'lapn';
+    sp.textContent = '🎬 F1';
+    const tx = document.createElement('span'); tx.textContent = d.clip_f1.titulo;
+    el.appendChild(sp); el.appendChild(tx);
+    inc.appendChild(el);
+  }
   // Las dos últimas radios de piloto (transcritas), en morado, arriba.
   for (const r of (d.radios || []).slice(0, 2)) {
     const el = document.createElement('div'); el.className = 'inc radio';
@@ -6983,6 +7000,14 @@ async def narrar_datos(client: anthropic.AsyncAnthropic, eventos):
         pedido = ("NEW EVENTS (from live telemetry):\n" + "\n".join(eventos)
                   + "\nCall them, explain what they change, and NEVER "
                   "return an empty lineas array.")
+        if any(e.startswith("OFFICIAL F1 CLIP") for e in eventos):
+            pedido += (
+                "\nOFFICIAL F1 CLIP: Formula 1 has just posted a clip with "
+                "that title. You have NOT seen the video — you only have the "
+                "title. Say it as what it is ('F1 have just put out the clip "
+                "of…'), react to it, and add context from the race data. Do "
+                "NOT describe images, angles or details the title does not "
+                "state. You may tell viewers it is on F1's own channel.")
         if any(e.startswith("TEAM RADIO") for e in eventos):
             pedido += (
                 "\nTEAM RADIO is an automatic transcription of the real "
