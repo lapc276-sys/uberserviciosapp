@@ -89,7 +89,13 @@ export function QuickQuote({ locale }: { locale: Locale }) {
     }
   }
 
-  async function priceFromCamera(frames: string[], captions: string[] | undefined, slug: string, focus?: string) {
+  async function priceFromCamera(
+    frames: string[],
+    captions: string[] | undefined,
+    slug: string,
+    focus?: string,
+    depthChoices?: Record<string, 'surface' | 'deep'>,
+  ) {
     setBusy(true);
     setError('');
     setPriced(null);
@@ -97,7 +103,7 @@ export function QuickQuote({ locale }: { locale: Locale }) {
       const res = await fetch('/api/vision/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ frames, captions, serviceSlug: slug, focus, city: 'Brooklyn' }),
+        body: JSON.stringify({ frames, captions, serviceSlug: slug, focus, depthChoices, city: 'Brooklyn' }),
       });
       const { data, failure } = await readJson<any>(res);
       if (failure || !data || !res.ok) {
@@ -210,8 +216,8 @@ export function QuickQuote({ locale }: { locale: Locale }) {
             ← {locale === 'es' ? 'Volver al formulario' : 'Back to the form'}
           </button>
           <GuidedCapture
-            onComplete={({ frames, captions, serviceSlug: chosen, focus }) =>
-              priceFromCamera(frames, captions, chosen, focus)
+            onComplete={({ frames, captions, serviceSlug: chosen, focus, depthChoices }) =>
+              priceFromCamera(frames, captions, chosen, focus, depthChoices)
             }
           />
         </div>

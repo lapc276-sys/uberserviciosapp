@@ -12,6 +12,8 @@ import { planSupplies } from './supplies';
 import {
   ROOM_BASE_MINUTES,
   objectMinutesFor,
+  depthChoiceFor,
+  type DepthChoices,
   HOUSEHOLD_SIGNALS,
   countCapFor,
   MAX_OBJECT_MINUTES_MULTIPLE,
@@ -87,6 +89,7 @@ function roomMinutes(
   soil: SoilScores,
   baseOverrides: Partial<Record<RawRoomObservation['type'], number>>,
   serviceSlug: string,
+  depthChoices?: DepthChoices,
 ): { scalable: number; objectMinutes: number } {
   const base = baseOverrides[room.type] ?? ROOM_BASE_MINUTES[room.type] ?? ROOM_BASE_MINUTES.other;
   const weights = soilWeightsFor(room.type);
@@ -104,7 +107,7 @@ function roomMinutes(
   // again below.
   const objectMinutes = room.objects.reduce((sum, obj) => {
     const key = obj.name.trim().toLowerCase();
-    const cost = objectMinutesFor(key, serviceSlug);
+    const cost = objectMinutesFor(key, serviceSlug, depthChoiceFor(key, room.type, depthChoices));
     if (!cost) return sum;
     const count = Math.max(1, Math.min(obj.count || 1, countCapFor(key)));
     const weight = Math.max(0.3, Math.min(obj.confidence || 0.5, 1));
@@ -153,11 +156,20 @@ export interface EstimateOptions {
   };
   /** Scales supply costs into the tenant's market. */
   supplyCostMultiplier?: number;
+  /**
+   * What the customer answered during the walkthrough about opening things up.
+   *
+   * These beat the service default in both directions — see objectMinutesFor.
+   * A standard clean where somebody said yes to the oven is no longer a
+   * standard clean's worth of oven, and the price has to say so before the
+   * crew arrives rather than after.
+   */
+  depthChoices?: DepthChoices;
 }
 
 export function buildAnalysis(
   observations: RawRoomObservation[],
-  { serviceSlug, source, warnings = [], calibration, supplyCostMultiplier }: EstimateOptions,
+  { serviceSlug, source, warnings = [], calibration, supplyCostMultiplier, depthChoices }: EstimateOptions,
 ): PropertyAnalysis {
   const labels = labelRooms(observations);
 
@@ -173,7 +185,7 @@ export function buildAnalysis(
   const rooms: RoomAnalysis[] = observations.map((obs, i) => {
     const observed = normalizeSoil(obs.soil);
     const { soil, fired } = applyHouseholdSignals(observed, obs.objects);
-    const parts = roomMinutes(obs, soil, baseOverrides, serviceSlug);
+    const parts = roomMinutes(obs, soil, baseOverrides, serviceSlug, depthChoices);
     const minutes = parts.scalable * multiplier + parts.objectMinutes * timeFactor;
     return {
       type: obs.type,

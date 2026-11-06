@@ -239,10 +239,64 @@ const DEEP_SERVICES = new Set([
   'post-construction-cleaning',
 ]);
 
-export function objectMinutesFor(name: string, serviceSlug: string): number {
+export type ObjectDepth = 'surface' | 'deep';
+
+/**
+ * What the customer said about one kind of object, during the walkthrough.
+ *
+ * Keyed `"<roomType>:<object>"` for an answer about one room, or plain
+ * `"<object>"` for one that applies everywhere. The specific key wins.
+ *
+ * Known limitation, accepted rather than hidden: two bathrooms share an
+ * answer. Keying by the capture's space id would separate them, but the
+ * model does not return that id — it is told to use captions for room
+ * identity, not to echo them back — so honouring it would mean trusting a
+ * model to repeat an identifier, which is a worse failure than two showers
+ * being cleaned to the same depth.
+ */
+export type DepthChoices = Record<string, ObjectDepth>;
+
+export function depthChoiceFor(
+  name: string,
+  roomType: string,
+  choices?: DepthChoices,
+): ObjectDepth | undefined {
+  if (!choices) return undefined;
+  return choices[`${roomType}:${name}`] ?? choices[name];
+}
+
+/**
+ * Minutes for one object, at the depth that actually applies.
+ *
+ * The service decides by default — a maintenance clean wipes the oven front,
+ * a deep clean empties it — but an explicit answer beats the default in both
+ * directions. Somebody buying a standard clean who says yes to the inside of
+ * the oven is buying 14 minutes instead of 1.5, and somebody buying a deep
+ * clean who says "don't bother with the fridge" should not be billed 12.
+ */
+export function objectMinutesFor(
+  name: string,
+  serviceSlug: string,
+  depth?: ObjectDepth,
+): number {
   const cost = OBJECT_TIME_COST[name];
   if (!cost) return 0;
-  return DEEP_SERVICES.has(serviceSlug) ? cost.deep : cost.surface;
+  const chosen = depth ?? (DEEP_SERVICES.has(serviceSlug) ? 'deep' : 'surface');
+  return chosen === 'deep' ? cost.deep : cost.surface;
+}
+
+/**
+ * How much a yes to "inside it?" is worth, in minutes.
+ *
+ * This is what makes a question worth interrupting somebody for. An oven is
+ * 1.5 minutes wiped and 14 opened up; a light switch is the same either way
+ * and asking about it spends the one thing a walkthrough cannot buy back,
+ * which is the person's patience.
+ */
+export function depthGapFor(name: string): number {
+  const cost = OBJECT_TIME_COST[name];
+  if (!cost) return 0;
+  return Math.max(0, cost.deep - cost.surface);
 }
 
 export function isDeepService(serviceSlug: string): boolean {
