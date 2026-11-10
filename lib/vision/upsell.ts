@@ -59,57 +59,101 @@ export interface RoomQuestion {
   yes: ObjectDepth;
 }
 
-/** Spanish names for the objects worth asking about. */
-const OBJECT_ES: Record<string, string> = {
-  oven: 'el horno',
-  refrigerator: 'la nevera',
-  freezer: 'el congelador',
-  microwave: 'el microondas',
-  dishwasher: 'el lavavajillas',
-  cabinet: 'los gabinetes',
-  pantry: 'la despensa',
-  closet: 'el armario',
-  drawer: 'los cajones',
-  washing_machine: 'la lavadora',
-  dryer: 'la secadora',
-  shower: 'la ducha',
-  bathtub: 'la bañera',
-  toilet: 'el inodoro',
-  window: 'las ventanas',
-  blinds: 'las persianas',
-  range_hood: 'la campana',
-  grill: 'la parrilla',
-  toaster: 'la tostadora',
-  coffee_maker: 'la cafetera',
+/**
+ * What a yes buys, said in Spanish, per object.
+ *
+ * Keyed by the catalogue's own names — which use spaces ("range hood"), a
+ * detail the first version of this table got wrong with underscores, so half
+ * its entries never matched and the fallback asked about "el range hood".
+ *
+ * Each entry is the whole verb phrase rather than a noun dropped into one
+ * template, because one template does not survive contact with the list:
+ * an oven is cleaned "por dentro", a closet is emptied, a sofa is vacuumed,
+ * and nobody can clean the outside of a fourth-floor window. An object with
+ * no entry is not asked about at all — a missing question costs one upsell,
+ * a question in two languages costs the customer's belief that anyone
+ * checked this.
+ */
+const ASK: Record<string, string | ((roomType: RoomType) => string)> = {
+  // Cocina
+  oven: 'limpiemos el horno por dentro',
+  stove: 'hagamos la estufa a fondo, con quemadores y parrillas',
+  cooktop: 'hagamos la placa de la cocina a fondo',
+  'range hood': 'hagamos la campana a fondo, filtros incluidos',
+  refrigerator: 'limpiemos la nevera por dentro',
+  fridge: 'limpiemos la nevera por dentro',
+  freezer: 'limpiemos el congelador por dentro',
+  microwave: 'limpiemos el microondas por dentro',
+  dishwasher: 'limpiemos el lavavajillas por dentro',
+  'toaster oven': 'limpiemos el horno tostador por dentro',
+  'air fryer': 'limpiemos la freidora de aire por dentro',
+  sink: (room) =>
+    room === 'bathroom' ? 'hagamos el lavamanos a fondo' : 'hagamos el fregadero a fondo',
+  backsplash: 'hagamos a fondo los azulejos de la cocina',
+  countertop: 'despejemos y limpiemos toda la encimera',
+  'kitchen island': 'despejemos y limpiemos toda la isla de la cocina',
+  cabinet: 'vaciemos y limpiemos los gabinetes por dentro',
+  drawer: 'vaciemos y limpiemos los cajones por dentro',
+  pantry: 'vaciemos y limpiemos la despensa por dentro',
+  'trash can': 'lavemos el cubo de basura por dentro',
+
+  // Baño
+  toilet: 'hagamos el inodoro a fondo, base y juntas incluidas',
+  bidet: 'hagamos el bidé a fondo',
+  shower: 'hagamos la ducha a fondo, juntas incluidas',
+  bathtub: 'hagamos la bañera a fondo, juntas incluidas',
+  'shower door': 'quitemos la cal de la mampara de la ducha',
+  'shower curtain': 'lavemos la cortina de la ducha',
+  vanity: 'vaciemos y limpiemos el mueble del baño por dentro',
+  'medicine cabinet': 'vaciemos y limpiemos el botiquín por dentro',
+  'exhaust fan': 'limpiemos el extractor a fondo',
+
+  // Dormitorio y sala
+  closet: 'vaciemos y limpiemos el armario por dentro',
+  wardrobe: 'vaciemos y limpiemos el ropero por dentro',
+  dresser: 'vaciemos y limpiemos la cómoda por dentro',
+  bookshelf: 'limpiemos la estantería quitando todo de los estantes',
+  desk: 'despejemos y limpiemos el escritorio',
+  bed: 'limpiemos también debajo y alrededor de la cama',
+  'bunk bed': 'limpiemos la litera a fondo',
+  mattress: 'aspiremos el colchón a fondo',
+  sofa: 'aspiremos el sofá a fondo, cojines incluidos',
+  couch: 'aspiremos el sofá a fondo, cojines incluidos',
+  carpet: 'tratemos las manchas de la alfombra',
+  rug: 'tratemos las manchas de la alfombra',
+  curtains: 'aspiremos las cortinas a fondo',
+  blinds: 'limpiemos las persianas lama por lama',
+  // Inside only. Nobody is leaning out of a fourth-floor window, and a
+  // question must not sell what the crew cannot safely do.
+  window: 'limpiemos las ventanas por dentro, con marcos y rieles',
+  baseboard: 'limpiemos los rodapiés uno por uno',
+  'ceiling fan': 'limpiemos el ventilador de techo a fondo',
+  chandelier: 'limpiemos la lámpara de araña pieza por pieza',
+  radiator: 'limpiemos el radiador a fondo',
+  fireplace: 'limpiemos la chimenea a fondo',
+  piano: 'limpiemos el piano a fondo',
+
+  // Lavadero y exterior
+  'washing machine': 'limpiemos la lavadora por dentro',
+  dryer: 'limpiemos la secadora por dentro',
+  balcony: 'hagamos el balcón a fondo',
+
+  // Bebés y mascotas
+  crib: 'limpiemos la cuna a fondo',
+  'high chair': 'limpiemos la silla alta del bebé a fondo',
+  playpen: 'limpiemos el corral del bebé a fondo',
+  stroller: 'limpiemos el cochecito a fondo',
+  'litter box': 'vaciemos y lavemos el arenero del gato',
+  'pet bed': 'lavemos la cama de la mascota',
+  'pet crate': 'limpiemos la jaula de la mascota a fondo',
 };
 
-function spanishFor(name: string): string {
-  return OBJECT_ES[name] ?? `el ${name.replace(/_/g, ' ')}`;
-}
-
-/**
- * Phrasing per object, because "¿quieres limpiar dentro de las ventanas?"
- * is not Spanish. The fallback covers anything added to the catalogue later
- * without anyone remembering to come back here.
- */
-function promptFor(name: string): string {
-  const es = spanishFor(name);
-  switch (name) {
-    case 'window':
-    case 'blinds':
-      return `¿Quieres que limpiemos ${es} por dentro y por fuera?`;
-    case 'cabinet':
-    case 'drawer':
-    case 'pantry':
-    case 'closet':
-      return `¿Quieres que vaciemos y limpiemos ${es} por dentro?`;
-    case 'toilet':
-    case 'shower':
-    case 'bathtub':
-      return `¿Quieres que hagamos ${es} a fondo, juntas incluidas?`;
-    default:
-      return `¿Quieres que limpiemos ${es} por dentro?`;
-  }
+/** The Spanish question for an object, or null when there is none to ask. */
+export function promptFor(name: string, roomType: RoomType): string | null {
+  const entry = ASK[name];
+  if (!entry) return null;
+  const phrase = typeof entry === 'function' ? entry(roomType) : entry;
+  return `¿Quieres que ${phrase}?`;
 }
 
 /**
@@ -147,19 +191,21 @@ export function questionsForRoom(
       .filter((o) => OBJECT_TIME_COST[o.name])
       .filter((o) => (o.confidence ?? 0.5) >= MIN_CONFIDENCE)
       .filter((o) => depthGapFor(o.name) >= MIN_GAP_MINUTES)
-      // One question per kind of thing: two fridges in one kitchen is one
-      // question about fridges, not two identical prompts in a row.
-      .filter((o) => (seen.has(o.name) ? false : (seen.add(o.name), true)))
-      .map((o) => ({ object: o, minutes: gapMinutes(o) }))
-      .sort((a, b) => b.minutes - a.minutes);
+      .map((o) => ({ object: o, minutes: gapMinutes(o), prompt: promptFor(o.name, roomType) }))
+      .filter((c): c is { object: DetectedObject; minutes: number; prompt: string } => c.prompt !== null)
+      .sort((a, b) => b.minutes - a.minutes)
+      // One question per kind of thing, judged by the question itself: two
+      // fridges are one question, and so are a "sofa" and a "couch", which the
+      // catalogue lists separately and the customer would hear as an echo.
+      .filter((c) => (seen.has(c.prompt) ? false : (seen.add(c.prompt), true)));
 
-    for (const { object, minutes } of candidates.slice(0, MAX_QUESTIONS_PER_ROOM)) {
+    for (const { object, minutes, prompt } of candidates.slice(0, MAX_QUESTIONS_PER_ROOM)) {
       questions.push({
         id: `${roomType}:${object.name}`,
         kind: 'depth',
         object: object.name,
         roomType,
-        prompt: promptFor(object.name),
+        prompt,
         extraMinutes: Math.round(minutes),
         yes: 'deep',
       });

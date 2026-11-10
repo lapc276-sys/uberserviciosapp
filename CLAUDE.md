@@ -105,6 +105,39 @@ veces, que es lo que hacía el código antes.
 Valores marcados `MEASURED` vienen de una jornada real. El resto son
 estimaciones.
 
+### El precio sale de lo que la cámara vio, nunca de quién es el cliente
+
+`lib/vision/materials.ts` sube el precio cuando hay mármol, acero inoxidable o
+grifería de acabado especial. Parece un recargo "a los ricos" y no lo es: es el
+producto distinto y la pasada más lenta que esa superficie exige, y por eso cada
+minuto cobrado sale escrito en la nota del cuarto junto al material que lo
+causó. Un recargo que no se puede explicar a la cara del cliente no entra.
+
+Lo que **no** entra, se pida como se pida:
+
+- **Marcas.** El modelo tiene prohibido reportarlas y `knownMaterials()`
+  descarta todo lo que no esté en la tabla. "Tiene un Sub-Zero" es cobrar por
+  riqueza con un paso extra; si una cocina industrial da más trabajo, se captura
+  la parrilla pesada, no el logo.
+- **El código postal o los ingresos del cliente.** Nueva York tiene desde
+  noviembre de 2025 la *Algorithmic Pricing Disclosure Act*: un precio fijado
+  por un algoritmo con datos personales del consumidor debe llevar al lado la
+  frase *"THIS PRICE WAS SET BY AN ALGORITHM USING YOUR PERSONAL DATA"*. Quien
+  meta el ZIP del cliente en el cálculo está obligando a poner esa frase debajo
+  del precio. (Esto no es consejo legal; antes de tocarlo, un abogado.)
+
+Dos umbrales a propósito: se **avisa** al equipo con confianza ≥ 0,35 y se
+**cobra** al cliente solo con ≥ 0,5. Un aviso de más no cuesta nada; uno de
+menos cuesta una encimera; un minuto mal cobrado cuesta una discusión.
+
+Los `extraMinutes` son **hipótesis sin medir**, pequeños adrede (toda la tabla
+suma menos de 10 min por cuarto). Misma regla que las constantes de tiempo: no
+se ajustan con cuatro trabajos.
+
+Y las advertencias se calculan contra los productos **realmente planificados**
+para ese trabajo: "el antical que llevas para la ducha marca el mármol del
+lavamanos" solo existe cuando se conocen las dos mitades.
+
 ### El archivo de fotogramas viene apagado
 
 `VISION_ARCHIVE_MODE=off` por defecto. Guardar fotos del interior de casas

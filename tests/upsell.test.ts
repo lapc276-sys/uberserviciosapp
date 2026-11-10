@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { questionsForRoom, depthChoicesFrom, noteFrom, MAX_QUESTIONS_PER_ROOM } from '../lib/vision/upsell';
+import { questionsForRoom, depthChoicesFrom, noteFrom, promptFor, MAX_QUESTIONS_PER_ROOM } from '../lib/vision/upsell';
+import { depthGapFor } from '../lib/vision/model';
 import { objectMinutesFor, depthChoiceFor, OBJECT_TIME_COST } from '../lib/vision/model';
 import { buildAnalysis } from '../lib/vision/estimate';
 import { EMPTY_SOIL, type RawRoomObservation, type SoilScores } from '../lib/vision/types';
@@ -41,7 +42,7 @@ test('it does not ask about things that cost the same either way', () => {
 test('the biggest money is asked about first, and the tail is cut', () => {
   const questions = questionsForRoom(
     'kitchen',
-    [obj('toaster'), obj('coffee_maker'), obj('microwave'), obj('oven'), obj('refrigerator'), obj('dishwasher')],
+    [obj('toaster'), obj('coffee maker'), obj('microwave'), obj('oven'), obj('refrigerator'), obj('dishwasher')],
     soil(),
   );
 
@@ -158,4 +159,43 @@ test('the crew is told about tidying, in words, not minutes', () => {
   const note = noteFrom(questions, { 'bedroom:declutter': true });
   assert.ok(note && note.includes('bedroom'));
   assert.equal(noteFrom(questions, { 'bedroom:declutter': false }), undefined);
+});
+
+test('every object worth asking about can be asked about in Spanish', () => {
+  // The first version of the phrase table was keyed with underscores while
+  // the catalogue uses spaces, so "range hood" never matched and the customer
+  // was asked about "el range hood". An object with no phrase is skipped
+  // rather than asked in two languages, so a gap here is a silent lost
+  // upsell — which is why it is counted instead of trusted.
+  const missing = Object.keys(OBJECT_TIME_COST)
+    .filter((name) => depthGapFor(name) >= 2)
+    .filter((name) => promptFor(name, 'kitchen') === null);
+
+  assert.deepEqual(missing, [], `no Spanish question for: ${missing.join(', ')}`);
+});
+
+test('a question never leaks the English catalogue name', () => {
+  for (const name of Object.keys(OBJECT_TIME_COST)) {
+    const prompt = promptFor(name, 'kitchen');
+    if (!prompt || !name.includes(' ')) continue;
+    assert.ok(!prompt.includes(name), `"${name}" appears untranslated in: ${prompt}`);
+  }
+});
+
+test('nobody is sold the outside of a window', () => {
+  // The crew is not leaning out of a fourth floor, and a question must not
+  // sell what cannot safely be delivered.
+  const prompt = promptFor('window', 'living_room');
+  assert.ok(prompt && prompt.includes('por dentro'));
+  assert.ok(!prompt.includes('por fuera'));
+});
+
+test('a sofa and a couch are one question, not an echo', () => {
+  const questions = questionsForRoom('living_room', [obj('sofa'), obj('couch')], soil());
+  assert.equal(questions.filter((q) => q.kind === 'depth').length, 1);
+});
+
+test('a sink is a fregadero in the kitchen and a lavamanos in the bathroom', () => {
+  assert.ok(promptFor('sink', 'kitchen')?.includes('fregadero'));
+  assert.ok(promptFor('sink', 'bathroom')?.includes('lavamanos'));
 });

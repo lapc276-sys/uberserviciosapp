@@ -64,12 +64,28 @@ export interface DetectedObject {
   confidence: number;
 }
 
+/**
+ * A surface the room is made of — see lib/vision/materials.ts.
+ *
+ * Separate from `DetectedObject` because it answers a different question: an
+ * object is something to clean, a material is how it has to be cleaned and
+ * what must not touch it.
+ */
+export interface DetectedMaterial {
+  /** A key of MATERIALS. Anything else is discarded on the way in. */
+  name: string;
+  /** 0–1. Warned about when weak, billed only when firm. */
+  confidence: number;
+}
+
 export interface RoomAnalysis {
   type: RoomType;
   /** Human label, disambiguated when repeated ("Bedroom 2"). */
   label: string;
   confidence: number;
   objects: DetectedObject[];
+  /** Surfaces that changed the method, already filtered to known ones. */
+  materials?: DetectedMaterial[];
   soil: SoilScores;
   condition: ConditionLevel;
   /** Minutes of cleaning work, computed by the estimator (not the model). */
@@ -107,6 +123,8 @@ export interface RawRoomObservation {
   type: RoomType;
   confidence: number;
   objects: DetectedObject[];
+  /** Absent from analyzers that do not look for surfaces. */
+  materials?: DetectedMaterial[];
   soil: SoilScores;
   notes?: string;
 }

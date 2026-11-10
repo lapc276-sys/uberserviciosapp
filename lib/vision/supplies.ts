@@ -1,4 +1,5 @@
-import type { RoomType, SoilScores, DetectedObject } from './types';
+import type { RoomType, SoilScores, DetectedObject, DetectedMaterial } from './types';
+import { materialWarnings, suppliesRequiredBy } from './materials';
 
 /**
  * Supply planning: what to actually bring to a job.
@@ -58,6 +59,7 @@ export const SUPPLY_CATALOG: Record<string, Supply> = {
   carpet_spot: { id: 'carpet_spot', name: 'Carpet spot treatment', category: 'chemical', unit: 'bottle', costPerUnit: 9, coversMinutes: 900, note: 'Blot, never rub. Test on a hidden patch first.' },
   wood_polish: { id: 'wood_polish', name: 'Wood surface polish', category: 'chemical', unit: 'bottle', costPerUnit: 8, coversMinutes: 1800 },
   stainless_polish: { id: 'stainless_polish', name: 'Stainless steel polish', category: 'chemical', unit: 'bottle', costPerUnit: 8, coversMinutes: 1800 },
+  stone_cleaner: { id: 'stone_cleaner', name: 'Stone-safe cleaner (pH-neutral)', category: 'chemical', unit: 'bottle', costPerUnit: 10, coversMinutes: 1200, note: 'For marble, granite and other natural stone. Dry by hand — standing water leaves marks.' },
 
   microfiber: { id: 'microfiber', name: 'Microfiber cloths', category: 'consumable', unit: 'pack of 12', costPerUnit: 12, coversMinutes: 6000, note: 'Launder and reuse. Colour-code: one set for bathrooms, another for kitchen.' },
   scrub_pads: { id: 'scrub_pads', name: 'Non-scratch scrub pads', category: 'consumable', unit: 'pack', costPerUnit: 6, coversMinutes: 1200 },
@@ -179,6 +181,11 @@ const INCOMPATIBLE: { a: Hazard; b: Hazard; warning: string }[] = [
 export function planSupplies(ctx: {
   soil: SoilScores;
   objects: DetectedObject[];
+  /**
+   * Surfaces seen in the walkthrough. They add what the surface needs and,
+   * more importantly, flag what in the rest of the plan would damage it.
+   */
+  materials?: DetectedMaterial[];
   roomTypes: RoomType[];
   serviceSlug: string;
   totalMinutes: number;
@@ -206,6 +213,11 @@ export function planSupplies(ctx: {
     // most specific justification to least.
     if (!chosen.has(rule.supply)) chosen.set(rule.supply, rule.reason);
   }
+
+  // What the surfaces themselves call for. Set after the rules but allowed to
+  // replace their reason: "natural stone seen" is a better explanation for the
+  // polish in the van than the rule's guess that a fridge is probably steel.
+  for (const need of suppliesRequiredBy(ctx.materials)) chosen.set(need.supply, need.reason);
 
   const lines: SupplyLine[] = [];
   const ppe = new Set<string>();
@@ -239,6 +251,11 @@ export function planSupplies(ctx: {
   const safetyWarnings = INCOMPATIBLE.filter((pair) => hazards.has(pair.a) && hazards.has(pair.b)).map(
     (pair) => pair.warning,
   );
+
+  // The other kind of never-mix: not two products with each other, but a
+  // product with the house. Checked against the lines actually chosen above,
+  // so the warning names the bottle that is really going to be in the room.
+  safetyWarnings.push(...materialWarnings(ctx.materials, lines));
 
   // Consumables and PPE first — those are what gets forgotten in the van.
   const order: SupplyCategory[] = ['chemical', 'consumable', 'ppe', 'tool'];
