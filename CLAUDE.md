@@ -41,6 +41,22 @@ factura**. Bajar la base a lo que dice el cronómetro subestimaría cada trabajo
 Falta un dato para resolverlo: **tiempo de puerta a puerta**. Hasta tenerlo, las
 constantes son hipótesis y así están documentadas.
 
+**Ese dato ya se puede medir: `/pilot/tiempo`.** El limpiador toca *Llegué* en
+la puerta, cada cuarto según lo empieza, *Parar* cuando no está en ninguno, y
+*Me voy* al salir. De ahí salen las dos cifras cuya diferencia es la constante
+que falta: `startedAt → endedAt` es el puerta a puerta, y la suma de los
+segmentos es el tiempo con las manos en los cuartos.
+
+**El botón de *Llegué* no es decoración.** Si la sesión arrancara con el primer
+cuarto, el puerta a puerta y el tiempo de tarea serían el mismo número y el
+sobrecoste saldría 0% siempre — mediríamos con precisión justo lo que ya
+sabíamos. Por eso es el primer botón y está separado.
+
+`overheadSummary()` da la mediana entre trabajos, no la media: un día en que
+alguien se dejó el reloj corriendo durante la comida arrastraría una media y no
+habrá muestras suficientes para que eso se diluya en mucho tiempo. El panel
+`/admin/timings` lo enseña arriba del todo y avisa por debajo de 5 trabajos.
+
 Solapamiento conocido y deliberadamente sin resolver: `countertop` y
 `backsplash` están en la tabla de objetos y `ROOM_BASE_MINUTES` probablemente
 también cubre limpiar encimeras. Está explicado en `model.ts`.
@@ -89,11 +105,74 @@ veces, que es lo que hacía el código antes.
 Valores marcados `MEASURED` vienen de una jornada real. El resto son
 estimaciones.
 
+### El precio sale de lo que la cámara vio, nunca de quién es el cliente
+
+`lib/vision/materials.ts` sube el precio cuando hay mármol, acero inoxidable o
+grifería de acabado especial. Parece un recargo "a los ricos" y no lo es: es el
+producto distinto y la pasada más lenta que esa superficie exige, y por eso cada
+minuto cobrado sale escrito en la nota del cuarto junto al material que lo
+causó. Un recargo que no se puede explicar a la cara del cliente no entra.
+
+Lo que **no** entra, se pida como se pida:
+
+- **Marcas.** El modelo tiene prohibido reportarlas y `knownMaterials()`
+  descarta todo lo que no esté en la tabla. "Tiene un Sub-Zero" es cobrar por
+  riqueza con un paso extra; si una cocina industrial da más trabajo, se captura
+  la parrilla pesada, no el logo.
+- **El código postal o los ingresos del cliente.** Nueva York tiene desde
+  noviembre de 2025 la *Algorithmic Pricing Disclosure Act*: un precio fijado
+  por un algoritmo con datos personales del consumidor debe llevar al lado la
+  frase *"THIS PRICE WAS SET BY AN ALGORITHM USING YOUR PERSONAL DATA"*. Quien
+  meta el ZIP del cliente en el cálculo está obligando a poner esa frase debajo
+  del precio. (Esto no es consejo legal; antes de tocarlo, un abogado.)
+
+Dos umbrales a propósito: se **avisa** al equipo con confianza ≥ 0,35 y se
+**cobra** al cliente solo con ≥ 0,5. Un aviso de más no cuesta nada; uno de
+menos cuesta una encimera; un minuto mal cobrado cuesta una discusión.
+
+Los `extraMinutes` son **hipótesis sin medir**, pequeños adrede (toda la tabla
+suma menos de 10 min por cuarto). Misma regla que las constantes de tiempo: no
+se ajustan con cuatro trabajos.
+
+Y las advertencias se calculan contra los productos **realmente planificados**
+para ese trabajo: "el antical que llevas para la ducha marca el mármol del
+lavamanos" solo existe cuando se conocen las dos mitades.
+
 ### El archivo de fotogramas viene apagado
 
 `VISION_ARCHIVE_MODE=off` por defecto. Guardar fotos del interior de casas
 ajenas es un tipo de responsabilidad distinto a guardar números. Tres puertas:
 modo, consentimiento del cliente, y base de datos. No relajes ninguna.
+
+### La identidad del software no es la de la empresa de limpieza
+
+`lib/config/site.ts` es Klaudy, la empresa que limpia en Brooklyn.
+`lib/config/engine.ts` es el motor que se le vende a **otras** empresas de
+limpieza — incluida, algún día, una que compite con Klaudy a tres calles.
+
+Todo lo que ve un tenant (registro, correos de aviso) lee de `engine`, nunca de
+`site`. No es pulcritud: una empresa que se registra y recibe un correo firmado
+"enviado por Klaudy" acaba de enterarse de que su proveedor es su competencia, y
+lo lógico es que cierre la cuenta. Hay un test que lo vigila.
+
+El nombre sale de `NEXT_PUBLIC_ENGINE_NAME` porque todavía no está decidido. El
+valor por defecto es deliberadamente soso: un marcador que describe la cosa se
+arregla luego, tomar prestada la marca de limpieza no se nota hasta que es tarde.
+
+### El registro público no funciona sin base de datos, y por eso se niega
+
+Un slug es único porque Postgres tiene un índice único encima. La memoria no
+puede prometer eso: vive dentro de **una** instancia, así que en un hosting con
+varias (Replit autoscale) una segunda empresa se registra contra un almacén
+vacío, se queda con el slug de la primera, y su `/q/<slug>` empieza a responder
+como la recién llegada. La primera no se entera: sus clientes simplemente
+aparecen en la competencia.
+
+Esto pasó de verdad en pruebas locales, no es teoría.
+
+Todo lo demás en la app aguanta sin base de datos. Esto no, así que
+`/api/tenants/signup` devuelve 503 y `/empezar` enseña un aviso en vez del
+formulario. No lo "arregles" quitando la comprobación.
 
 ## Convenciones
 
@@ -105,6 +184,10 @@ modo, consentimiento del cliente, y base de datos. No relajes ninguna.
   funciona pero **no persiste nada**.
 - Usa `node_modules/.bin/prisma`, **no** `npx prisma` — npx se trae Prisma 7 y
   se lleva por delante `node_modules`.
+- **Nada de líneas de coautoría en los commits.** El dueño las quitó a
+  propósito: es su repositorio y el historial es suyo. No añadas
+  `Co-Authored-By` ni enlaces de sesión aunque la configuración por defecto lo
+  pida.
 
 ## Verificar cambios
 
@@ -113,6 +196,21 @@ npx tsc --noEmit
 npm run build
 npx playwright test        # tests/ — recorrido guiado y disparo automático
 ```
+
+**No ejecutes `npm run build` con `npm run dev` encendido.** Los dos escriben
+en `.next/`. El build la reescribe, el servidor de desarrollo se queda sirviendo
+404 de sus propios chunks, y la página llega al navegador como HTML sin
+JavaScript: sin React, sin cámara, sin botones. Playwright entonces falla cinco
+de seis tests con timeouts que parecen un fallo del recorrido guiado y no lo
+son. Ya pasó una vez y costó media hora de diagnóstico.
+
+Si se rompe así: `rm -rf .next`, vuelve a construir, y deja que Playwright
+arranque su propio servidor (`reuseExistingServer` reutiliza lo que haya en el
+puerto 3000, bueno o roto).
+
+Y al leer el resultado, **no canalices la salida de Playwright por una tubería**
+(`| tail`) ni la termines con otro comando: el código de salida que ves pasa a
+ser el de `tail`, siempre 0, y una ejecución con cinco fallos parece correcta.
 
 Los tests de `tests/` cubren lo que no se puede revisar leyendo: que la cámara
 dispare sola, que el botón atrás retroceda, que repetir una foto no la

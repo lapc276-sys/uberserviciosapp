@@ -9,9 +9,12 @@ import {
   type ConditionLevel,
 } from './types';
 import { planSupplies } from './supplies';
+import { knownMaterials, materialMinutes, materialNote } from './materials';
 import {
   ROOM_BASE_MINUTES,
   objectMinutesFor,
+  depthChoiceFor,
+  type DepthChoices,
   HOUSEHOLD_SIGNALS,
   countCapFor,
   MAX_OBJECT_MINUTES_MULTIPLE,
@@ -87,7 +90,8 @@ function roomMinutes(
   soil: SoilScores,
   baseOverrides: Partial<Record<RawRoomObservation['type'], number>>,
   serviceSlug: string,
-): { scalable: number; objectMinutes: number } {
+  depthChoices?: DepthChoices,
+): { scalable: number; objectMinutes: number; materialMinutes: number } {
   const base = baseOverrides[room.type] ?? ROOM_BASE_MINUTES[room.type] ?? ROOM_BASE_MINUTES.other;
   const weights = soilWeightsFor(room.type);
 
@@ -104,7 +108,7 @@ function roomMinutes(
   // again below.
   const objectMinutes = room.objects.reduce((sum, obj) => {
     const key = obj.name.trim().toLowerCase();
-    const cost = objectMinutesFor(key, serviceSlug);
+    const cost = objectMinutesFor(key, serviceSlug, depthChoiceFor(key, room.type, depthChoices));
     if (!cost) return sum;
     const count = Math.max(1, Math.min(obj.count || 1, countCapFor(key)));
     const weight = Math.max(0.3, Math.min(obj.confidence || 0.5, 1));
@@ -116,7 +120,16 @@ function roomMinutes(
   // — wiping around a toaster is already inside the countertop time.
   const cappedObjects = Math.min(objectMinutes, base * MAX_OBJECT_MINUTES_MULTIPLE);
 
-  return { scalable: base + soilMinutes, objectMinutes: cappedObjects };
+  // Surfaces that need their own product and a slower hand. Kept apart from
+  // the object total so the cap above cannot swallow them, and returned
+  // separately for the same reason objects are: care for marble is the same
+  // extra pass on a maintenance clean as on a deep one, so the service
+  // multiplier must not scale it.
+  return {
+    scalable: base + soilMinutes,
+    objectMinutes: cappedObjects,
+    materialMinutes: materialMinutes(room.materials),
+  };
 }
 
 /** Labels repeated room types as "Bedroom 2", "Bathroom 3", etc. */
@@ -153,11 +166,20 @@ export interface EstimateOptions {
   };
   /** Scales supply costs into the tenant's market. */
   supplyCostMultiplier?: number;
+  /**
+   * What the customer answered during the walkthrough about opening things up.
+   *
+   * These beat the service default in both directions — see objectMinutesFor.
+   * A standard clean where somebody said yes to the oven is no longer a
+   * standard clean's worth of oven, and the price has to say so before the
+   * crew arrives rather than after.
+   */
+  depthChoices?: DepthChoices;
 }
 
 export function buildAnalysis(
   observations: RawRoomObservation[],
-  { serviceSlug, source, warnings = [], calibration, supplyCostMultiplier }: EstimateOptions,
+  { serviceSlug, source, warnings = [], calibration, supplyCostMultiplier, depthChoices }: EstimateOptions,
 ): PropertyAnalysis {
   const labels = labelRooms(observations);
 
@@ -173,20 +195,26 @@ export function buildAnalysis(
   const rooms: RoomAnalysis[] = observations.map((obs, i) => {
     const observed = normalizeSoil(obs.soil);
     const { soil, fired } = applyHouseholdSignals(observed, obs.objects);
-    const parts = roomMinutes(obs, soil, baseOverrides, serviceSlug);
-    const minutes = parts.scalable * multiplier + parts.objectMinutes * timeFactor;
+    const parts = roomMinutes(obs, soil, baseOverrides, serviceSlug, depthChoices);
+    const minutes =
+      parts.scalable * multiplier + (parts.objectMinutes + parts.materialMinutes) * timeFactor;
+    const materials = knownMaterials(obs.materials);
     return {
       type: obs.type,
       label: labels[i],
       confidence: Math.max(0, Math.min(obs.confidence ?? 0.5, 1)),
       objects: obs.objects.filter((o) => o.name?.trim()).slice(0, 25),
+      materials: materials.length ? materials : undefined,
       soil,
       condition: conditionFromIndex(soilIndex(soil, obs.type)),
       estimatedMinutes: Math.round(minutes),
       // Signals are appended to the note rather than hidden, so a pro who
       // wonders why a tidy-looking bedroom was budgeted for hair can read the
       // reason instead of distrusting the number.
-      notes: [obs.notes, fired.length ? `Señales: ${fired.join(', ')}` : '']
+      // Materials get the same treatment, and for a sharper reason: they add
+      // minutes, and a surcharge nobody can explain is exactly what pricing
+      // the surface instead of the neighbourhood was meant to avoid.
+      notes: [obs.notes, fired.length ? `Señales: ${fired.join(', ')}` : '', materialNote(obs.materials)]
         .filter(Boolean)
         .join(' · ') || undefined,
     };
@@ -211,6 +239,7 @@ export function buildAnalysis(
   const supplyPlan = planSupplies({
     soil: worstSoil,
     objects: rooms.flatMap((r) => r.objects),
+    materials: rooms.flatMap((r) => r.materials ?? []),
     roomTypes: rooms.map((r) => r.type),
     serviceSlug,
     totalMinutes: Math.round(totalMinutes),

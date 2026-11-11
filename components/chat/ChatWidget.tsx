@@ -66,7 +66,7 @@ export function ChatWidget() {
       {open && (
         <div className="fixed bottom-24 right-5 z-50 flex h-[32rem] w-[min(24rem,calc(100vw-2.5rem))] flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-lift animate-fade-up dark:border-slate-800 dark:bg-ink-soft">
           <div className="flex items-center gap-3 border-b border-slate-100 p-4 dark:border-slate-800">
-            <span className="grid h-9 w-9 place-items-center rounded-full bg-brand-600 text-sm font-semibold text-white">H</span>
+            <span className="grid h-9 w-9 place-items-center rounded-full bg-brand-600 text-sm font-semibold text-white">{site.name.charAt(0)}</span>
             <div>
               <p className="text-sm font-semibold">{site.name} Assistant</p>
               <p className="flex items-center gap-1.5 text-xs text-emerald-500">

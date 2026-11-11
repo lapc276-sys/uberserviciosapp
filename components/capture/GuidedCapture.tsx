@@ -17,6 +17,9 @@ import {
 import { SettleWatcher, signatureOf, spreadPick, type Signature } from '@/lib/capture/scene';
 import { getRecognition, isSpeaking, speak, stopSpeaking, synthesisSupported, type SpeechRecognitionLike } from '@/lib/speech';
 import { normalize } from '@/lib/vision/voice-commands';
+import { readJson } from '@/lib/http';
+import type { RoomQuestion, Answers } from '@/lib/vision/upsell';
+import { depthChoicesFrom, noteFrom } from '@/lib/vision/upsell';
 
 /**
  * A walkthrough the app leads, instead of a video the person guesses at.
@@ -54,6 +57,14 @@ export interface GuidedResult {
    * crew somewhere obvious to earn a tip.
    */
   focus?: string;
+  /**
+   * What they said when asked "inside the oven?" in each room.
+   *
+   * Keyed "<roomType>:<object>". A "no" is carried as explicitly as a "yes":
+   * on a deep clean it is the only way to decline the inside of a fridge that
+   * is otherwise included and billed.
+   */
+  depthChoices?: Record<string, 'surface' | 'deep'>;
 }
 
 export interface GuidedCaptureProps {
@@ -80,7 +91,7 @@ export interface GuidedCaptureProps {
   title?: string;
 }
 
-type Stage = 'plan' | 'starting' | 'guiding' | 'review' | 'depth' | 'denied' | 'unsupported';
+type Stage = 'plan' | 'starting' | 'guiding' | 'questions' | 'review' | 'depth' | 'denied' | 'unsupported';
 
 const DEPTH_OPTIONS = [
   {
@@ -170,6 +181,19 @@ export function GuidedCapture({
    * They will accept the bad frame, and the estimate is then built on it.
    */
   const [retakeOf, setRetakeOf] = useState<number | null>(null);
+  /**
+   * Questions per space, filled in by the scout while the walk continues.
+   *
+   * The scout fires the moment a room's pan ends and the answer is not waited
+   * for: by the time the last step of that room is done, thirty seconds have
+   * passed and it is back. Asking straight after the pan would have been the
+   * obvious design and would have parked somebody in their own kitchen
+   * watching a spinner.
+   */
+  const [scouted, setScouted] = useState<Record<string, RoomQuestion[]>>({});
+  const [answers, setAnswers] = useState<Answers>({});
+  /** Where the walkthrough resumes once the questions are answered. */
+  const [gateNext, setGateNext] = useState<number | null>(null);
   const [focus, setFocus] = useState('');
   const [error, setError] = useState('');
 
@@ -243,6 +267,32 @@ export function GuidedCapture({
    * outlive the render that created them; reading `index` from a closure would
    * freeze the walkthrough on whichever step was current when they started.
    */
+  /**
+   * Asks the server what is in the room just panned, and keeps the questions.
+   *
+   * Never surfaces a failure. A room that could not be looked at simply has
+   * no questions and the fixed script carries on, which is the only
+   * acceptable behaviour in a basement with no signal.
+   */
+  const scoutSpace = useCallback(
+    async (spaceKey: string, roomType: string, frames: string[]) => {
+      if (frames.length === 0) return;
+      try {
+        const res = await fetch('/api/vision/scout', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ frames, roomType, serviceSlug }),
+        });
+        const { data } = await readJson<{ questions?: RoomQuestion[] }>(res);
+        const questions = data?.questions ?? [];
+        if (questions.length) setScouted((prev) => ({ ...prev, [spaceKey]: questions }));
+      } catch {
+        // Deliberately silent — see above.
+      }
+    },
+    [serviceSlug],
+  );
+
   const advanceRef = useRef<(action: 'capture' | 'skip', collected?: string[]) => void>(() => {});
 
   const advance = useCallback(
@@ -267,6 +317,10 @@ export function GuidedCapture({
         });
         if (typeof navigator !== 'undefined' && 'vibrate' in navigator) navigator.vibrate?.(40);
         if (step.after) speak(step.after);
+
+        // The pan is the only step that sees the whole room, so it is the one
+        // worth asking the model about. Fired and not awaited.
+        if (step.mode === 'pan') void scoutSpace(step.spaceKey, step.roomType, frames);
       }
 
       setError('');
@@ -281,6 +335,19 @@ export function GuidedCapture({
       }
 
       const next = index + 1;
+
+      // Questions are asked as a room is left, not as it is entered: by now
+      // the scout has had the whole room's worth of steps to come back, so
+      // nobody waits, and the person is still standing in the room being
+      // asked about.
+      const leavingSpace = steps[next]?.spaceKey !== step.spaceKey;
+      const pending = scouted[step.spaceKey];
+      if (leavingSpace && pending?.length) {
+        setGateNext(next);
+        setStage('questions');
+        return;
+      }
+
       if (next >= steps.length) {
         stopStream();
         stopVoice();
@@ -290,8 +357,23 @@ export function GuidedCapture({
         setIndex(next);
       }
     },
-    [index, steps, grabFrame, stopStream, stopVoice, retakeOf],
+    [index, steps, grabFrame, stopStream, stopVoice, retakeOf, scouted, scoutSpace],
   );
+
+  /** Closes the question card and puts the walkthrough back where it was. */
+  const resumeFromQuestions = useCallback(() => {
+    const next = gateNext ?? index + 1;
+    setGateNext(null);
+    if (next >= steps.length) {
+      stopStream();
+      stopVoice();
+      speak('Listo, ya tengo todo.');
+      setStage('review');
+    } else {
+      setStage('guiding');
+      setIndex(next);
+    }
+  }, [gateNext, index, steps.length, stopStream, stopVoice]);
 
   advanceRef.current = advance;
 
@@ -483,11 +565,19 @@ export function GuidedCapture({
   }
 
   function finish(slug: string) {
+    const asked = Object.values(scouted).flat();
+    const tidying = noteFrom(asked, answers);
+    // The tidy-up request rides along with whatever the customer typed, since
+    // clutter is already a scored dimension and must not be billed twice as
+    // minutes. The crew still has to be told in words.
+    const notes = [focus.trim(), tidying].filter(Boolean).join(' ');
+
     onComplete({
       frames: shots.map((s) => s.frame),
       captions: shots.map((s) => captionFor(s.step)),
       serviceSlug: slug,
-      focus: focus.trim() || undefined,
+      focus: notes || undefined,
+      depthChoices: depthChoicesFrom(asked, answers),
     });
   }
 
@@ -678,7 +768,7 @@ export function GuidedCapture({
     );
   }
 
-  if (stage === 'guiding') {
+  if (stage === 'guiding' || stage === 'questions') {
     return (
       <div className="space-y-3">
         <div className="relative overflow-hidden rounded-2xl bg-slate-900 aspect-[3/4]">
@@ -728,10 +818,72 @@ export function GuidedCapture({
 
         {error && <p className="text-sm text-red-600">{error}</p>}
 
+        {/* What the camera just saw, asked about before leaving the room.
+            Every question here was generated from objects actually detected
+            in this room — see lib/vision/upsell.ts — because a question about
+            an oven in a kitchen with no oven teaches the customer that the
+            price is guesswork too. */}
+        {stage === 'questions' && gateNext !== null && (
+          <div className="space-y-3 rounded-2xl border-2 border-brand-500 bg-brand-50 p-4 dark:bg-brand-950/30">
+            <p className="text-sm font-medium text-brand-900 dark:text-brand-200">
+              Antes de seguir, dos cosas de este espacio
+            </p>
+
+            {(scouted[steps[index]?.spaceKey] ?? []).map((q) => {
+              const answered = answers[q.id];
+              return (
+                <div key={q.id} className="rounded-xl bg-white p-3 dark:bg-white/5">
+                  <p className="text-base font-medium">{q.prompt}</p>
+                  {q.extraMinutes > 0 && (
+                    /* Shown so a yes is informed rather than a trap: nobody
+                       should discover what they agreed to on the invoice. */
+                    <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+                      Añade unos {q.extraMinutes} min al trabajo
+                    </p>
+                  )}
+                  <div className="mt-2 grid grid-cols-2 gap-2">
+                    {[
+                      { label: 'Sí', value: true },
+                      { label: 'No', value: false },
+                    ].map((opt) => (
+                      <button
+                        key={opt.label}
+                        type="button"
+                        onClick={() => setAnswers((prev) => ({ ...prev, [q.id]: opt.value }))}
+                        className={`min-h-[48px] rounded-xl border-2 text-base font-medium transition-colors ${
+                          answered === opt.value
+                            ? 'border-brand-600 bg-brand-100 text-brand-900 dark:bg-brand-900/40 dark:text-brand-100'
+                            : 'dark:border-white/15'
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+
+            <button
+              type="button"
+              onClick={resumeFromQuestions}
+              className="min-h-[52px] w-full rounded-xl bg-brand-600 text-base font-semibold text-white"
+            >
+              Seguir
+            </button>
+            {/* Unanswered is a real answer: it leaves the service default
+                alone rather than forcing a choice nobody wanted to make. */}
+            <p className="text-center text-xs text-brand-900/60 dark:text-brand-200/60">
+              Lo que no contestes se queda como en una limpieza normal
+            </p>
+          </div>
+        )}
+
         {/* The walkthrough shoots by itself. These stay because automatic
             detection has one honest failure mode — a phone held perfectly
             still from the start never changes enough to trigger it — and
             because a browser with no speech engine leaves nothing else. */}
+        {stage === 'guiding' && (
         <div className="flex gap-2">
           <button
             type="button"
@@ -748,12 +900,13 @@ export function GuidedCapture({
             <SkipForward className="h-4 w-4" /> {current?.optional ? 'No tengo' : 'Saltar'}
           </button>
         </div>
+        )}
 
         {/* Going back one step, discarding what it caught. Without this the
             only remedy for a blurry frame is redoing the whole walkthrough,
             which nobody does — they keep the bad frame, and the estimate is
             built on it. */}
-        {retakeOf === null && index > 0 && (
+        {stage === 'guiding' && retakeOf === null && index > 0 && (
           <button
             type="button"
             onClick={goBack}

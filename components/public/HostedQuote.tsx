@@ -201,7 +201,7 @@ export function HostedQuote({
       {stage !== 'quoted' && !busy && (
         <div className="rounded-2xl border p-5">
           <GuidedCapture
-            onComplete={({ frames, captions, serviceSlug: chosen, focus }) =>
+            onComplete={({ frames, captions, serviceSlug: chosen, focus, depthChoices }) =>
               requestQuote(frames, captions, chosen, focus)
             }
             fallback={

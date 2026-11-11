@@ -10,6 +10,7 @@ import {
 } from './types';
 import { appaPromptRubric } from './appa';
 import { OBJECT_TIME_COST } from './model';
+import { MATERIALS, knownMaterials } from './materials';
 
 /**
  * Vision backends.
@@ -54,10 +55,18 @@ Count what you can see. Ten cabinet doors is cabinet:10, not cabinet:1. Do not l
 
 Also report these, which are never cleaned themselves but say who lives here and therefore how fast the place gets dirty again: baby bottle, bottle warmer, changing table, diaper, baby toys, toys, toy box, play mat, dog bowl, cat bowl, pet bowl, pet food, dog food, cat food, dog bed, leash, scratching post, dog, cat, ashtray, cigarettes, moving boxes, cardboard boxes.
 
+Also report what the main surfaces are made of, when you can actually see it, using EXACTLY these names — anything else is discarded:
+
+${Object.entries(MATERIALS)
+  .map(([name, care]) => `- ${name}: ${care.looksLike}`)
+  .join('\n')}
+
+A material changes which product may touch the surface, so a wrong one matters: report it only when the surface is visible, and lower your confidence when it could be an imitation. Never report brand names, model names, or how expensive anything looks — only what a surface is made of.
+
 Be conservative and evidence-based. If a frame is blurry, dark, or ambiguous, lower your confidence rather than guessing. Do NOT estimate time or price — that is computed separately.
 
 Respond ONLY with JSON matching:
-{"rooms":[{"type":"kitchen","confidence":0.0-1.0,"objects":[{"name":"oven","count":1,"confidence":0.0-1.0}],"soil":{"dust":0,"grease":0,"stains":0,"clutter":0,"hair":0,"trash":0,"mold":0},"notes":"short observation"}],"warnings":["..."]}
+{"rooms":[{"type":"kitchen","confidence":0.0-1.0,"objects":[{"name":"oven","count":1,"confidence":0.0-1.0}],"materials":[{"name":"natural_stone","confidence":0.0-1.0}],"soil":{"dust":0,"grease":0,"stains":0,"clutter":0,"hair":0,"trash":0,"mold":0},"notes":"short observation"}],"warnings":["..."]}
 
 Valid room types: ${ROOM_TYPES.join(', ')}.`;
 
@@ -75,7 +84,11 @@ function coerceSoil(raw: any): SoilScores {
   return out;
 }
 
-function coerceObservations(parsed: any): { rooms: RawRoomObservation[]; warnings: string[] } {
+/**
+ * Exported for tests: this is the gate every model reply passes through, and
+ * what it lets in becomes minutes and money.
+ */
+export function coerceObservations(parsed: any): { rooms: RawRoomObservation[]; warnings: string[] } {
   const rawRooms = Array.isArray(parsed?.rooms) ? parsed.rooms : [];
   const rooms: RawRoomObservation[] = rawRooms.slice(0, 30).map((r: any) => ({
     type: coerceRoomType(r?.type),
@@ -89,6 +102,17 @@ function coerceObservations(parsed: any): { rooms: RawRoomObservation[]; warning
             count: Math.max(1, Math.min(Number(o?.count) || 1, 20)),
             confidence: Math.max(0, Math.min(Number(o?.confidence) || 0.5, 1)),
           }))
+      : [],
+    // Filtered to the table here rather than trusted downstream: a model
+    // asked for materials will sometimes volunteer a brand or an adjective,
+    // and neither may reach a price.
+    materials: Array.isArray(r?.materials)
+      ? knownMaterials(
+          r.materials
+            .filter((m: any) => typeof m?.name === 'string')
+            .slice(0, 12)
+            .map((m: any) => ({ name: m.name, confidence: Number(m?.confidence) || 0.5 })),
+        )
       : [],
     soil: coerceSoil(r?.soil),
     notes: typeof r?.notes === 'string' ? r.notes.slice(0, 280) : undefined,

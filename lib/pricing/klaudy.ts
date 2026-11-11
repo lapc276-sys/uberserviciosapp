@@ -94,6 +94,21 @@ export function listPrice({ bedrooms, bathrooms, serviceSlug }: ListPriceInput):
 }
 
 /**
+ * The cheapest real job for a service — the "from $X" a card may advertise.
+ *
+ * Computed through `listPrice` rather than written down, because the two
+ * numbers are read seconds apart: the card says "from $110" and then the
+ * calculator, two sections below, prices a one-bedroom. If those disagree the
+ * page argues with itself in front of the customer, and the customer believes
+ * the smaller one. The marketplace config still carries `pricing.base` from the
+ * original plan — $89 for an apartment — which is below this business's floor
+ * and must never reach a page that quotes this list.
+ */
+export function startingPrice(serviceSlug: string): number {
+  return listPrice({ bedrooms: 1, bathrooms: 1, serviceSlug }).price;
+}
+
+/**
  * Whether sales tax is added on top.
  *
  * Off by default because the business is not collecting it yet, and a page

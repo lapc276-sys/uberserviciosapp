@@ -26,7 +26,7 @@ export function Navbar() {
       <div className="glass border-b">
         <nav className="container flex h-16 items-center justify-between">
           <Link href="/" className="flex items-center gap-2 font-semibold tracking-tight">
-            <span className="grid h-8 w-8 place-items-center rounded-lg bg-brand-600 text-white">H</span>
+            <span className="grid h-8 w-8 place-items-center rounded-lg bg-brand-600 text-white">{site.name.charAt(0)}</span>
             <span className="text-lg">{site.name}</span>
           </Link>
 
