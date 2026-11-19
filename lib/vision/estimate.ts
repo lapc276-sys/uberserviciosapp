@@ -10,6 +10,7 @@ import {
 } from './types';
 import { planSupplies } from './supplies';
 import { knownMaterials, materialMinutes, materialNote } from './materials';
+import { tidyingMinutes } from './tidying';
 import {
   ROOM_BASE_MINUTES,
   objectMinutesFor,
@@ -91,13 +92,20 @@ function roomMinutes(
   baseOverrides: Partial<Record<RawRoomObservation['type'], number>>,
   serviceSlug: string,
   depthChoices?: DepthChoices,
-): { scalable: number; objectMinutes: number; materialMinutes: number } {
+): { scalable: number; objectMinutes: number; materialMinutes: number; tidyMinutes: number } {
   const base = baseOverrides[room.type] ?? ROOM_BASE_MINUTES[room.type] ?? ROOM_BASE_MINUTES.other;
   const weights = soilWeightsFor(room.type);
 
+  // When the room was counted, clutter is priced from the count below and
+  // must leave the soil sum here — otherwise the same forty socks are charged
+  // once as a score and again as items. The score still exists for the
+  // condition label and the questions; it just stops being minutes. A room
+  // that was not counted keeps the old behaviour exactly.
+  const counted = Boolean(room.tidying);
+
   // Soil contributes its weighted minutes scaled by severity.
   const soilMinutes = (Object.keys(weights) as SoilDimension[]).reduce(
-    (sum, key) => sum + (soil[key] / 100) * weights[key],
+    (sum, key) => (counted && key === 'clutter' ? sum : sum + (soil[key] / 100) * weights[key]),
     0,
   );
 
@@ -129,6 +137,12 @@ function roomMinutes(
     scalable: base + soilMinutes,
     objectMinutes: cappedObjects,
     materialMinutes: materialMinutes(room.materials),
+    // Picking up forty socks is the same forty bends on a maintenance clean as
+    // on a deep one, so like objects and materials this is kept out of the
+    // service multiplier. Kept out of the object cap too: that cap exists
+    // because wiping round a toaster is already inside countertop time, and
+    // carrying the laundry to the bedroom is inside nothing.
+    tidyMinutes: tidyingMinutes(room.tidying, room.type, depthChoices).total,
   };
 }
 
@@ -197,7 +211,8 @@ export function buildAnalysis(
     const { soil, fired } = applyHouseholdSignals(observed, obs.objects);
     const parts = roomMinutes(obs, soil, baseOverrides, serviceSlug, depthChoices);
     const minutes =
-      parts.scalable * multiplier + (parts.objectMinutes + parts.materialMinutes) * timeFactor;
+      parts.scalable * multiplier +
+      (parts.objectMinutes + parts.materialMinutes + parts.tidyMinutes) * timeFactor;
     const materials = knownMaterials(obs.materials);
     return {
       type: obs.type,
@@ -205,6 +220,7 @@ export function buildAnalysis(
       confidence: Math.max(0, Math.min(obs.confidence ?? 0.5, 1)),
       objects: obs.objects.filter((o) => o.name?.trim()).slice(0, 25),
       materials: materials.length ? materials : undefined,
+      tidying: obs.tidying,
       soil,
       condition: conditionFromIndex(soilIndex(soil, obs.type)),
       estimatedMinutes: Math.round(minutes),

@@ -154,10 +154,12 @@ test('the answers reach the quote, not just the log', () => {
   );
 });
 
-test('the crew is told about tidying, in words, not minutes', () => {
+test('the crew is told about tidying, in words', () => {
+  // The note is read in Spanish at the door; it used to name the room by its
+  // English key ("bedroom"), which this test once asserted.
   const questions = questionsForRoom('bedroom', [], soil({ clutter: 70 }));
   const note = noteFrom(questions, { 'bedroom:declutter': true });
-  assert.ok(note && note.includes('bedroom'));
+  assert.ok(note && note.includes('dormitorio'), note);
   assert.equal(noteFrom(questions, { 'bedroom:declutter': false }), undefined);
 });
 

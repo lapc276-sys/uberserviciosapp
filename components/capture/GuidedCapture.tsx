@@ -826,7 +826,9 @@ export function GuidedCapture({
         {stage === 'questions' && gateNext !== null && (
           <div className="space-y-3 rounded-2xl border-2 border-brand-500 bg-brand-50 p-4 dark:bg-brand-950/30">
             <p className="text-sm font-medium text-brand-900 dark:text-brand-200">
-              Antes de seguir, dos cosas de este espacio
+              {(scouted[steps[index]?.spaceKey] ?? []).length === 1
+                ? 'Antes de seguir, una pregunta sobre este espacio'
+                : 'Antes de seguir, unas preguntas sobre este espacio'}
             </p>
 
             {(scouted[steps[index]?.spaceKey] ?? []).map((q) => {

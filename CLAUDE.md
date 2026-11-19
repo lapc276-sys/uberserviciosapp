@@ -138,6 +138,28 @@ Y las advertencias se calculan contra los productos **realmente planificados**
 para ese trabajo: "el antical que llevas para la ducha marca el mármol del
 lavamanos" solo existe cuando se conocen las dos mitades.
 
+### Ordenar se cuenta, no se puntúa
+
+El desorden era una nota de 0 a 100 que sumaba como mucho 12–14 minutos por
+cuarto, por grave que fuera, y un fregadero lleno de ollas sumaba cero. Ahora el
+modelo **cuenta** (`lib/vision/tidying.ts`): cosas a recoger, cuántas son de otro
+cuarto, y platos por lavar. El código multiplica por segundos por cosa sacados de
+MOST (el estándar industrial de medición de trabajo): recoger y colocar ≈ 10 s,
+llevar a otro cuarto +15 s, lavar un plato u olla ≈ 40 s. Son **hipótesis**,
+medidas en fábricas y no en limpieza; se corrigen con el cronómetro.
+
+Tres reglas que parecen detalles y no lo son:
+
+- **Recoger para poder limpiar se cobra siempre.** Nadie friega alrededor de
+  cuarenta calcetines.
+- **Llevar cosas a su sitio y lavar platos solo se cobran con un "sí".** Decidir
+  dónde viven las cosas de otro no le toca al limpiador, y muchas empresas no
+  lavan platos. Sin pregunta (scout caído, cliente viejo) no se cobra.
+- **Cuando hay conteo, la nota de desorden deja de sumar minutos.** Si no, los
+  mismos calcetines se cobran dos veces: como nota y como conteo. La nota sigue
+  existiendo para la etiqueta de estado. Un cuarto **sin** conteo se cobra
+  exactamente como antes.
+
 ### El archivo de fotogramas viene apagado
 
 `VISION_ARCHIVE_MODE=off` por defecto. Guardar fotos del interior de casas

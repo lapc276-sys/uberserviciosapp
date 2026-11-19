@@ -78,6 +78,21 @@ export interface DetectedMaterial {
   confidence: number;
 }
 
+/**
+ * Things to put away in a room, counted — see lib/vision/tidying.ts.
+ *
+ * Counts rather than a score because a score saturates: "messy" and "you
+ * cannot see the floor" both read near 100, and the second is an hour.
+ */
+export interface TidyingCounts {
+  /** On floors and counters, to be moved so they can be cleaned at all. */
+  toClear: number;
+  /** Of those, how many belong in a different room. Never more than toClear. */
+  elsewhere: number;
+  /** Dishes, pots and pans waiting to be washed. */
+  dishes: number;
+}
+
 export interface RoomAnalysis {
   type: RoomType;
   /** Human label, disambiguated when repeated ("Bedroom 2"). */
@@ -86,6 +101,8 @@ export interface RoomAnalysis {
   objects: DetectedObject[];
   /** Surfaces that changed the method, already filtered to known ones. */
   materials?: DetectedMaterial[];
+  /** What had to be put away, when the analyzer counted it. */
+  tidying?: TidyingCounts;
   soil: SoilScores;
   condition: ConditionLevel;
   /** Minutes of cleaning work, computed by the estimator (not the model). */
@@ -125,6 +142,11 @@ export interface RawRoomObservation {
   objects: DetectedObject[];
   /** Absent from analyzers that do not look for surfaces. */
   materials?: DetectedMaterial[];
+  /**
+   * Absent from analyzers that do not count. Without it the room falls back to
+   * the clutter score, exactly as before counting existed.
+   */
+  tidying?: TidyingCounts;
   soil: SoilScores;
   notes?: string;
 }

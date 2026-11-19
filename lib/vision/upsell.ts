@@ -1,5 +1,13 @@
 import { OBJECT_TIME_COST, depthGapFor, countCapFor, type ObjectDepth } from './model';
-import type { DetectedObject, RoomType, SoilScores } from './types';
+import type { DetectedObject, RoomType, SoilScores, TidyingCounts } from './types';
+import {
+  ASK_DISHES_AT,
+  ASK_PUT_AWAY_AT,
+  DISHES,
+  PUT_AWAY,
+  dishesMinutes,
+  putAwayMinutes,
+} from './tidying';
 
 /**
  * What to ask the person, in the room they are standing in.
@@ -42,7 +50,7 @@ export const MAX_QUESTIONS_PER_ROOM = 4;
  */
 const CLUTTER_OFFER_AT = 45;
 
-export type QuestionKind = 'depth' | 'declutter';
+export type QuestionKind = 'depth' | 'declutter' | 'dishes';
 
 export interface RoomQuestion {
   /** Stable id, so an answer can be matched back without string matching. */
@@ -180,7 +188,7 @@ export function questionsForRoom(
   roomType: RoomType,
   objects: DetectedObject[],
   soil: SoilScores,
-  { alreadyDeep = false }: { alreadyDeep?: boolean } = {},
+  { alreadyDeep = false, tidying }: { alreadyDeep?: boolean; tidying?: TidyingCounts } = {},
 ): RoomQuestion[] {
   const questions: RoomQuestion[] = [];
 
@@ -212,18 +220,45 @@ export function questionsForRoom(
     }
   }
 
-  // Tidying is offered, never assumed. Deciding for somebody that their
-  // things need rearranging is how a cleaner gets told not to come back, and
-  // a closed cupboard cannot be judged from a photograph anyway.
-  if (soil.clutter >= CLUTTER_OFFER_AT) {
+  // Putting things away is offered, never assumed. Deciding for somebody
+  // where their belongings live is how a cleaner gets told not to come back.
+  //
+  // With a count, the question names roughly how many and what a yes costs,
+  // because it now genuinely costs something — see tidying.ts. Without one
+  // (an older scout reply) it falls back to the clutter score and promises no
+  // minutes, which is all that score can honestly support.
+  if (tidying) {
+    if (tidying.elsewhere >= ASK_PUT_AWAY_AT) {
+      questions.push({
+        id: `${roomType}:${PUT_AWAY}`,
+        kind: 'declutter',
+        roomType,
+        prompt: `Veo unas ${tidying.elsewhere} cosas que parecen de otro cuarto. ¿Quieres que las llevemos a su sitio?`,
+        extraMinutes: Math.round(putAwayMinutes(tidying)),
+        yes: 'deep',
+      });
+    }
+  } else if (soil.clutter >= CLUTTER_OFFER_AT) {
     questions.push({
-      id: `${roomType}:declutter`,
+      id: `${roomType}:${PUT_AWAY}`,
       kind: 'declutter',
       roomType,
       prompt: 'Veo bastantes cosas fuera de sitio. ¿Quieres que las ordenemos también?',
-      // Priced through the clutter dimension the estimator already weighs,
-      // not as an object, so there is no minute figure to promise here.
       extraMinutes: 0,
+      yes: 'deep',
+    });
+  }
+
+  // Dishes are asked about separately because they are a different job, and
+  // one plenty of cleaning companies do not do at all. A couple of mugs is not
+  // worth the interruption; a sink is.
+  if (tidying && tidying.dishes >= ASK_DISHES_AT) {
+    questions.push({
+      id: `${roomType}:${DISHES}`,
+      kind: 'dishes',
+      roomType,
+      prompt: `Veo unos ${tidying.dishes} platos y ollas por lavar. ¿Quieres que los lavemos?`,
+      extraMinutes: Math.round(dishesMinutes(tidying)),
       yes: 'deep',
     });
   }
@@ -245,25 +280,60 @@ export type Answers = Record<string, boolean>;
 export function depthChoicesFrom(questions: RoomQuestion[], answers: Answers): Record<string, ObjectDepth> {
   const choices: Record<string, ObjectDepth> = {};
   for (const q of questions) {
-    if (q.kind !== 'depth' || !q.object) continue;
     const answer = answers[q.id];
     if (answer === undefined) continue;
-    choices[`${q.roomType}:${q.object}`] = answer ? 'deep' : 'surface';
+    // Putting away and dishes ride the same channel as "inside the oven?":
+    // 'deep' means do the extra work, 'surface' means leave it. Reusing it
+    // means a yes in the kitchen reaches the price through code that already
+    // carries one, rather than through a second map that could drift.
+    const key =
+      q.kind === 'depth' && q.object
+        ? `${q.roomType}:${q.object}`
+        : q.kind === 'declutter'
+          ? `${q.roomType}:${PUT_AWAY}`
+          : q.kind === 'dishes'
+            ? `${q.roomType}:${DISHES}`
+            : null;
+    if (key) choices[key] = answer ? 'deep' : 'surface';
   }
   return choices;
 }
 
+/** Room names for the crew's note, which is read in Spanish. */
+const ROOM_ES: Record<string, string> = {
+  kitchen: 'cocina',
+  bathroom: 'baño',
+  bedroom: 'dormitorio',
+  living_room: 'sala',
+  dining_room: 'comedor',
+  office: 'oficina',
+  laundry: 'lavadero',
+  garage: 'garaje',
+  stairs: 'escaleras',
+  hallway: 'pasillo',
+  patio: 'patio',
+  other: 'otro espacio',
+};
+
+function roomsAnsweredYes(questions: RoomQuestion[], answers: Answers, kind: QuestionKind): string[] {
+  const rooms = questions.filter((q) => q.kind === kind && answers[q.id]).map((q) => ROOM_ES[q.roomType] ?? q.roomType);
+  return [...new Set(rooms)];
+}
+
 /**
- * The free-text note the declutter answers add, so the crew is told.
+ * What the crew has to be told in words, on top of what the price already
+ * carries in minutes.
  *
- * Returned as `focus` text rather than as minutes because clutter is already
- * a scored dimension: adding minutes here on top would charge for the same
- * mess twice.
+ * The minutes reach the quote through depthChoicesFrom. This is for the
+ * person arriving at the door, who needs to know before they start that the
+ * customer asked for the laundry to go back to the bedroom and the pots to be
+ * washed — neither of which a price says.
  */
 export function noteFrom(questions: RoomQuestion[], answers: Answers): string | undefined {
-  const rooms = questions
-    .filter((q) => q.kind === 'declutter' && answers[q.id])
-    .map((q) => q.roomType);
-  if (rooms.length === 0) return undefined;
-  return `El cliente pidió que también se ordene: ${[...new Set(rooms)].join(', ')}.`;
+  const parts: string[] = [];
+  const putAway = roomsAnsweredYes(questions, answers, 'declutter');
+  const dishes = roomsAnsweredYes(questions, answers, 'dishes');
+  if (putAway.length) parts.push(`llevar cada cosa a su sitio (${putAway.join(', ')})`);
+  if (dishes.length) parts.push(`lavar los platos (${dishes.join(', ')})`);
+  return parts.length ? `El cliente pidió también: ${parts.join('; ')}.` : undefined;
 }

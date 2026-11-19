@@ -11,6 +11,7 @@ import {
 import { appaPromptRubric } from './appa';
 import { OBJECT_TIME_COST } from './model';
 import { MATERIALS, knownMaterials } from './materials';
+import { coerceTidying } from './tidying';
 
 /**
  * Vision backends.
@@ -63,10 +64,16 @@ ${Object.entries(MATERIALS)
 
 A material changes which product may touch the surface, so a wrong one matters: report it only when the surface is visible, and lower your confidence when it could be an imitation. Never report brand names, model names, or how expensive anything looks — only what a surface is made of.
 
+Count what has to be put away before the room can be cleaned. These are counts of things you can see, not judgements of effort:
+- toClear: items lying on the floor, counters, tables, beds or other surfaces that a cleaner would have to pick up or move to clean underneath — clothes, toys, shoes, papers, bags, bottles, appliances left out. Count each loose item once; a neat stack of books on a shelf is not an item to clear.
+- elsewhere: of those, how many plainly belong in a different room — a sock in the kitchen, a toothbrush by the kitchen sink, a frying pan in the bedroom. Never more than toClear.
+- dishes: dishes, cups, pots, pans and utensils waiting to be washed, in or beside the sink or anywhere else. Count roughly; a full sink is somewhere around 20 to 40.
+If you cannot see the floor or the surfaces well, count only what you can see and lower the room's confidence.
+
 Be conservative and evidence-based. If a frame is blurry, dark, or ambiguous, lower your confidence rather than guessing. Do NOT estimate time or price — that is computed separately.
 
 Respond ONLY with JSON matching:
-{"rooms":[{"type":"kitchen","confidence":0.0-1.0,"objects":[{"name":"oven","count":1,"confidence":0.0-1.0}],"materials":[{"name":"natural_stone","confidence":0.0-1.0}],"soil":{"dust":0,"grease":0,"stains":0,"clutter":0,"hair":0,"trash":0,"mold":0},"notes":"short observation"}],"warnings":["..."]}
+{"rooms":[{"type":"kitchen","confidence":0.0-1.0,"objects":[{"name":"oven","count":1,"confidence":0.0-1.0}],"materials":[{"name":"natural_stone","confidence":0.0-1.0}],"tidying":{"toClear":0,"elsewhere":0,"dishes":0},"soil":{"dust":0,"grease":0,"stains":0,"clutter":0,"hair":0,"trash":0,"mold":0},"notes":"short observation"}],"warnings":["..."]}
 
 Valid room types: ${ROOM_TYPES.join(', ')}.`;
 
@@ -114,6 +121,10 @@ export function coerceObservations(parsed: any): { rooms: RawRoomObservation[]; 
             .map((m: any) => ({ name: m.name, confidence: Number(m?.confidence) || 0.5 })),
         )
       : [],
+    // Clamped and made self-consistent on the way in — see coerceTidying.
+    // A reply without the block leaves it undefined, and the estimator then
+    // falls back to the clutter score exactly as it did before counting.
+    tidying: coerceTidying(r?.tidying),
     soil: coerceSoil(r?.soil),
     notes: typeof r?.notes === 'string' ? r.notes.slice(0, 280) : undefined,
   }));

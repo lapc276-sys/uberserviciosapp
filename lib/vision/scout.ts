@@ -1,5 +1,6 @@
-import { EMPTY_SOIL, SOIL_DIMENSIONS, type DetectedObject, type RoomType, type SoilScores } from './types';
+import { EMPTY_SOIL, SOIL_DIMENSIONS, type DetectedObject, type RoomType, type SoilScores, type TidyingCounts } from './types';
 import { OBJECT_TIME_COST } from './model';
+import { coerceTidying } from './tidying';
 
 /**
  * A quick look at one room, mid-walkthrough, so the next question can be
@@ -32,12 +33,19 @@ Count what you see. Ten cabinet doors is cabinet:10. Do not list an object becau
 
 Also rate clutter 0-100: how much is out of place and would have to be moved before cleaning could start. 0 is clear surfaces, 100 is unusable.
 
+And count, roughly, three things you can see:
+- toClear: loose items on floors and surfaces that would have to be moved to clean — clothes, toys, shoes, papers, bottles
+- elsewhere: of those, how many plainly belong in a different room, like a sock in the kitchen. Never more than toClear.
+- dishes: dishes, cups, pots and pans waiting to be washed
+
 Respond ONLY with JSON:
-{"objects":[{"name":"oven","count":1,"confidence":0.0-1.0}],"clutter":0}`;
+{"objects":[{"name":"oven","count":1,"confidence":0.0-1.0}],"clutter":0,"tidying":{"toClear":0,"elsewhere":0,"dishes":0}}`;
 
 export interface ScoutResult {
   objects: DetectedObject[];
   soil: SoilScores;
+  /** What the questions about tidying and dishes are built from. */
+  tidying?: TidyingCounts;
   /** False when nothing could be looked at — no key, no network, bad reply. */
   ok: boolean;
 }
@@ -45,7 +53,7 @@ export interface ScoutResult {
 const NOTHING: ScoutResult = { objects: [], soil: { ...EMPTY_SOIL }, ok: false };
 
 function coerce(parsed: unknown): ScoutResult {
-  const raw = parsed as { objects?: unknown; clutter?: unknown };
+  const raw = parsed as { objects?: unknown; clutter?: unknown; tidying?: unknown };
   const objects = Array.isArray(raw?.objects)
     ? raw.objects
         .filter((o): o is Record<string, unknown> => typeof o === 'object' && o !== null)
@@ -67,7 +75,7 @@ function coerce(parsed: unknown): ScoutResult {
   for (const dim of SOIL_DIMENSIONS) soil[dim] = 0;
   soil.clutter = Number.isFinite(clutter) ? Math.max(0, Math.min(100, Math.round(clutter))) : 0;
 
-  return { objects, soil, ok: true };
+  return { objects, soil, tidying: coerceTidying(raw?.tidying), ok: true };
 }
 
 /**
