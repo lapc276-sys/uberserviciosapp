@@ -160,6 +160,34 @@ Tres reglas que parecen detalles y no lo son:
   existiendo para la etiqueta de estado. Un cuarto **sin** conteo se cobra
   exactamente como antes.
 
+### El plan del limpiador ordena el trabajo y no toca el precio
+
+`lib/vision/plan.ts` saca de cada análisis el orden del día: primero se rocía
+todo lo que necesita actuar (el producto más lento primero, para que su reloj
+empiece antes), luego se limpia cocina → sala → dormitorios → baños, y un cuarto
+nunca se termina antes de que su producto haya trabajado. Si no queda nada que
+hacer mientras algo actúa, la espera se **dice**, no se esconde.
+
+**Sus minutos suman exactamente `totalMinutes`.** El solapamiento que encuentra
+es real, pero está construido sobre constantes sin medir, y un horario sobre
+conjeturas da un número muy preciso y equivocado. Que cambie el precio es
+trabajo del cronómetro, no de esta función.
+
+Las reglas de química son lo único aquí que no admite descuido:
+
+- **Cloro y ácido nunca a la vez en el mismo cuarto.** Si hay quitamoho, los
+  ácidos (limpiador de inodoro, antical) se aplican después, con enjuague antes.
+- **Un producto que caería sobre una superficie que daña no se usa en ese
+  cuarto**, y el plan dice por qué y qué usar. El primer borrador avisaba "nada
+  ácido sobre la piedra" y dos líneas después ordenaba antical en la ducha del
+  mismo baño. Un aviso que el propio plan contradice no es un aviso.
+- **Un producto que se queda dentro de un aparato** (inodoro, horno) sí se usa,
+  con aviso de que no salpique.
+
+Las frases para el equipo salen de las mismas que las preguntas al cliente
+(`taskFor` en `upsell.ts`), para que lo que se vende y lo que se ordena hacer no
+puedan describir trabajos distintos.
+
 ### El archivo de fotogramas viene apagado
 
 `VISION_ARCHIVE_MODE=off` por defecto. Guardar fotos del interior de casas

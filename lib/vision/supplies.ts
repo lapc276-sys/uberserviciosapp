@@ -36,6 +36,15 @@ export interface Supply {
   /** Protective equipment this product requires. */
   requiresPpe?: string[];
   note?: string;
+  /**
+   * Minutes the product is left on to work before it is scrubbed or wiped.
+   *
+   * Typical label instructions, not measurements — the bottle actually in the
+   * van wins. What makes this worth recording is that the minutes run on
+   * their own: sprayed first, the shower works while the kitchen is done.
+   * See lib/vision/plan.ts.
+   */
+  dwellMinutes?: number;
 }
 
 /**
@@ -48,13 +57,13 @@ export interface Supply {
  */
 export const SUPPLY_CATALOG: Record<string, Supply> = {
   all_purpose: { id: 'all_purpose', name: 'All-purpose cleaner (concentrate)', category: 'chemical', unit: 'gallon', costPerUnit: 14, coversMinutes: 2400 },
-  degreaser: { id: 'degreaser', name: 'Heavy-duty degreaser (concentrate)', category: 'chemical', unit: 'gallon', costPerUnit: 20, coversMinutes: 1500, requiresPpe: ['gloves'], note: 'Let it dwell 5 minutes on baked-on grease before scrubbing.' },
-  oven_cleaner: { id: 'oven_cleaner', name: 'Oven cleaner', category: 'chemical', unit: 'can', costPerUnit: 8, coversMinutes: 400, hazard: 'caustic', requiresPpe: ['gloves', 'eye protection'], note: 'Ventilate. Never use on self-cleaning oven interiors.' },
+  degreaser: { id: 'degreaser', name: 'Heavy-duty degreaser (concentrate)', category: 'chemical', unit: 'gallon', costPerUnit: 20, coversMinutes: 1500, requiresPpe: ['gloves'], note: 'Let it dwell 5 minutes on baked-on grease before scrubbing.', dwellMinutes: 5 },
+  oven_cleaner: { id: 'oven_cleaner', name: 'Oven cleaner', category: 'chemical', unit: 'can', costPerUnit: 8, coversMinutes: 400, hazard: 'caustic', requiresPpe: ['gloves', 'eye protection'], note: 'Ventilate. Never use on self-cleaning oven interiors.', dwellMinutes: 20 },
   bathroom_disinfectant: { id: 'bathroom_disinfectant', name: 'Bathroom disinfectant (concentrate)', category: 'chemical', unit: 'gallon', costPerUnit: 16, coversMinutes: 2000 },
-  mold_remover: { id: 'mold_remover', name: 'Mold & mildew remover', category: 'chemical', unit: 'gallon', costPerUnit: 14, coversMinutes: 1000, hazard: 'bleach', requiresPpe: ['gloves', 'mask', 'eye protection'], note: 'Ventilate the room. Never mix with any ammonia-based product.' },
-  limescale: { id: 'limescale', name: 'Limescale / hard-water remover', category: 'chemical', unit: 'gallon', costPerUnit: 15, coversMinutes: 1200, hazard: 'acid', requiresPpe: ['gloves'], note: 'Never mix with bleach-based products.' },
+  mold_remover: { id: 'mold_remover', name: 'Mold & mildew remover', category: 'chemical', unit: 'gallon', costPerUnit: 14, coversMinutes: 1000, hazard: 'bleach', requiresPpe: ['gloves', 'mask', 'eye protection'], note: 'Ventilate the room. Never mix with any ammonia-based product.', dwellMinutes: 10 },
+  limescale: { id: 'limescale', name: 'Limescale / hard-water remover', category: 'chemical', unit: 'gallon', costPerUnit: 15, coversMinutes: 1200, hazard: 'acid', requiresPpe: ['gloves'], note: 'Never mix with bleach-based products.', dwellMinutes: 5 },
   glass_cleaner: { id: 'glass_cleaner', name: 'Glass cleaner (concentrate)', category: 'chemical', unit: 'gallon', costPerUnit: 12, coversMinutes: 2400, hazard: 'ammonia', note: 'Most glass cleaners contain ammonia — keep away from bleach products.' },
-  toilet_cleaner: { id: 'toilet_cleaner', name: 'Toilet bowl cleaner', category: 'chemical', unit: 'bottle', costPerUnit: 4, coversMinutes: 800, hazard: 'acid' },
+  toilet_cleaner: { id: 'toilet_cleaner', name: 'Toilet bowl cleaner', category: 'chemical', unit: 'bottle', costPerUnit: 4, coversMinutes: 800, hazard: 'acid', dwellMinutes: 10 },
   floor_cleaner: { id: 'floor_cleaner', name: 'Floor cleaner (pH-neutral concentrate)', category: 'chemical', unit: 'gallon', costPerUnit: 18, coversMinutes: 2400, note: 'pH-neutral is safe on sealed wood, tile and vinyl alike.' },
   carpet_spot: { id: 'carpet_spot', name: 'Carpet spot treatment', category: 'chemical', unit: 'bottle', costPerUnit: 9, coversMinutes: 900, note: 'Blot, never rub. Test on a hidden patch first.' },
   wood_polish: { id: 'wood_polish', name: 'Wood surface polish', category: 'chemical', unit: 'bottle', costPerUnit: 8, coversMinutes: 1800 },

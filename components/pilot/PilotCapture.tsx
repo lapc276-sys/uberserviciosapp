@@ -22,6 +22,7 @@ import { appaLevelFor } from '@/lib/vision/appa';
 import type { VoiceCommand } from '@/lib/vision/voice-commands';
 import { services } from '@/lib/config/services';
 import { cities } from '@/lib/config/cities';
+import { CrewPlanView } from '@/components/vision/CrewPlanView';
 
 /**
  * Field capture tool for real jobs.
@@ -627,6 +628,16 @@ export function PilotCapture({ capturedBy }: { capturedBy: string }) {
             >
               <Plus className="h-4 w-4" /> Add a room the AI missed
             </button>
+
+            {/* The plan for the job about to start, right where the crew is
+                standing before they start it. Built from what the camera
+                saw; corrections above change the record, not this list, so it
+                is a guide rather than a contract. */}
+            {predicted.crewPlan && (
+              <div className="rounded-2xl border p-4 dark:border-white/10">
+                <CrewPlanView plan={predicted.crewPlan} />
+              </div>
+            )}
 
             <div className="flex gap-3">
               <BackButton onClick={() => setStep('capture')} />

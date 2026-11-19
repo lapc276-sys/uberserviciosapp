@@ -12,6 +12,7 @@ import type { VisionQuote } from '@/lib/vision/pricing';
 import { services } from '@/lib/config/services';
 import { cities } from '@/lib/config/cities';
 import { Button } from '@/components/ui/Button';
+import { CrewPlanView } from '@/components/vision/CrewPlanView';
 
 type Stage = 'idle' | 'extracting' | 'analyzing' | 'done' | 'error';
 
@@ -303,6 +304,12 @@ export function VideoQuote() {
               <Row label="Rooms analyzed" value={String(analysis.rooms.length)} />
               <Row label="AI confidence" value={`${Math.round(analysis.confidence * 100)}%`} />
             </div>
+
+            {analysis.crewPlan && analysis.crewPlan.steps.length > 0 && (
+              <div className="mt-5 border-t pt-4">
+                <CrewPlanView plan={analysis.crewPlan} />
+              </div>
+            )}
 
             {analysis.supplyPlan && analysis.supplyPlan.lines.length > 0 && (
               <div className="mt-5 border-t pt-4">

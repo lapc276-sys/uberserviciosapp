@@ -1,4 +1,5 @@
 import type { SupplyPlan } from './supplies';
+import type { CrewPlan } from './plan';
 
 /**
  * Domain model for AI property analysis.
@@ -24,6 +25,26 @@ export const ROOM_TYPES = [
 ] as const;
 
 export type RoomType = (typeof ROOM_TYPES)[number];
+
+/**
+ * The same names in Spanish, for everything the crew reads — the work plan
+ * and the notes. One table, so the plan and the notes cannot name the same
+ * room two different ways.
+ */
+export const ROOM_LABELS_ES: Record<RoomType, string> = {
+  kitchen: 'Cocina',
+  bathroom: 'Baño',
+  bedroom: 'Dormitorio',
+  living_room: 'Sala',
+  dining_room: 'Comedor',
+  office: 'Oficina',
+  laundry: 'Lavadero',
+  garage: 'Garaje',
+  stairs: 'Escaleras',
+  hallway: 'Pasillo',
+  patio: 'Patio',
+  other: 'Otro espacio',
+};
 
 export const ROOM_LABELS: Record<RoomType, string> = {
   kitchen: 'Kitchen',
@@ -127,6 +148,11 @@ export interface PropertyAnalysis {
   suppliesNeeded: string[];
   /** Quantities, costs, PPE and never-mix warnings. See lib/vision/supplies.ts. */
   supplyPlan?: SupplyPlan;
+  /**
+   * The order to do the job in, for the person doing it. See lib/vision/plan.ts.
+   * Never feeds the price: its minutes sum to `totalMinutes` exactly.
+   */
+  crewPlan?: CrewPlan;
   condition: ConditionLevel;
   /** 0–1 overall confidence; drives how wide the quoted range is. */
   confidence: number;

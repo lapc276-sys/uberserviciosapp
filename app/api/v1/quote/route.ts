@@ -136,6 +136,10 @@ export async function POST(req: Request) {
       })),
     },
     supplies: analysis.supplyPlan,
+    // The order of work for the tenant's crew. Server-to-server only, like the
+    // supply costs above; /q/[slug] answers the customer's browser and
+    // deliberately carries neither.
+    crewPlan: analysis.crewPlan,
     warnings: analysis.warnings,
     engine: {
       source: analysis.source,

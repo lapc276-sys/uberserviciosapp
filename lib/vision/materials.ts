@@ -46,6 +46,8 @@ export interface MaterialCare {
   requires: string[];
   /** What goes wrong, for the crew's warning. English, like its neighbours. */
   damage: string;
+  /** What to keep off it, in Spanish, for the work plan read at the door. */
+  avoidEs: string;
 }
 
 /**
@@ -67,6 +69,7 @@ export const MATERIALS: Record<string, MaterialCare> = {
     avoidHazards: ['acid'],
     avoidSupplies: [],
     requires: ['stone_cleaner'],
+    avoidEs: 'nada ácido encima: ni antical, ni limpiador de inodoro, ni vinagre',
     damage:
       'acid etches it permanently — keep limescale remover, toilet cleaner and vinegar off it, and do not rest those bottles on it',
   },
@@ -78,6 +81,7 @@ export const MATERIALS: Record<string, MaterialCare> = {
     avoidHazards: ['bleach'],
     avoidSupplies: [],
     requires: ['stainless_polish'],
+    avoidEs: 'sin cloro y sin estropajos',
     damage: 'bleach pits it and abrasive pads scratch it — wipe along the grain with a soft cloth only',
   },
   hardwood: {
@@ -90,6 +94,7 @@ export const MATERIALS: Record<string, MaterialCare> = {
     avoidHazards: [],
     avoidSupplies: ['steam_cleaner'],
     requires: [],
+    avoidEs: 'ni agua encharcada',
     damage: 'steam and standing water lift the finish and cup the boards — damp mop only',
   },
   specialty_metal: {
@@ -100,6 +105,7 @@ export const MATERIALS: Record<string, MaterialCare> = {
     avoidHazards: ['acid'],
     avoidSupplies: ['scrub_pads'],
     requires: [],
+    avoidEs: 'sin ácidos y sin estropajos',
     damage: 'acids and scrub pads strip the finish — mild soap and a soft cloth only',
   },
 };

@@ -11,6 +11,7 @@ import {
 import { planSupplies } from './supplies';
 import { knownMaterials, materialMinutes, materialNote } from './materials';
 import { tidyingMinutes } from './tidying';
+import { buildCrewPlan } from './plan';
 import {
   ROOM_BASE_MINUTES,
   objectMinutesFor,
@@ -278,6 +279,9 @@ export function buildAnalysis(
     recommendedPros: Math.max(1, Math.ceil(totalMinutes / MINUTES_PER_PRO)),
     suppliesNeeded: supplyPlan.lines.map((l) => l.name),
     supplyPlan,
+    // Built from the finished rooms and the packed van, so it can only ever
+    // name rooms that were priced and bottles that were packed.
+    crewPlan: buildCrewPlan(rooms, supplyPlan, { serviceSlug, depthChoices }),
     condition: conditionFromIndex(weightedIndex) as ConditionLevel,
     confidence: Number(confidence.toFixed(2)),
     source,

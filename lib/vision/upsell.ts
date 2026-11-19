@@ -1,5 +1,5 @@
 import { OBJECT_TIME_COST, depthGapFor, countCapFor, type ObjectDepth } from './model';
-import type { DetectedObject, RoomType, SoilScores, TidyingCounts } from './types';
+import { ROOM_LABELS_ES, type DetectedObject, type RoomType, type SoilScores, type TidyingCounts } from './types';
 import {
   ASK_DISHES_AT,
   ASK_PUT_AWAY_AT,
@@ -165,6 +165,37 @@ export function promptFor(name: string, roomType: RoomType): string | null {
 }
 
 /**
+ * The verbs ASK uses, from "let's" to an instruction.
+ *
+ * The question to the customer and the line in the crew's plan describe the
+ * same work, so they come from the same phrase — "limpiemos el horno por
+ * dentro" asked, "Limpia el horno por dentro" done. Two tables would drift,
+ * and the crew would be told to do something different from what was sold.
+ */
+const IMPERATIVE: Record<string, string> = {
+  aspiremos: 'aspira',
+  despejemos: 'despeja',
+  hagamos: 'haz',
+  lavemos: 'lava',
+  limpiemos: 'limpia',
+  quitemos: 'quita',
+  tratemos: 'trata',
+  vaciemos: 'vacía',
+};
+
+/** The crew's instruction for an object, or null when there is none. */
+export function taskFor(name: string, roomType: RoomType): string | null {
+  const entry = ASK[name];
+  if (!entry) return null;
+  const phrase = typeof entry === 'function' ? entry(roomType) : entry;
+  const task = phrase
+    .split(' ')
+    .map((word) => IMPERATIVE[word] ?? word)
+    .join(' ');
+  return task.charAt(0).toUpperCase() + task.slice(1);
+}
+
+/**
  * Minutes a yes is worth, counting how many of the thing there are.
  *
  * Ten cabinet doors is not one cabinet, and the count cap is the same one the
@@ -299,24 +330,10 @@ export function depthChoicesFrom(questions: RoomQuestion[], answers: Answers): R
   return choices;
 }
 
-/** Room names for the crew's note, which is read in Spanish. */
-const ROOM_ES: Record<string, string> = {
-  kitchen: 'cocina',
-  bathroom: 'baño',
-  bedroom: 'dormitorio',
-  living_room: 'sala',
-  dining_room: 'comedor',
-  office: 'oficina',
-  laundry: 'lavadero',
-  garage: 'garaje',
-  stairs: 'escaleras',
-  hallway: 'pasillo',
-  patio: 'patio',
-  other: 'otro espacio',
-};
-
 function roomsAnsweredYes(questions: RoomQuestion[], answers: Answers, kind: QuestionKind): string[] {
-  const rooms = questions.filter((q) => q.kind === kind && answers[q.id]).map((q) => ROOM_ES[q.roomType] ?? q.roomType);
+  const rooms = questions
+    .filter((q) => q.kind === kind && answers[q.id])
+    .map((q) => (ROOM_LABELS_ES[q.roomType] ?? q.roomType).toLowerCase());
   return [...new Set(rooms)];
 }
 
