@@ -205,6 +205,15 @@ const DARK_GRACE_MS = 7000;
 const DARK_PAUSE_MS = 2500;
 
 /**
+ * Consecutive dark samples (400ms apart) before the bot says anything.
+ *
+ * Long enough that walking through a dim hallway, or the camera's exposure
+ * catching up after a turn, is not "dark"; short enough that a dark kitchen
+ * is noticed in under two seconds instead of after the nine-second timeout.
+ */
+const DARK_SAMPLES = 4;
+
+/**
  * Still moving this long into a step, the safety timeout is about to shoot
  * blind — so the bot asks for a steady hand first. Late on purpose: walking to
  * the fridge and opening it is movement too, and nobody needs to be told to
@@ -252,6 +261,12 @@ export function GuidedCapture({
   const resumeRef = useRef<() => void>(() => {});
   /** How the last question was answered — by voice, the walk resumes by itself. */
   const lastAnswerVia = useRef<'voice' | 'touch' | null>(null);
+  /**
+   * Spaces where the bot already asked for light. Once per room: if the
+   * kitchen has no working bulb, being told so before every close-up is
+   * nagging, and waiting seven seconds each time is a ten-minute walkthrough.
+   */
+  const darkSpaces = useRef<Set<string>>(new Set());
 
   const [stage, setStage] = useState<Stage>('plan');
   stageRef.current = stage;
@@ -657,6 +672,8 @@ export function GuidedCapture({
     let warnedDark = false;
     let warnedShake = false;
     let warnedFast = false;
+    /** Consecutive dark samples, so a dim second in a hallway is not "dark". */
+    let darkRun = 0;
     /** Set while the step waits for the light it asked for. */
     let lightBy = 0;
     let panExtraMs = 0;
@@ -668,17 +685,33 @@ export function GuidedCapture({
       advanceRef.current('capture', frames);
     };
 
-    const askForLight = () => {
+    const lightTorch = () => {
+      if (torchOn || !torchAvailable()) return false;
+      torchOn = true;
+      void setTorch(true);
+      return true;
+    };
+
+    /**
+     * True when the bot asked for light and the step should wait for it.
+     * Asked once per room; after that the flashlight goes on silently where
+     * there is one, and the step simply carries on where there is not.
+     */
+    const askForLight = (): boolean => {
       warnedDark = true;
-      if (torchAvailable()) {
-        torchOn = true;
-        void setTorch(true);
+      if (darkSpaces.current.has(current.spaceKey)) {
+        lightTorch();
+        return false;
+      }
+      darkSpaces.current.add(current.spaceKey);
+      if (lightTorch()) {
         speak(SAY.darkTorch);
         setNotice('Está oscuro: encendí la linterna');
       } else {
         speak(SAY.dark);
         setNotice('Está muy oscuro: enciende la luz');
       }
+      return true;
     };
 
     const timer = setInterval(() => {
@@ -691,15 +724,17 @@ export function GuidedCapture({
       const delta = difference(previous, signature);
       previous = signature;
       const dark = isTooDark(signature);
+      darkRun = dark ? darkRun + 1 : 0;
+      const staysDark = darkRun >= DARK_SAMPLES;
 
       if (current.mode === 'pan') {
         // Light first: a sweep through a dark room is several photographs of
         // nothing, and the room's questions are built from them.
-        if (dark && !warnedDark) {
-          askForLight();
+        if (staysDark && !warnedDark && askForLight()) {
           panBuffer.length = 0;
           panDeltas.length = 0;
           previous = null;
+          darkRun = 0;
           startedAt = now + DARK_PAUSE_MS;
           return;
         }
@@ -736,12 +771,21 @@ export function GuidedCapture({
         return;
       }
 
+      // Dark for a couple of seconds: say so now, rather than after the
+      // nine-second timeout has already photographed the dark.
+      if (staysDark && !warnedDark && askForLight()) {
+        lightBy = now + DARK_GRACE_MS;
+        return;
+      }
+
       // Settled, or nothing decisive for long enough: someone holding the
       // phone steady from the start never produces the change the watcher
       // waits for.
       if (settled || elapsed >= LEAD_IN_MS + SETTLE_TIMEOUT_MS) {
-        if (dark && !warnedDark) {
-          askForLight();
+        // A cupboard opened fast and held still settles before the dark has
+        // lasted long enough to be called dark. Checked again at the shutter,
+        // so the quick case gets the same question as the slow one.
+        if (dark && !warnedDark && askForLight()) {
           lightBy = now + DARK_GRACE_MS;
           return;
         }
@@ -888,6 +932,9 @@ export function GuidedCapture({
       onPlan?.(built.steps);
       setShots([]);
       setIndex(0);
+      // A new walkthrough may be in a different home, or the same one with the
+      // lights now on.
+      darkSpaces.current = new Set();
       setStage('guiding');
       startVoice();
     } catch (err) {

@@ -209,9 +209,13 @@ enciende la linterna él mismo); si el teléfono no para de moverse, pide
 sujetarlo; si el paneo es un manotazo, pide ir más despacio. Todo es
 aritmética sobre la miniatura que ya existe, como el disparador.
 
-Cada aviso se dice **una vez por paso** y el paso **siempre** termina con una
-foto: un bot que insiste es un bot al que dejan de escuchar, y uno que se
-atasca en un sótano sin luz es un recorrido abandonado.
+La luz se pide **una vez por cuarto** (si la cocina no tiene bombilla, repetirlo
+antes de cada primer plano es dar la lata, y esperar 7 segundos cada vez
+convierte el recorrido en diez minutos); los demás avisos, una vez por paso. Y
+el paso **siempre** termina con una foto: un bot que insiste es un bot al que
+dejan de escuchar, y uno que se atasca en un sótano sin luz es un recorrido
+abandonado. Medido con una cámara falsa a oscuras: avisa a los 2,8 s y el resto
+de la cocina avanza a ritmo normal.
 
 Los umbrales (`DARK_P90`, `PAN_TOO_FAST`) **no están medidos en un teléfono**.
 Solo se midió la cámara falsa de Chromium, para garantizar que los tests no
