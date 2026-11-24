@@ -131,16 +131,18 @@ Tres consecuencias:
 ```mermaid
 flowchart TB
     REF["1 · Referencia<br/>constantes de model.ts<br/>hipótesis marcadas"]
-    EMP["2 · Empresa<br/>TenantCalibration<br/>sus equipos contra la referencia"]
-    PER["3 · Persona<br/>cociente propio contra lo predicho"]
-    REF --> EMP --> PER
+    GLO["2 · Global por región<br/>todas las empresas juntas"]
+    EMP["3 · Empresa<br/>sus equipos contra lo predicho"]
+    PER["4 · Persona<br/>cociente propio contra lo predicho"]
+    REF --> GLO --> EMP --> PER
     PER --> EST["Duración para ESTA persona<br/>en ESTE trabajo<br/>+ base + confianza"]
 
+    style GLO fill:#2563eb,color:#fff
     style PER fill:#059669,color:#fff
 ```
 
-La capa de la persona arranca pareciéndose a la empresa y se va pareciendo a sí
-misma:
+Cada capa arranca pareciéndose a la de arriba y se va pareciendo a sí misma
+según acumula datos. Para la persona:
 
 ```
 factor = (n × mediana de la persona + 8 × factor de la empresa) / (n + 8)
@@ -161,6 +163,48 @@ Cada estimación sale con su etiqueta, y la pantalla la muestra:
 
 Los cortes (8, 30, 25%) son **hipótesis**, como las constantes. Se revisan con
 datos.
+
+### 5b. El modelo global
+
+Los cocientes de **todas** las empresas que usan el motor se juntan en un solo
+conjunto. Es el efecto de red del pitch: cada empresa nueva hace mejor la
+primera estimación de todas las demás.
+
+Lo que se agrupa es el cociente de cada cuarto, con su contexto:
+
+| Dimensión | De dónde sale |
+|---|---|
+| Región | La ciudad de la casa (`VisionAnalysis.city`) |
+| Tipo de cuarto y estado | El análisis |
+| Tipo de servicio | El trabajo (regular, a fondo, mudanza) |
+| Experiencia | Trabajos registrados por esa persona en la app |
+| Tamaño del equipo | La sesión |
+| Trabajo nº del día, horas ya trabajadas | Calculado de los registros |
+
+Una casilla (por ejemplo *Brooklyn · cocina · a fondo*) solo publica su media
+cuando la alimentan **al menos 3 empresas y 20 cuartos**. Con menos, se usa la
+casilla de arriba (*Brooklyn · cocina*, luego *cocina*). Es técnico y no
+legal: si una casilla la llena una sola empresa, su "media global" son los
+números de esa empresa, y cualquier competidor los lee.
+
+### Por qué no edad ni complexión
+
+No entran, y el motivo es técnico:
+
+1. **No mejoran la estimación.** A partir de 8 cuartos, el número propio de la
+   persona gana a cualquier media por grupo. Antes de eso, la casilla regional
+   ya da el arranque. Un arranque por edad o cuerpo solo cambia los dos
+   primeros trabajos de alguien nuevo, y los cambia con un estereotipo en vez
+   de con un dato.
+2. **El dato no existe y sería malo.** Nadie mide la complexión de un
+   limpiador; habría que pedirla, y una talla o un peso declarados son
+   escasos e inexactos. Meter una columna así ensucia el conjunto que es el
+   activo.
+3. **Lo que la edad intenta capturar ya está**: la experiencia, medida en
+   trabajos registrados, que es objetiva.
+4. **En el pitch resta.** "Aprende el ritmo de cada persona con su propio
+   trabajo" es la frase que se financia. "Predice la productividad por edad y
+   cuerpo" es la primera que marca cualquier revisión de un inversor.
 
 ---
 
@@ -187,7 +231,7 @@ datos.
 - **`/q/[slug]` ni la API v1.** No salen tiempos personales por ninguna puerta
   pública.
 - **Castigar o despedir de forma automática.** Un número sin contexto no decide
-  nada sobre una persona (sección 9).
+  nada sobre una persona.
 
 ---
 
@@ -214,7 +258,7 @@ La persona, una sola vez, venga de la web o de Telegram.
 | Campo | Para qué |
 |---|---|
 | `id` | |
-| `tenantId?` | De qué empresa es. Vacío = Klaudy. **Los tiempos de los equipos de una empresa son de esa empresa**: nunca se mezclan con los de otra ni se agregan entre empresas, igual que sus clientes (`TenantLead`). |
+| `tenantId?` | De qué empresa es. Vacío = Klaudy. Sus cocientes alimentan el modelo global (5b) **sin nombre ni empresa**; sus clientes (`TenantLead`) siguen sin mezclarse con nada. |
 | `proId?` (único) | Enlace al `Pro` del marketplace, si lo es. |
 | `telegramChatId?` (único) | Para que el bot de voz escriba a la misma persona. |
 | `name`, `active`, `createdAt` | |
@@ -251,12 +295,20 @@ trabajadas, hora de inicio.
 |---|---|
 | `sessionId`, `roomKey?` | Qué se revisó. |
 | `result` | `ok` · `redo` (hubo que repetir). |
-| `by` | `worker` · `supervisor` · `customer`. |
+| `by` | `customer` · `photos` · `worker` · `supervisor`. |
+| `score?` | 0–100 cuando sale de las fotos o de una puntuación. |
 | `note?`, `createdAt` | |
 
-Se alimenta de tres sitios: al tocar *Me voy* ("¿hubo que repetir algo?"), de
-una revisión de supervisor cuando la haya, y de la reseña o la queja del
-cliente (`Review` ya existe).
+Se alimenta, por orden de importancia hoy:
+
+1. **El cliente**: su reseña o su queja (`Review` ya existe).
+2. **Las fotos del después**: al terminar, el limpiador repite el recorrido
+   guiado y se compara con el antes, cuarto por cuarto. Esto ya existe en el
+   piloto (`assessQuality()` en `lib/vision/quality.ts`): da cuánta suciedad
+   se quitó en cada cuarto y qué zonas quedaron. Falta atarlo a la sesión del
+   cronómetro.
+3. **El propio limpiador**, al tocar *Me voy*: "¿hubo que repetir algo?".
+4. **Un supervisor**, más adelante.
 
 **Un cuarto con `redo` no cuenta para el ritmo de nadie.** Rápido y mal no
 cuenta como rápido.
@@ -334,34 +386,24 @@ tiempos ni precios.
 
 ---
 
-## 9. Las personas que se miden
+## 9. Calidad del dato
 
-Medir a alguien mientras trabaja es delicado, y una herramienta que el equipo
-siente en su contra **se sabotea**: se toca tarde, se olvida, se dejan de medir
-los días malos. Un dato honesto solo sale de alguien que gana algo dándolo.
+El cuello de botella son los datos, y un dato de tiempo se estropea de formas
+muy concretas. Cada una tiene su defensa:
 
-- **Cada persona ve sus datos primero**, antes que nadie más.
-- **La pregunta del cansancio es opcional** y no se usa para pagar ni para
-  sancionar.
-- **Nada decide sola sobre una persona.** Un número bajo es una conversación,
-  no una consecuencia.
-- **Sin video por defecto.** Si algún día lo hay: permiso del trabajador **y**
-  del cliente, borrado por defecto, y las tres puertas de
-  `VISION_ARCHIVE_MODE` (que hoy está apagado a propósito).
+| Cómo se estropea | Defensa |
+|---|---|
+| Se olvida el reloj corriendo (la comida) | *Esto está mal* en el segmento: se marca, no se borra. Y medianas. |
+| Se toca tarde o no se toca | Un toque por cuarto, no ocho. Y que la persona vea sus números: quien gana algo midiendo, mide. |
+| Rápido pero mal hecho | Un cuarto con `redo` o con mala nota en las fotos no cuenta para el ritmo. |
+| Dos personas en el mismo cuarto | `together`: cuenta para la empresa, no para cada una. |
+| Datos de prueba mezclados con reales | `source`, filtrado en un solo sitio. |
+| Constantes que cambian | `predictedMinutes` se guarda en el momento. |
+| Un día raro | La mezcla de la sección 5: nadie recibe un número extremo con pocos cuartos. |
 
-**Tres avisos legales** (no es consejo legal; un abogado antes de construir):
-
-- **Nueva York** obliga desde 2022 (Civil Rights Law §52-c) a avisar por
-  escrito, al contratar, cuando una empresa monitorea electrónicamente a sus
-  empleados. Un cronómetro que toca el propio trabajador probablemente no lo
-  es; video o ubicación se le parecen mucho más.
-- **La ciudad de Nueva York** (Local Law 144) exige una auditoría de sesgo a
-  cualquier herramienta automática que ayude a decidir **contrataciones o
-  ascensos**. Si el ritmo medido llega a usarse para eso, entra.
-- **Si los limpiadores son contratistas 1099** (los pagos por Stripe Connect lo
-  son), que la empresa les mida cada tarea y les diga cómo trabajar es de las
-  cosas que se miran para decidir si en realidad son empleados. Para ellos la
-  herramienta tiene que ser **suya**: opcional, y que les sirva para negociar.
+Lo legal y el consentimiento (aviso a empleados, video, contratistas) quedan
+para después de la ronda. El diseño no los bloquea: los campos para guardar un
+consentimiento ya existen en el esquema, como en `TrainingSample`.
 
 ---
 
@@ -416,13 +458,11 @@ Hoy hay **un** trabajo medido.
 
 ---
 
-## 12. Lo que tienes que decidir tú
+## 12. Decisiones tomadas (24 nov 2026)
 
-1. **¿Tus limpiadores son empleados o contratistas 1099?** Cambia cómo se
-   presenta la herramienta y lo que la empresa puede pedirles.
-2. **¿Quién revisa la calidad?** Si no hay supervisor, el primer `QualityCheck`
-   es el propio limpiador y la reseña del cliente; vale, pero hay que saberlo.
-3. **¿Las empresas que compran el motor tendrán esto?** El diseño ya lo
-   permite (`Worker.tenantId`), pero es una decisión de producto: venderles
-   "aprende el ritmo de tu equipo" es un argumento fuerte, y también una
-   responsabilidad sobre los datos de sus empleados.
+1. **Calidad**: el cliente ahora; las fotos de antes y después al terminar; un
+   supervisor más adelante.
+2. **Empresas clientes**: tendrán esto, y sus cocientes alimentan el modelo
+   global por región (5b).
+3. **Lo legal y el consentimiento**: después de la ronda. Ahora, lo técnico.
+4. **Edad y complexión**: fuera, por los motivos técnicos de 5b.
