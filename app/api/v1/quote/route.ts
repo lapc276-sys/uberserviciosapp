@@ -6,6 +6,7 @@ import { priceFromAnalysis } from '@/lib/vision/pricing';
 import { validateFrames, validateCaptions, MAX_FRAMES } from '@/lib/vision/input';
 import { services } from '@/lib/config/services';
 import { apiKeyFromRequest, checkQuota, getTenantByApiKey, recordQuote } from '@/lib/tenants/store';
+import { PRODUCT_PREFERENCES } from '@/lib/vision/types';
 
 /**
  * POST /api/v1/quote — the product, sold as an API.
@@ -30,6 +31,10 @@ const schema = z.object({
   serviceSlug: z.string().refine((s) => services.some((x) => x.slug === s), 'Unknown service'),
   /** Free-form caller-side identifier, echoed back so they can reconcile. */
   reference: z.string().max(120).optional(),
+  /** Per-object answers, keyed "<roomType>:<object>" — as /api/vision/analyze. */
+  depthChoices: z.record(z.string().max(60), z.enum(['surface', 'deep'])).optional(),
+  /** What the customer wants cleaned with. Shapes the crew plan, never the price. */
+  products: z.enum(PRODUCT_PREFERENCES).optional(),
 });
 
 function unauthorized() {
@@ -85,6 +90,8 @@ export async function POST(req: Request) {
     warnings,
     calibration: tenant.calibration,
     supplyCostMultiplier: tenant.pricing.supplyCostMultiplier,
+    depthChoices: parsed.data.depthChoices,
+    products: parsed.data.products,
   });
 
   if (analysis.rooms.length === 0) {

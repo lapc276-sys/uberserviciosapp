@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { MessageCircle, Loader2, Camera, ChevronDown } from 'lucide-react';
-import { GuidedCapture } from '@/components/capture/GuidedCapture';
+import { GuidedCapture, type GuidedResult } from '@/components/capture/GuidedCapture';
 import { readJson } from '@/lib/http';
 import { services } from '@/lib/config/services';
 import { whatsappLink } from '@/lib/contact';
@@ -60,6 +60,12 @@ export function QuickQuote({ locale }: { locale: Locale }) {
   const [error, setError] = useState('');
 
   const [cameraOpen, setCameraOpen] = useState(false);
+  /**
+   * What the walkthrough learned that the price does not carry: the spaces it
+   * filmed, and what the customer said about the day, products and repairs.
+   * Null for a questionnaire price.
+   */
+  const [walked, setWalked] = useState<{ spaces: string[]; notes?: string } | null>(null);
 
   const options = services.filter((s) => HOME_SERVICES.includes(s.slug));
 
@@ -67,6 +73,7 @@ export function QuickQuote({ locale }: { locale: Locale }) {
     setBusy(true);
     setError('');
     setPriced(null);
+    setWalked(null);
     try {
       const res = await fetch('/api/quote', {
         method: 'POST',
@@ -89,21 +96,26 @@ export function QuickQuote({ locale }: { locale: Locale }) {
     }
   }
 
-  async function priceFromCamera(
-    frames: string[],
-    captions: string[] | undefined,
-    slug: string,
-    focus?: string,
-    depthChoices?: Record<string, 'surface' | 'deep'>,
-  ) {
+  async function priceFromCamera(result: GuidedResult) {
+    const { frames, captions, serviceSlug: slug, focus, depthChoices, visit } = result;
     setBusy(true);
     setError('');
     setPriced(null);
+    setWalked({ spaces: result.spaces, notes: result.notes });
     try {
       const res = await fetch('/api/vision/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ frames, captions, serviceSlug: slug, focus, depthChoices, city: 'Brooklyn' }),
+        body: JSON.stringify({
+          frames,
+          captions,
+          serviceSlug: slug,
+          focus,
+          depthChoices,
+          // Changes what the crew plan may spray, never the price.
+          products: visit?.products,
+          city: 'Brooklyn',
+        }),
       });
       const { data, failure } = await readJson<any>(res);
       if (failure || !data || !res.ok) {
@@ -146,11 +158,28 @@ export function QuickQuote({ locale }: { locale: Locale }) {
       ? `${propertyType === 'house' ? 'casa' : 'apartamento'} de ${bedrooms} hab y ${bathrooms} baño${bathrooms > 1 ? 's' : ''}`
       : `${bedrooms}-bed ${bathrooms}-bath ${propertyType}`;
 
-  const bookMessage = priced
-    ? locale === 'es'
-      ? `Hola, quiero limpieza en Brooklyn para un ${place}. La página me dio ${shownPrice}. ¿Cuándo tienes disponible?`
-      : `Hi, I need cleaning in Brooklyn for a ${place}. Your page quoted me ${shownPrice}. When are you available?`
-    : '';
+  /**
+   * A camera price describes the home that was filmed, not the questionnaire
+   * underneath it — whose untouched defaults said "1 hab y 1 baño" about a
+   * walkthrough of a three-bedroom flat. What the customer said in the
+   * closing chat (day, products, repairs) rides along, in their language as
+   * the walkthrough recorded it, so the owner reads it before replying.
+   */
+  const bookMessage = !priced
+    ? ''
+    : walked
+      ? [
+          locale === 'es'
+            ? `Hola, quiero limpieza en Brooklyn. Hice el recorrido con la cámara (${walked.spaces.join(', ')}) y la página me dio ${shownPrice}.`
+            : `Hi, I need cleaning in Brooklyn. I did the camera walkthrough (${walked.spaces.join(', ')}) and your page quoted me ${shownPrice}.`,
+          walked.notes,
+          locale === 'es' ? '¿Cuándo tienes disponible?' : 'When are you available?',
+        ]
+          .filter(Boolean)
+          .join(' ')
+      : locale === 'es'
+        ? `Hola, quiero limpieza en Brooklyn para un ${place}. La página me dio ${shownPrice}. ¿Cuándo tienes disponible?`
+        : `Hi, I need cleaning in Brooklyn for a ${place}. Your page quoted me ${shownPrice}. When are you available?`;
   const bookLink = priced ? whatsappLink(bookMessage) : null;
 
   return (
@@ -199,6 +228,7 @@ export function QuickQuote({ locale }: { locale: Locale }) {
             type="button"
             onClick={() => {
               setPriced(null);
+              setWalked(null);
               setCameraOpen(false);
             }}
             className="w-full text-sm font-medium text-slate-500 underline"
@@ -215,11 +245,7 @@ export function QuickQuote({ locale }: { locale: Locale }) {
           >
             ← {locale === 'es' ? 'Volver al formulario' : 'Back to the form'}
           </button>
-          <GuidedCapture
-            onComplete={({ frames, captions, serviceSlug: chosen, focus, depthChoices }) =>
-              priceFromCamera(frames, captions, chosen, focus, depthChoices)
-            }
-          />
+          <GuidedCapture onComplete={priceFromCamera} />
         </div>
       ) : (
         <div className="space-y-5">

@@ -1,6 +1,15 @@
-import { EMPTY_SOIL, SOIL_DIMENSIONS, type DetectedObject, type RoomType, type SoilScores, type TidyingCounts } from './types';
+import {
+  EMPTY_SOIL,
+  SOIL_DIMENSIONS,
+  type DetectedDamage,
+  type DetectedObject,
+  type RoomType,
+  type SoilScores,
+  type TidyingCounts,
+} from './types';
 import { OBJECT_TIME_COST } from './model';
 import { coerceTidying } from './tidying';
+import { damagePromptSection, knownDamage } from './damage';
 
 /**
  * A quick look at one room, mid-walkthrough, so the next question can be
@@ -38,22 +47,27 @@ And count, roughly, three things you can see:
 - elsewhere: of those, how many plainly belong in a different room, like a sock in the kitchen. Never more than toClear.
 - dishes: dishes, cups, pots and pans waiting to be washed
 
+${damagePromptSection()}
+
 Respond ONLY with JSON:
-{"objects":[{"name":"oven","count":1,"confidence":0.0-1.0}],"clutter":0,"tidying":{"toClear":0,"elsewhere":0,"dishes":0}}`;
+{"objects":[{"name":"oven","count":1,"confidence":0.0-1.0}],"clutter":0,"tidying":{"toClear":0,"elsewhere":0,"dishes":0},"damage":[{"kind":"cabinet","confidence":0.0-1.0}]}`;
 
 export interface ScoutResult {
   objects: DetectedObject[];
   soil: SoilScores;
   /** What the questions about tidying and dishes are built from. */
   tidying?: TidyingCounts;
+  /** Broken things, for the repair question. Known kinds only. */
+  damage?: DetectedDamage[];
   /** False when nothing could be looked at — no key, no network, bad reply. */
   ok: boolean;
 }
 
 const NOTHING: ScoutResult = { objects: [], soil: { ...EMPTY_SOIL }, ok: false };
 
-function coerce(parsed: unknown): ScoutResult {
-  const raw = parsed as { objects?: unknown; clutter?: unknown; tidying?: unknown };
+/** Exported for tests: what a model reply is allowed to become. */
+export function coerceScout(parsed: unknown): ScoutResult {
+  const raw = parsed as { objects?: unknown; clutter?: unknown; tidying?: unknown; damage?: unknown };
   const objects = Array.isArray(raw?.objects)
     ? raw.objects
         .filter((o): o is Record<string, unknown> => typeof o === 'object' && o !== null)
@@ -75,7 +89,7 @@ function coerce(parsed: unknown): ScoutResult {
   for (const dim of SOIL_DIMENSIONS) soil[dim] = 0;
   soil.clutter = Number.isFinite(clutter) ? Math.max(0, Math.min(100, Math.round(clutter))) : 0;
 
-  return { objects, soil, tidying: coerceTidying(raw?.tidying), ok: true };
+  return { objects, soil, tidying: coerceTidying(raw?.tidying), damage: knownDamage(raw?.damage), ok: true };
 }
 
 /**
@@ -107,7 +121,7 @@ export async function scoutRoom(
       body: JSON.stringify({
         model: process.env.OPENAI_VISION_MODEL ?? 'gpt-4o',
         temperature: 0.1,
-        max_tokens: 500,
+        max_tokens: 600,
         response_format: { type: 'json_object' },
         messages: [
           { role: 'system', content: SYSTEM_PROMPT },
@@ -134,7 +148,7 @@ export async function scoutRoom(
     const content = data.choices?.[0]?.message?.content;
     if (!content) return NOTHING;
 
-    return coerce(JSON.parse(content));
+    return coerceScout(JSON.parse(content));
   } catch (err) {
     // Includes the abort the caller fires when the person moved on. Nothing
     // here is worth surfacing to somebody holding a phone.

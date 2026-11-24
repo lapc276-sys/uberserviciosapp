@@ -100,6 +100,28 @@ export interface DetectedMaterial {
 }
 
 /**
+ * What the customer asked the crew to clean with, from the walkthrough's
+ * closing chat. Never changes the price; `eco` changes what the crew plan may
+ * spray, so the plan cannot order the bleach the customer said no to.
+ */
+export const PRODUCT_PREFERENCES = ['standard', 'eco', 'unscented', 'own'] as const;
+export type ProductPreference = (typeof PRODUCT_PREFERENCES)[number];
+
+/**
+ * Something visibly broken — see lib/vision/damage.ts.
+ *
+ * Never priced. It becomes a question to the customer ("¿quieres que te
+ * contactemos para arreglarlo?") and a note to the crew that it was already
+ * like that before they arrived.
+ */
+export interface DetectedDamage {
+  /** A key of DAMAGE. Anything else is discarded on the way in. */
+  kind: string;
+  /** 0–1. Asked about only when firm; noted for the crew when weaker. */
+  confidence: number;
+}
+
+/**
  * Things to put away in a room, counted — see lib/vision/tidying.ts.
  *
  * Counts rather than a score because a score saturates: "messy" and "you
@@ -124,6 +146,8 @@ export interface RoomAnalysis {
   materials?: DetectedMaterial[];
   /** What had to be put away, when the analyzer counted it. */
   tidying?: TidyingCounts;
+  /** Broken before anyone arrived, for the crew. Never part of the price. */
+  damage?: DetectedDamage[];
   soil: SoilScores;
   condition: ConditionLevel;
   /** Minutes of cleaning work, computed by the estimator (not the model). */
@@ -173,6 +197,8 @@ export interface RawRoomObservation {
    * the clutter score, exactly as before counting existed.
    */
   tidying?: TidyingCounts;
+  /** Absent from analyzers that do not look for it. */
+  damage?: DetectedDamage[];
   soil: SoilScores;
   notes?: string;
 }

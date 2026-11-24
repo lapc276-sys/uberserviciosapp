@@ -7,6 +7,7 @@ import { services } from '@/lib/config/services';
 import { saveVisionAnalysis, createLead } from '@/lib/data';
 import { framesAreSafe, validateCaptions, FRAME_ERROR, MAX_FRAMES } from '@/lib/vision/input';
 import { archiveFrames } from '@/lib/vision/archive';
+import { PRODUCT_PREFERENCES } from '@/lib/vision/types';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -33,6 +34,8 @@ const schema = z.object({
    * downstream anyway — an unknown one prices at zero rather than throwing.
    */
   depthChoices: z.record(z.string().max(60), z.enum(['surface', 'deep'])).optional(),
+  /** What the customer asked the crew to clean with. Shapes the crew plan, never the price. */
+  products: z.enum(PRODUCT_PREFERENCES).optional(),
   /**
    * Small copies of the frames, for the training archive. Sent separately from
    * `frames` so that what is analysed and what is retained are two decisions,
@@ -103,6 +106,7 @@ export async function POST(req: Request) {
     source: analyzer.name,
     warnings,
     depthChoices: parsed.data.depthChoices,
+    products: parsed.data.products,
   });
   if (analysis.rooms.length === 0) {
     return NextResponse.json(

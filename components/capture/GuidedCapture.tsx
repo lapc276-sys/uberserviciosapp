@@ -7,19 +7,42 @@ import {
   SPACE_TEMPLATES,
   buildPlan,
   captionFor,
+  droppedNote,
   estimateWalkSeconds,
+  shortenedNote,
   planFrameCount,
   MAX_GUIDED_FRAMES,
   MAX_SPACES,
   type CaptureStep,
   type SpaceSelection,
 } from '@/lib/capture/guide';
-import { SettleWatcher, signatureOf, spreadPick, type Signature } from '@/lib/capture/scene';
+import { SettleWatcher, STILL, difference, signatureOf, spreadPick, type Signature } from '@/lib/capture/scene';
+import { SAY, grayOf, isTooDark, panTooFast, sharpnessOf, usablePanFrames } from '@/lib/capture/quality';
+import {
+  PRODUCT_LABELS,
+  SAY_CHAT,
+  TIME_LABELS,
+  TOOLS_LABELS,
+  WHEN_LABELS,
+  parseDepth,
+  parseProducts,
+  parseTools,
+  parseWhen,
+  parseYesNo,
+  spokenQuestion,
+  visitNote,
+  wantsToContinue,
+  type ProductPreference,
+  type TimeOfDay,
+  type ToolsPreference,
+  type VisitDetails,
+  type WhenPreference,
+} from '@/lib/capture/conversation';
 import { getRecognition, isSpeaking, speak, stopSpeaking, synthesisSupported, type SpeechRecognitionLike } from '@/lib/speech';
 import { normalize } from '@/lib/vision/voice-commands';
 import { readJson } from '@/lib/http';
-import type { RoomQuestion, Answers } from '@/lib/vision/upsell';
-import { depthChoicesFrom, noteFrom } from '@/lib/vision/upsell';
+import type { RoomQuestion, Answers, RepairRequest } from '@/lib/vision/upsell';
+import { REPAIR, depthChoicesFrom, noteFrom, repairNote, repairsFrom } from '@/lib/vision/upsell';
 
 /**
  * A walkthrough the app leads, instead of a video the person guesses at.
@@ -65,6 +88,17 @@ export interface GuidedResult {
    * is otherwise included and billed.
    */
   depthChoices?: Record<string, 'surface' | 'deep'>;
+  /** The spaces actually filmed, by name — so a message describes the home that was walked. */
+  spaces: string[];
+  /** What they answered in the closing chat: when, which products, whose vacuum. */
+  visit?: VisitDetails;
+  /** Broken things they want to be contacted about. Never priced. */
+  repairs?: RepairRequest[];
+  /**
+   * Everything above, as one Spanish paragraph for the company — the lead,
+   * the WhatsApp message. Undefined when there is nothing to say.
+   */
+  notes?: string;
 }
 
 export interface GuidedCaptureProps {
@@ -91,7 +125,20 @@ export interface GuidedCaptureProps {
   title?: string;
 }
 
-type Stage = 'plan' | 'starting' | 'guiding' | 'questions' | 'review' | 'depth' | 'denied' | 'unsupported';
+type Stage =
+  | 'plan'
+  | 'starting'
+  | 'guiding'
+  | 'questions'
+  | 'review'
+  | 'chat'
+  | 'depth'
+  | 'denied'
+  | 'unsupported';
+
+/** The closing questions, in the order they are asked. */
+type ChatTopic = 'when' | 'products' | 'tools';
+const CHAT_ORDER: ChatTopic[] = ['when', 'products', 'tools'];
 
 const DEPTH_OPTIONS = [
   {
@@ -147,6 +194,35 @@ const LEAD_IN_MS = 1200;
 /** A pan samples across this window, then keeps the most different frames. */
 const PAN_WINDOW_MS = 7000;
 
+/**
+ * After asking for light, how long a step waits for it before shooting what
+ * it has. Long enough to reach a switch; short enough that a home with a
+ * blown bulb is not a walkthrough that stops.
+ */
+const DARK_GRACE_MS = 7000;
+
+/** A pan that found the room dark starts its sweep again after this. */
+const DARK_PAUSE_MS = 2500;
+
+/**
+ * Still moving this long into a step, the safety timeout is about to shoot
+ * blind — so the bot asks for a steady hand first. Late on purpose: walking to
+ * the fridge and opening it is movement too, and nobody needs to be told to
+ * hold still while they are still walking.
+ */
+const SHAKE_WARN_MS = 6500;
+
+/** Extra sweep time after "más despacio", so the slower pass fits. */
+const PAN_SLOWER_EXTRA_MS = 3000;
+
+/** One sample of a pan, with what the quality check needs to choose among them. */
+interface PanSample {
+  frame: string;
+  signature: Signature | null;
+  dark: boolean;
+  sharpness: number;
+}
+
 export function GuidedCapture({
   onComplete,
   fallback,
@@ -163,8 +239,22 @@ export function GuidedCapture({
   const listeningRef = useRef(false);
   /** When the current step began, for the voice lead-in guard. */
   const stepStartedAt = useRef(0);
+  /**
+   * The recogniser outlives renders, so it reads the stage through a ref. What
+   * a word means depends on it: "dale" takes the shot while guiding and is a
+   * yes while a question is open.
+   */
+  const stageRef = useRef<Stage>('plan');
+  /** Applies a spoken answer to whichever question is open. Reassigned each render. */
+  const answerRef = useRef<(heard: string) => void>(() => {});
+  /** The same, for the closing chat and the depth question. */
+  const chatAnswerRef = useRef<(heard: string) => void>(() => {});
+  const resumeRef = useRef<() => void>(() => {});
+  /** How the last question was answered — by voice, the walk resumes by itself. */
+  const lastAnswerVia = useRef<'voice' | 'touch' | null>(null);
 
   const [stage, setStage] = useState<Stage>('plan');
+  stageRef.current = stage;
   const [selection, setSelection] = useState<SpaceSelection>({ kitchen: 1, bathroom: 1, living_room: 1 });
   const [steps, setSteps] = useState<CaptureStep[]>([]);
   const [index, setIndex] = useState(0);
@@ -172,6 +262,8 @@ export function GuidedCapture({
   const [heard, setHeard] = useState('');
   const [voiceOn, setVoiceOn] = useState(false);
   const [watching, setWatching] = useState<'waiting' | 'moving' | 'settling'>('waiting');
+  /** What the bot just asked for about the shot itself — light, mostly. */
+  const [notice, setNotice] = useState<string | null>(null);
   /**
    * Which step we are re-shooting, if any.
    *
@@ -195,6 +287,10 @@ export function GuidedCapture({
   /** Where the walkthrough resumes once the questions are answered. */
   const [gateNext, setGateNext] = useState<number | null>(null);
   const [focus, setFocus] = useState('');
+  /** The closing chat's answers. */
+  const [visit, setVisit] = useState<VisitDetails>({});
+  /** How the last closing answer arrived — by voice, the chat moves on by itself. */
+  const chatVia = useRef<'voice' | 'touch' | null>(null);
   const [error, setError] = useState('');
 
   const plan = buildPlan(selection);
@@ -262,6 +358,40 @@ export function GuidedCapture({
     return signatureOf(video, video.videoWidth, video.videoHeight);
   }, []);
 
+  const grabGray = useCallback((): Uint8Array | null => {
+    const video = videoRef.current;
+    if (!video || !video.videoWidth) return null;
+    return grayOf(video, video.videoWidth, video.videoHeight);
+  }, []);
+
+  /**
+   * The phone's flashlight, where the browser exposes it.
+   *
+   * Chrome on Android does, for the rear camera; Safari does not. Where it
+   * exists the bot simply turns it on when a space is dark — the person is
+   * holding a fridge door open and has no free hand for a light switch.
+   * Everything here fails silently, because a flashlight is a convenience and
+   * the shot goes ahead either way.
+   */
+  const torchAvailable = useCallback((): boolean => {
+    try {
+      const track = streamRef.current?.getVideoTracks?.()[0];
+      const caps = (track?.getCapabilities?.() ?? {}) as { torch?: boolean };
+      return Boolean(caps.torch);
+    } catch {
+      return false;
+    }
+  }, []);
+
+  const setTorch = useCallback(async (on: boolean): Promise<void> => {
+    try {
+      const track = streamRef.current?.getVideoTracks?.()[0];
+      await track?.applyConstraints({ advanced: [{ torch: on } as MediaTrackConstraintSet] });
+    } catch {
+      // No flashlight, or it refused. The step carries on.
+    }
+  }, []);
+
   /**
    * Ref-driven because both the speech recogniser and the sampling interval
    * outlive the render that created them; reading `index` from a closure would
@@ -275,7 +405,7 @@ export function GuidedCapture({
    * acceptable behaviour in a basement with no signal.
    */
   const scoutSpace = useCallback(
-    async (spaceKey: string, roomType: string, frames: string[]) => {
+    async (spaceKey: string, roomType: string, spaceLabel: string, frames: string[]) => {
       if (frames.length === 0) return;
       try {
         const res = await fetch('/api/vision/scout', {
@@ -284,7 +414,11 @@ export function GuidedCapture({
           body: JSON.stringify({ frames, roomType, serviceSlug }),
         });
         const { data } = await readJson<{ questions?: RoomQuestion[] }>(res);
-        const questions = data?.questions ?? [];
+        // A broken thing belongs to THIS space, not to every bathroom: the
+        // server only knows the room type, so the walkthrough names the place.
+        const questions = (data?.questions ?? []).map((q) =>
+          q.kind === 'repair' ? { ...q, id: `${spaceKey}:${REPAIR}`, place: spaceLabel } : q,
+        );
         if (questions.length) setScouted((prev) => ({ ...prev, [spaceKey]: questions }));
       } catch {
         // Deliberately silent — see above.
@@ -320,7 +454,7 @@ export function GuidedCapture({
 
         // The pan is the only step that sees the whole room, so it is the one
         // worth asking the model about. Fired and not awaited.
-        if (step.mode === 'pan') void scoutSpace(step.spaceKey, step.roomType, frames);
+        if (step.mode === 'pan') void scoutSpace(step.spaceKey, step.roomType, step.spaceLabel, frames);
       }
 
       setError('');
@@ -342,8 +476,13 @@ export function GuidedCapture({
       // asked about.
       const leavingSpace = steps[next]?.spaceKey !== step.spaceKey;
       const pending = scouted[step.spaceKey];
-      if (leavingSpace && pending?.length) {
+      // Only when something is still open. Depth questions are keyed by room
+      // type, so the second bathroom's "¿la ducha a fondo?" was answered in the
+      // first — stopping somebody to show them a card with nothing to answer,
+      // and waiting for them to say "seguir", is the conversation stalling.
+      if (leavingSpace && pending?.some((q) => answers[q.id] === undefined)) {
         setGateNext(next);
+        setHeard('');
         setStage('questions');
         return;
       }
@@ -357,13 +496,14 @@ export function GuidedCapture({
         setIndex(next);
       }
     },
-    [index, steps, grabFrame, stopStream, stopVoice, retakeOf, scouted, scoutSpace],
+    [index, steps, grabFrame, stopStream, stopVoice, retakeOf, scouted, scoutSpace, answers],
   );
 
   /** Closes the question card and puts the walkthrough back where it was. */
   const resumeFromQuestions = useCallback(() => {
     const next = gateNext ?? index + 1;
     setGateNext(null);
+    lastAnswerVia.current = null;
     if (next >= steps.length) {
       stopStream();
       stopVoice();
@@ -376,6 +516,114 @@ export function GuidedCapture({
   }, [gateNext, index, steps.length, stopStream, stopVoice]);
 
   advanceRef.current = advance;
+  resumeRef.current = resumeFromQuestions;
+
+  // ── Questions, said out loud ───────────────────────────────────────────────
+
+  const roomQuestions = stage === 'questions' ? (scouted[steps[index]?.spaceKey] ?? []) : [];
+  const openQuestion = roomQuestions.find((q) => answers[q.id] === undefined);
+
+  const answerQuestion = useCallback((id: string, value: boolean, via: 'voice' | 'touch') => {
+    lastAnswerVia.current = via;
+    setAnswers((prev) => ({ ...prev, [id]: value }));
+  }, []);
+
+  answerRef.current = (heard: string) => {
+    if (stageRef.current !== 'questions') return;
+    if (wantsToContinue(heard)) {
+      resumeFromQuestions();
+      return;
+    }
+    if (!openQuestion) return;
+    const yes = parseYesNo(heard);
+    // Not clearly a yes or a no: leave the question open rather than guess.
+    if (yes !== null) answerQuestion(openQuestion.id, yes, 'voice');
+  };
+
+  /**
+   * Asks the open question aloud, and the next one once it is answered.
+   *
+   * When the last one was answered by voice the walk simply carries on — the
+   * person never had to look at the screen, and making them tap "Seguir"
+   * would undo that. Answered by touch, they are looking at the card already
+   * and may want to change an answer, so the button is theirs to press.
+   */
+  useEffect(() => {
+    if (stage !== 'questions') return;
+    if (openQuestion) {
+      speak(spokenQuestion(openQuestion));
+      return;
+    }
+    if (lastAnswerVia.current === 'voice') {
+      speak(SAY_CHAT.moveOn);
+      const t = setTimeout(() => resumeRef.current(), 1200);
+      return () => clearTimeout(t);
+    }
+    // Keyed on the question, not the object: re-running for the same open
+    // question would read it out again on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stage, openQuestion?.id]);
+
+  // ── The closing chat ───────────────────────────────────────────────────────
+
+  /** The first closing question still open. "Elegir día" without a day is still open. */
+  const openChat: ChatTopic | undefined =
+    stage === 'chat'
+      ? CHAT_ORDER.find((topic) =>
+          topic === 'when' ? !visit.when || (visit.when === 'date' && !visit.date) : !visit[topic],
+        )
+      : undefined;
+
+  const setVisitPart = useCallback((part: Partial<VisitDetails>, via: 'voice' | 'touch') => {
+    chatVia.current = via;
+    setVisit((prev) => ({ ...prev, ...part }));
+  }, []);
+
+  const finishRef = useRef<(slug: string) => void>(() => {});
+
+  chatAnswerRef.current = (heard: string) => {
+    const at = stageRef.current;
+    if (at === 'depth') {
+      const slug = parseDepth(heard);
+      if (slug) finishRef.current(slug);
+      return;
+    }
+    if (at !== 'chat') return;
+    if (wantsToContinue(heard)) {
+      setStage('depth');
+      return;
+    }
+    // Only the open question is listened for: "por la tarde" while the bot is
+    // asking about products is not an answer to anything.
+    if (openChat === 'when') {
+      const parsed = parseWhen(heard);
+      if (parsed.when || parsed.timeOfDay) setVisitPart(parsed, 'voice');
+    } else if (openChat === 'products') {
+      const products = parseProducts(heard);
+      if (products) setVisitPart({ products }, 'voice');
+    } else if (openChat === 'tools') {
+      const tools = parseTools(heard);
+      if (tools) setVisitPart({ tools }, 'voice');
+    }
+  };
+
+  /** Asks the open closing question aloud; carries on by itself after a spoken last answer. */
+  useEffect(() => {
+    if (stage !== 'chat') return;
+    if (openChat) {
+      speak(SAY_CHAT[openChat]);
+      return;
+    }
+    if (chatVia.current === 'voice') {
+      speak(SAY_CHAT.closing);
+      const t = setTimeout(() => setStage('depth'), 900);
+      return () => clearTimeout(t);
+    }
+  }, [stage, openChat]);
+
+  useEffect(() => {
+    if (stage === 'depth') speak(SAY_CHAT.depth);
+  }, [stage]);
 
   /**
    * Runs one step: speak it, watch the stream, shoot when it is right.
@@ -385,6 +633,12 @@ export function GuidedCapture({
    * watcher, pan buffer — and builds it again. Sharing any of that across
    * steps is how a pan's leftover frames end up attached to the next
    * instruction.
+   *
+   * It also talks back when the shot would be useless — too dark to see, a
+   * phone that never stops moving, a pan swung instead of swept — the way the
+   * person holding the camera would if they were a cleaner. Each of those is
+   * said at most once per step: a phone that nags is a phone people stop
+   * listening to, and every one of them ends in a shot regardless.
    */
   useEffect(() => {
     if (stage !== 'guiding' || !current) return;
@@ -392,11 +646,21 @@ export function GuidedCapture({
     speak(current.spoken);
     stepStartedAt.current = Date.now();
     setWatching('waiting');
+    setNotice(null);
 
     const watcher = new SettleWatcher();
-    const panBuffer: { frame: string; signature: Signature | null }[] = [];
-    const startedAt = Date.now();
+    const panBuffer: PanSample[] = [];
+    const panDeltas: number[] = [];
+    let startedAt = Date.now();
+    let previous: Signature | null = null;
     let done = false;
+    let warnedDark = false;
+    let warnedShake = false;
+    let warnedFast = false;
+    /** Set while the step waits for the light it asked for. */
+    let lightBy = 0;
+    let panExtraMs = 0;
+    let torchOn = false;
 
     const finishStep = (frames?: string[]) => {
       if (done) return;
@@ -404,21 +668,60 @@ export function GuidedCapture({
       advanceRef.current('capture', frames);
     };
 
+    const askForLight = () => {
+      warnedDark = true;
+      if (torchAvailable()) {
+        torchOn = true;
+        void setTorch(true);
+        speak(SAY.darkTorch);
+        setNotice('Está oscuro: encendí la linterna');
+      } else {
+        speak(SAY.dark);
+        setNotice('Está muy oscuro: enciende la luz');
+      }
+    };
+
     const timer = setInterval(() => {
-      const elapsed = Date.now() - startedAt;
+      const now = Date.now();
+      const elapsed = now - startedAt;
       // Don't shoot over the instruction still being spoken.
       if (elapsed < LEAD_IN_MS) return;
 
       const signature = grabSignature();
+      const delta = difference(previous, signature);
+      previous = signature;
+      const dark = isTooDark(signature);
 
       if (current.mode === 'pan') {
+        // Light first: a sweep through a dark room is several photographs of
+        // nothing, and the room's questions are built from them.
+        if (dark && !warnedDark) {
+          askForLight();
+          panBuffer.length = 0;
+          panDeltas.length = 0;
+          previous = null;
+          startedAt = now + DARK_PAUSE_MS;
+          return;
+        }
+
         const frame = grabFrame();
-        if (frame) panBuffer.push({ frame, signature });
+        if (frame) panBuffer.push({ frame, signature, dark, sharpness: sharpnessOf(grabGray()) });
+        // The first sample has nothing to compare with and reads as 1.
+        if (delta < 1) panDeltas.push(delta);
         setWatching('moving');
-        if (elapsed >= LEAD_IN_MS + PAN_WINDOW_MS) {
+
+        if (!warnedFast && panTooFast(panDeltas)) {
+          warnedFast = true;
+          speak(SAY.slower);
+          panExtraMs = PAN_SLOWER_EXTRA_MS;
+        }
+
+        if (elapsed >= LEAD_IN_MS + PAN_WINDOW_MS + panExtraMs) {
           // Keep the most different frames, so a sweep covers the room rather
-          // than returning three photographs of the same cupboard.
-          finishStep(spreadPick(panBuffer, current.frames));
+          // than returning three photographs of the same cupboard — choosing
+          // only among the ones that are lit and in focus, or a fast swing
+          // wins by being the most "different" blur.
+          finishStep(spreadPick(usablePanFrames(panBuffer, current.frames), current.frames));
         }
         return;
       }
@@ -426,21 +729,40 @@ export function GuidedCapture({
       const settled = watcher.push(signature);
       setWatching(watcher.state);
 
-      if (settled) {
+      // Waiting for the light that was asked for: shoot as soon as there is
+      // some and the phone is steady, and never wait past the grace period.
+      if (lightBy) {
+        if ((!dark && delta <= STILL) || now >= lightBy) finishStep();
+        return;
+      }
+
+      // Settled, or nothing decisive for long enough: someone holding the
+      // phone steady from the start never produces the change the watcher
+      // waits for.
+      if (settled || elapsed >= LEAD_IN_MS + SETTLE_TIMEOUT_MS) {
+        if (dark && !warnedDark) {
+          askForLight();
+          lightBy = now + DARK_GRACE_MS;
+          return;
+        }
         finishStep();
         return;
       }
 
-      // Nothing decisive: someone holding the phone steady from the start
-      // never produces the change the watcher waits for.
-      if (elapsed >= LEAD_IN_MS + SETTLE_TIMEOUT_MS) finishStep();
+      // Still moving this late, the timeout is about to shoot whatever is in
+      // front of the lens. Ask for a steady hand first.
+      if (!warnedShake && watcher.state === 'moving' && elapsed >= LEAD_IN_MS + SHAKE_WARN_MS) {
+        warnedShake = true;
+        speak(SAY.steady);
+      }
     }, WATCH_INTERVAL_MS);
 
     return () => {
       clearInterval(timer);
       done = true;
+      if (torchOn) void setTorch(false);
     };
-  }, [stage, current, grabFrame, grabSignature]);
+  }, [stage, current, grabFrame, grabSignature, grabGray, torchAvailable, setTorch]);
 
   /**
    * Re-binds the stream whenever the stage swaps one `<video>` for another.
@@ -477,6 +799,21 @@ export function GuidedCapture({
       // The phone's speaker reaches its own microphone. Anything heard while
       // it is talking is the app hearing itself, not the person.
       if (isSpeaking()) return;
+
+      // Answering a question is a different conversation from driving the
+      // camera: "dale" is a yes here, and must not photograph whatever the
+      // phone happens to face while somebody reads the card.
+      if (stageRef.current === 'questions') {
+        setHeard(transcript);
+        answerRef.current(transcript);
+        return;
+      }
+      if (stageRef.current === 'chat' || stageRef.current === 'depth') {
+        setHeard(transcript);
+        chatAnswerRef.current(transcript);
+        return;
+      }
+      if (stageRef.current !== 'guiding') return;
 
       // The same grace period the shutter honours. A command arriving before
       // the instruction has finished landing is almost always the tail of the
@@ -565,20 +902,37 @@ export function GuidedCapture({
   }
 
   function finish(slug: string) {
+    stopVoice();
     const asked = Object.values(scouted).flat();
     const tidying = noteFrom(asked, answers);
     // The tidy-up request rides along with whatever the customer typed, since
     // clutter is already a scored dimension and must not be billed twice as
     // minutes. The crew still has to be told in words.
-    const notes = [focus.trim(), tidying].filter(Boolean).join(' ');
+    const focusNotes = [focus.trim(), tidying].filter(Boolean).join(' ');
+    const repairs = repairsFrom(asked, answers);
+    // For the company, not the model: when, with what, and what to fix. None
+    // of it is about where to look in the photos, so none of it goes in focus.
+    const companyNotes = [visitNote(visit), repairNote(repairs)].filter(Boolean).join(' ');
 
     onComplete({
       frames: shots.map((s) => s.frame),
       captions: shots.map((s) => captionFor(s.step)),
       serviceSlug: slug,
-      focus: notes || undefined,
+      focus: focusNotes || undefined,
       depthChoices: depthChoicesFrom(asked, answers),
+      spaces: [...new Set(shots.map((s) => s.step.spaceLabel))],
+      visit: Object.keys(visit).length ? visit : undefined,
+      repairs: repairs.length ? repairs : undefined,
+      notes: companyNotes || undefined,
     });
+  }
+  finishRef.current = finish;
+
+  /** From the review to the closing chat, listening again for the answers. */
+  function beginChat() {
+    setHeard('');
+    setStage('chat');
+    startVoice();
   }
 
   /** Re-opens the camera on one already-shot step. */
@@ -727,20 +1081,18 @@ export function GuidedCapture({
           })}
         </ul>
 
-        {plan.tooManySpaces && (
+        {/* Named, never counted. "6 tomas de detalle" is the sentence that
+            once hid three whole rooms — and a room nobody filmed is a room
+            the price does not charge for. */}
+        {droppedNote(plan) && (
           <p className="flex items-start gap-2 rounded-xl bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-950/30 dark:text-amber-300">
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-            Son demasiados espacios para un solo recorrido. Haz la cocina y los baños primero, y luego
-            repite para el resto.
+            {droppedNote(plan)}
           </p>
         )}
 
-        {plan.droppedOptional > 0 && !plan.tooManySpaces && (
-          <p className="text-xs text-slate-500 dark:text-slate-400">
-            Para que quepa en un recorrido dejaré fuera {plan.droppedOptional}{' '}
-            {plan.droppedOptional === 1 ? 'toma de detalle' : 'tomas de detalle'} (dentro del horno, la
-            basura y parecidos).
-          </p>
+        {shortenedNote(plan) && (
+          <p className="text-xs text-slate-500 dark:text-slate-400">{shortenedNote(plan)}</p>
         )}
 
         {totalSpaces > 0 && (
@@ -779,6 +1131,11 @@ export function GuidedCapture({
               {current?.spaceLabel} · {index + 1} de {steps.length}
             </p>
             <p className="mt-1 text-xl font-semibold leading-snug text-white">{current?.spoken}</p>
+            {notice && (
+              <p className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-amber-500/90 px-2.5 py-1 text-sm font-medium text-black">
+                <AlertTriangle className="h-4 w-4" /> {notice}
+              </p>
+            )}
           </div>
 
           {/* What the app is doing right now. Without this the camera looks
@@ -826,15 +1183,26 @@ export function GuidedCapture({
         {stage === 'questions' && gateNext !== null && (
           <div className="space-y-3 rounded-2xl border-2 border-brand-500 bg-brand-50 p-4 dark:bg-brand-950/30">
             <p className="text-sm font-medium text-brand-900 dark:text-brand-200">
-              {(scouted[steps[index]?.spaceKey] ?? []).length === 1
+              {roomQuestions.length === 1
                 ? 'Antes de seguir, una pregunta sobre este espacio'
                 : 'Antes de seguir, unas preguntas sobre este espacio'}
             </p>
+            {voiceOn && (
+              <p className="flex items-center gap-1.5 text-xs text-brand-900/70 dark:text-brand-200/70">
+                <Mic className="h-3.5 w-3.5" />
+                {heard ? `Te oí: “${heard}”` : 'Contesta en voz alta: “sí” o “no”'}
+              </p>
+            )}
 
-            {(scouted[steps[index]?.spaceKey] ?? []).map((q) => {
+            {roomQuestions.map((q) => {
               const answered = answers[q.id];
               return (
-                <div key={q.id} className="rounded-xl bg-white p-3 dark:bg-white/5">
+                <div
+                  key={q.id}
+                  className={`rounded-xl bg-white p-3 dark:bg-white/5 ${
+                    q.id === openQuestion?.id ? 'ring-2 ring-brand-500' : ''
+                  }`}
+                >
                   <p className="text-base font-medium">{q.prompt}</p>
                   {q.extraMinutes > 0 && (
                     /* Shown so a yes is informed rather than a trap: nobody
@@ -851,7 +1219,7 @@ export function GuidedCapture({
                       <button
                         key={opt.label}
                         type="button"
-                        onClick={() => setAnswers((prev) => ({ ...prev, [q.id]: opt.value }))}
+                        onClick={() => answerQuestion(q.id, opt.value, 'touch')}
                         className={`min-h-[48px] rounded-xl border-2 text-base font-medium transition-colors ${
                           answered === opt.value
                             ? 'border-brand-600 bg-brand-100 text-brand-900 dark:bg-brand-900/40 dark:text-brand-100'
@@ -923,6 +1291,117 @@ export function GuidedCapture({
             Este navegador no habla en voz alta — lee la instrucción de arriba.
           </p>
         )}
+      </div>
+    );
+  }
+
+  if (stage === 'chat') {
+    const chip = (active: boolean) =>
+      `min-h-[44px] rounded-xl border-2 px-3 text-sm font-medium transition-colors ${
+        active
+          ? 'border-brand-600 bg-brand-100 text-brand-900 dark:bg-brand-900/40 dark:text-brand-100'
+          : 'dark:border-white/15'
+      }`;
+    const block = (topic: ChatTopic) =>
+      `rounded-2xl border p-4 dark:border-white/10 ${topic === openChat ? 'ring-2 ring-brand-500' : ''}`;
+    const today = new Date().toISOString().slice(0, 10);
+
+    return (
+      <div className="space-y-4">
+        <div>
+          <h3 className="font-semibold">Ya casi está</h3>
+          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+            Tres preguntas rápidas para quien vaya a limpiar. Contesta en voz alta o tocando.
+          </p>
+          {voiceOn && (
+            <p className="mt-1 flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
+              <Mic className="h-3.5 w-3.5" /> {heard ? `Te oí: “${heard}”` : 'Te escucho'}
+            </p>
+          )}
+        </div>
+
+        <div className={block('when')}>
+          <p className="font-medium">¿Qué día te vendría bien?</p>
+          <div className="mt-2 grid grid-cols-2 gap-2">
+            {(Object.keys(WHEN_LABELS) as WhenPreference[]).map((w) => (
+              <button
+                key={w}
+                type="button"
+                onClick={() => setVisitPart({ when: w }, 'touch')}
+                className={chip(visit.when === w)}
+              >
+                {WHEN_LABELS[w]}
+              </button>
+            ))}
+          </div>
+          {visit.when === 'date' && (
+            <input
+              type="date"
+              min={today}
+              value={visit.date ?? ''}
+              aria-label="Día de la limpieza"
+              onChange={(e) => setVisitPart({ date: e.target.value || undefined }, 'touch')}
+              className="mt-2 min-h-[44px] w-full rounded-xl border bg-white px-3 text-base dark:bg-white/5"
+            />
+          )}
+          <div className="mt-2 flex flex-wrap gap-2">
+            {(Object.keys(TIME_LABELS) as TimeOfDay[]).map((t) => (
+              <button
+                key={t}
+                type="button"
+                onClick={() => setVisitPart({ timeOfDay: t }, 'touch')}
+                className={chip(visit.timeOfDay === t)}
+              >
+                {TIME_LABELS[t]}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className={block('products')}>
+          <p className="font-medium">¿Con qué productos limpiamos?</p>
+          <div className="mt-2 grid grid-cols-2 gap-2">
+            {(Object.keys(PRODUCT_LABELS) as ProductPreference[]).map((p) => (
+              <button
+                key={p}
+                type="button"
+                onClick={() => setVisitPart({ products: p }, 'touch')}
+                className={chip(visit.products === p)}
+              >
+                {PRODUCT_LABELS[p]}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className={block('tools')}>
+          <p className="font-medium">¿Tienes aspiradora y trapeador que podamos usar?</p>
+          <div className="mt-2 grid grid-cols-2 gap-2">
+            {(Object.keys(TOOLS_LABELS) as ToolsPreference[]).map((t) => (
+              <button
+                key={t}
+                type="button"
+                onClick={() => setVisitPart({ tools: t }, 'touch')}
+                className={chip(visit.tools === t)}
+              >
+                {TOOLS_LABELS[t]}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => setStage('depth')}
+          className="inline-flex min-h-[56px] w-full items-center justify-center gap-2 rounded-xl bg-brand-600 text-base font-semibold text-white"
+        >
+          Seguir <ChevronRight className="h-5 w-5" />
+        </button>
+        {/* Unanswered is fine: the company asks on the phone, as it would have
+            without any of this. */}
+        <p className="text-center text-xs text-slate-500 dark:text-slate-400">
+          Lo que no contestes lo hablas luego con la empresa.
+        </p>
       </div>
     );
   }
@@ -1012,7 +1491,7 @@ export function GuidedCapture({
           <button
             type="button"
             disabled={shots.length === 0}
-            onClick={() => (serviceSlug || fixedPlan?.length ? finish(serviceSlug ?? DEPTH_OPTIONS[0].slug) : setStage('depth'))}
+            onClick={() => (serviceSlug || fixedPlan?.length ? finish(serviceSlug ?? DEPTH_OPTIONS[0].slug) : beginChat())}
             className="inline-flex min-h-[56px] w-full items-center justify-center gap-2 rounded-xl bg-brand-600 text-base font-semibold text-white disabled:opacity-60"
           >
             Continuar <ChevronRight className="h-5 w-5" />
@@ -1056,6 +1535,12 @@ export function GuidedCapture({
           <p className="text-sm text-slate-500 dark:text-slate-400">
             Lo mismo de sucio da precios distintos según hasta dónde quieras llegar.
           </p>
+          {voiceOn && (
+            <p className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
+              <Mic className="h-3.5 w-3.5" />
+              {heard ? `Te oí: “${heard}”` : 'Puedes decir “por encima”, “a fondo” o “mudanza”'}
+            </p>
+          )}
           {DEPTH_OPTIONS.map((opt) => (
             <button
               key={opt.slug}

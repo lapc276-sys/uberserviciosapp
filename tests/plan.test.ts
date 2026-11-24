@@ -282,3 +282,43 @@ test('a house with nothing to soak is simply cleaned in order', () => {
     ['living_room', 'bedroom'],
   );
 });
+
+// ── What the customer asked to be cleaned with ──────────────────────────────
+
+test('an eco customer is never sent a crew told to spray chlorine', () => {
+  // The closing chat asked "¿con qué productos?" and they said ecológicos.
+  // A plan that then orders the bleach mold remover has overruled them.
+  const kitchen = room({ type: 'kitchen', objects: [obj('oven')], soil: soil({ grease: 60 }) });
+  const bath = room({ type: 'bathroom', objects: [obj('toilet')], soil: soil({ mold: 40 }) });
+  const analysis = buildAnalysis([kitchen, bath], { serviceSlug: 'deep-cleaning', source: 'heuristic', products: 'eco' });
+  const p = analysis.crewPlan as CrewPlan;
+  const all = textOf(p.steps);
+
+  assert.ok(!/\bquitamoho\b(?! sin cloro)/.test(all), 'the chlorine mold remover is still ordered');
+  assert.ok(!all.includes('limpiahornos'), 'oven cleaner is still ordered');
+  assert.ok(all.includes('sin cloro'), 'the joints still need treating — with a product they agreed to');
+  assert.ok(all.includes('bicarbonato'), 'the oven still needs soaking');
+  assert.ok(!all.includes('el cloro con ácido'), 'the reason given must match the bottle used');
+
+  // The acid still waits for a rinse: peroxide and acid do not belong together either.
+  const held = p.steps.flatMap((s) => s.actions).find((a) => a.includes('limpiador de inodoro'))!;
+  assert.ok(held.includes('Enjuaga'), held);
+
+  assert.ok(p.notes?.some((n) => n.includes('ecológicos')), 'the crew must be told before the first step');
+  assert.ok(analysis.supplyPlan!.safetyWarnings.some((w) => w.includes('eco')), 'the packing list must say so too');
+});
+
+test('what to clean with never moves the price', () => {
+  const rooms = [
+    room({ type: 'kitchen', objects: [obj('oven')], soil: soil({ grease: 60 }) }),
+    room({ type: 'bathroom', objects: [obj('toilet')], soil: soil({ mold: 40 }) }),
+  ];
+  const base = buildAnalysis(rooms, { serviceSlug: 'house-cleaning', source: 'heuristic' });
+  for (const products of ['standard', 'eco', 'unscented', 'own'] as const) {
+    const withPref = buildAnalysis(rooms, { serviceSlug: 'house-cleaning', source: 'heuristic', products });
+    assert.equal(withPref.totalMinutes, base.totalMinutes, products);
+    assert.equal((withPref.crewPlan as CrewPlan).handsOnMinutes, withPref.totalMinutes, products);
+  }
+  // No preference, no note: the plan reads exactly as before.
+  assert.equal((base.crewPlan as CrewPlan).notes, undefined);
+});

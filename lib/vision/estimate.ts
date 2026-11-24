@@ -7,6 +7,7 @@ import {
   type SoilScores,
   type SoilDimension,
   type ConditionLevel,
+  type ProductPreference,
 } from './types';
 import { planSupplies } from './supplies';
 import { knownMaterials, materialMinutes, materialNote } from './materials';
@@ -190,11 +191,25 @@ export interface EstimateOptions {
    * crew arrives rather than after.
    */
   depthChoices?: DepthChoices;
+  /**
+   * What the customer asked the crew to clean with. Never moves the price —
+   * it changes which bottles the plan may order, so an "eco" customer is not
+   * sent a crew told to spray chlorine.
+   */
+  products?: ProductPreference;
 }
 
 export function buildAnalysis(
   observations: RawRoomObservation[],
-  { serviceSlug, source, warnings = [], calibration, supplyCostMultiplier, depthChoices }: EstimateOptions,
+  {
+    serviceSlug,
+    source,
+    warnings = [],
+    calibration,
+    supplyCostMultiplier,
+    depthChoices,
+    products,
+  }: EstimateOptions,
 ): PropertyAnalysis {
   const labels = labelRooms(observations);
 
@@ -222,6 +237,9 @@ export function buildAnalysis(
       objects: obs.objects.filter((o) => o.name?.trim()).slice(0, 25),
       materials: materials.length ? materials : undefined,
       tidying: obs.tidying,
+      // Carried, never priced: it reaches the crew as "it was already like
+      // this", through the plan's cautions.
+      damage: obs.damage?.length ? obs.damage : undefined,
       soil,
       condition: conditionFromIndex(soilIndex(soil, obs.type)),
       estimatedMinutes: Math.round(minutes),
@@ -262,6 +280,13 @@ export function buildAnalysis(
     totalMinutes: Math.round(totalMinutes),
     costMultiplier: supplyCostMultiplier,
   });
+  if (products === 'eco') {
+    // The packing list is shared with every job and names the usual bottles;
+    // this is the line that stops the usual bottles going into the van.
+    supplyPlan.safetyWarnings.push(
+      'Customer asked for eco products: pack a bleach-free mold remover, baking soda instead of oven cleaner, and an ammonia-free glass cleaner.',
+    );
+  }
 
   const confidence = rooms.length
     ? rooms.reduce((sum, r) => sum + r.confidence, 0) / rooms.length
@@ -281,7 +306,7 @@ export function buildAnalysis(
     supplyPlan,
     // Built from the finished rooms and the packed van, so it can only ever
     // name rooms that were priced and bottles that were packed.
-    crewPlan: buildCrewPlan(rooms, supplyPlan, { serviceSlug, depthChoices }),
+    crewPlan: buildCrewPlan(rooms, supplyPlan, { serviceSlug, depthChoices, products }),
     condition: conditionFromIndex(weightedIndex) as ConditionLevel,
     confidence: Number(confidence.toFixed(2)),
     source,

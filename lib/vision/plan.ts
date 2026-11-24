@@ -1,9 +1,10 @@
-import { ROOM_LABELS_ES, type RoomAnalysis, type RoomType } from './types';
+import { ROOM_LABELS_ES, type ProductPreference, type RoomAnalysis, type RoomType } from './types';
 import { SUPPLY_CATALOG, type SupplyPlan } from './supplies';
 import { MATERIALS, WARN_AT_CONFIDENCE } from './materials';
 import { DISHES, PUT_AWAY } from './tidying';
 import { depthChoiceFor, depthGapFor, isDeepService, type DepthChoices } from './model';
 import { taskFor } from './upsell';
+import { damageCaution } from './damage';
 
 /**
  * The order to do the job in, for the person doing it.
@@ -57,6 +58,8 @@ export interface CrewPlanStep {
 }
 
 export interface CrewPlan {
+  /** What the customer asked about products, said before anything else. */
+  notes?: string[];
   steps: CrewPlanStep[];
   /** Equals the analysis total. The plan never moves the price. */
   handsOnMinutes: number;
@@ -161,6 +164,31 @@ const PRETREATMENTS: Pretreatment[] = [
   },
 ];
 
+/**
+ * What changes when the customer asked for ecological products.
+ *
+ * Not dropped but swapped: the joints still need treating and the oven still
+ * needs time to soak, so the step stays — with a product the customer agreed
+ * to. Keeping the step also keeps its place in the order, which matters for
+ * the mould remover: a bleach-free one is still not to be mixed with the
+ * bathroom's acids, so they still wait for a rinse.
+ */
+const ECO_SWAP: Record<string, string> = {
+  oven_cleaner: 'pasta de bicarbonato y agua',
+  mold_remover: 'quitamoho sin cloro (con peróxido)',
+};
+
+const PRODUCT_NOTES: Partial<Record<ProductPreference, string>> = {
+  eco: 'El cliente pidió productos ecológicos: nada de cloro, ni limpiahornos, ni limpiacristales con amoníaco.',
+  unscented: 'El cliente pidió productos sin olor.',
+  own: 'Usa los productos del cliente; los tuyos, solo para lo que falte.',
+};
+
+function pretreatmentsFor(products?: ProductPreference): Pretreatment[] {
+  if (products !== 'eco') return PRETREATMENTS;
+  return PRETREATMENTS.map((p) => (ECO_SWAP[p.supply] ? { ...p, name: ECO_SWAP[p.supply] } : p));
+}
+
 function spanishLabels(rooms: RoomAnalysis[]): string[] {
   const totals = new Map<string, number>();
   for (const r of rooms) totals.set(r.type, (totals.get(r.type) ?? 0) + 1);
@@ -174,14 +202,20 @@ function spanishLabels(rooms: RoomAnalysis[]): string[] {
   });
 }
 
-function cautionsFor(room: RoomAnalysis): string[] {
-  return (room.materials ?? [])
+function cautionsFor(room: RoomAnalysis, withDamage = true): string[] {
+  const surfaces = (room.materials ?? [])
     .filter((m) => m.confidence >= WARN_AT_CONFIDENCE && MATERIALS[m.name])
     .map((m) => {
       const care = MATERIALS[m.name];
       const label = care.label.charAt(0).toUpperCase() + care.label.slice(1);
       return `${label}: ${care.care}, ${care.avoidEs}.`;
     });
+  // Broken before anyone arrived. Said in the room it is in, the first time
+  // the crew walks in — because "you broke my cabinet" is the most expensive
+  // sentence in this trade and the walkthrough is the only record of how it
+  // was. Only once per room: by the second step it is noise.
+  const broken = withDamage ? damageCaution(room.damage) : undefined;
+  return broken ? [...surfaces, broken] : surfaces;
 }
 
 /** What the customer bought done from the inside, as crew instructions. */
@@ -224,6 +258,8 @@ interface RoomWork {
   dwell: number;
   /** Whether the rubber pet-hair brush is in the van. */
   petHair: boolean;
+  /** The customer asked for ecological products. */
+  eco: boolean;
 }
 
 /** Materials seen firmly enough in this room to warn about. */
@@ -240,9 +276,15 @@ function damages(p: Pretreatment, materials: string[]): string | undefined {
   return materials.find((m) => MATERIALS[m].avoidHazards.includes(hazard));
 }
 
-function planRoom(room: RoomAnalysis, index: number, label: string, packed: Set<string>): RoomWork {
+function planRoom(
+  room: RoomAnalysis,
+  index: number,
+  label: string,
+  packed: Set<string>,
+  products?: ProductPreference,
+): RoomWork {
   const present = materialsIn(room);
-  const candidates = PRETREATMENTS.filter((p) => packed.has(p.supply) && p.applies(room));
+  const candidates = pretreatmentsFor(products).filter((p) => packed.has(p.supply) && p.applies(room));
 
   // The supply list warns that acid etches marble. Warning is not enough
   // once there is a plan: a plan that says "be careful with acid" and then
@@ -284,6 +326,7 @@ function planRoom(room: RoomAnalysis, index: number, label: string, packed: Set<
     pretreatMinutes,
     dwell,
     petHair: packed.has('pet_hair_tool'),
+    eco: products === 'eco',
   };
 }
 
@@ -312,15 +355,19 @@ function cleanActions(work: RoomWork, serviceSlug: string, choices?: DepthChoice
     const dwell = SUPPLY_CATALOG[p.supply]?.dwellMinutes;
     actions.push(
       dwell
-        ? `Termina ${p.where}: el ${p.name} ya lleva al menos ${dwell} min trabajando.`
+        ? `Termina ${p.where}: ya lleva al menos ${dwell} min con ${p.name}.`
         : `Termina ${p.where}.`,
     );
   }
 
   if (work.held.length) {
     const steps = work.held.map((p) => `${p.name} en ${p.where}`).join(' y ');
+    // The reason has to match the bottle actually used: there is no chlorine
+    // in an eco job, but peroxide and acid still do not belong together.
+    const why = work.eco ? 'no se mezclan' : 'el cloro con ácido suelta gas';
+    const first = work.early.find((p) => SUPPLY_CATALOG[p.supply]?.hazard === 'bleach')?.name ?? 'quitamoho';
     actions.push(
-      `Enjuaga bien donde pusiste el quitamoho. Solo después aplica ${steps} — nunca a la vez: el cloro con ácido suelta gas.${work.held.map((p) => keepInside(work, p)).join('')}`,
+      `Enjuaga bien donde pusiste el ${first}. Solo después aplica ${steps} — nunca a la vez: ${why}.${work.held.map((p) => keepInside(work, p)).join('')}`,
     );
   }
 
@@ -358,11 +405,16 @@ function cleanActions(work: RoomWork, serviceSlug: string, choices?: DepthChoice
 export function buildCrewPlan(
   rooms: RoomAnalysis[],
   supplyPlan: SupplyPlan | undefined,
-  { serviceSlug, depthChoices }: { serviceSlug: string; depthChoices?: DepthChoices },
+  {
+    serviceSlug,
+    depthChoices,
+    products,
+  }: { serviceSlug: string; depthChoices?: DepthChoices; products?: ProductPreference },
 ): CrewPlan {
   const packed = new Set((supplyPlan?.lines ?? []).map((l) => l.id));
   const labels = spanishLabels(rooms);
-  const work = rooms.map((room, i) => planRoom(room, i, labels[i], packed));
+  const work = rooms.map((room, i) => planRoom(room, i, labels[i], packed, products));
+  const note = products ? PRODUCT_NOTES[products] : undefined;
 
   const steps: CrewPlanStep[] = [];
   let clock = 0;
@@ -372,6 +424,10 @@ export function buildCrewPlan(
   const pretreat = work
     .filter((w) => w.early.length > 0 && w.pretreatMinutes > 0)
     .sort((a, b) => b.dwell - a.dwell || a.index - b.index);
+
+  /** Rooms whose pre-existing damage has already been pointed out. */
+  const toldDamage = new Set<number>();
+  const firstVisit = (index: number) => (toldDamage.has(index) ? false : (toldDamage.add(index), true));
 
   for (const w of pretreat) {
     steps.push({
@@ -389,7 +445,7 @@ export function buildCrewPlan(
       minutes: w.pretreatMinutes,
       startsAt: clock,
       dwellMinutes: w.dwell,
-      cautions: cautionsFor(w.room),
+      cautions: cautionsFor(w.room, firstVisit(w.index)),
     });
     clock += w.pretreatMinutes;
     readyAt.set(w.index, clock + w.dwell);
@@ -434,7 +490,7 @@ export function buildCrewPlan(
       actions: cleanActions(w, serviceSlug, depthChoices),
       minutes,
       startsAt: clock,
-      cautions: cautionsFor(w.room),
+      cautions: cautionsFor(w.room, firstVisit(w.index)),
     });
     clock += minutes;
   }
@@ -445,6 +501,7 @@ export function buildCrewPlan(
   );
 
   return {
+    ...(note ? { notes: [note] } : {}),
     steps,
     handsOnMinutes: steps.reduce((sum, s) => sum + s.minutes, 0),
     overlappedMinutes,

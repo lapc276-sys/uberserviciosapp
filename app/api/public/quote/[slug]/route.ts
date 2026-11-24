@@ -7,6 +7,7 @@ import { validateFrames, validateCaptions, MAX_FRAMES } from '@/lib/vision/input
 import { services } from '@/lib/config/services';
 import { checkQuota, getTenantBySlug, recordQuote } from '@/lib/tenants/store';
 import { rateLimit, clientIp } from '@/lib/rate-limit';
+import { PRODUCT_PREFERENCES } from '@/lib/vision/types';
 
 /**
  * POST /api/public/quote/[slug] — the endpoint behind a tenant's hosted page.
@@ -41,6 +42,14 @@ const schema = z.object({
    * talk the analyzer out of the grease in front of it.
    */
   focus: z.string().max(400).optional(),
+  /**
+   * The customer's answers to the room questions ("¿el horno por dentro?").
+   * Same shape and bounds as /api/vision/analyze — this page asked them and
+   * then never sent them, so a yes to the oven was quoted as a no.
+   */
+  depthChoices: z.record(z.string().max(60), z.enum(['surface', 'deep'])).optional(),
+  /** What to clean with, from the closing chat. Shapes the crew plan, never the price. */
+  products: z.enum(PRODUCT_PREFERENCES).optional(),
   serviceSlug: z.string().refine((s) => services.some((x) => x.slug === s), 'Unknown service'),
 });
 
@@ -99,6 +108,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ slug: s
     warnings,
     calibration: tenant.calibration,
     supplyCostMultiplier: tenant.pricing.supplyCostMultiplier,
+    depthChoices: parsed.data.depthChoices,
+    products: parsed.data.products,
   });
 
   if (analysis.rooms.length === 0) {

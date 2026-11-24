@@ -12,6 +12,7 @@ import { appaPromptRubric } from './appa';
 import { OBJECT_TIME_COST } from './model';
 import { MATERIALS, knownMaterials } from './materials';
 import { coerceTidying } from './tidying';
+import { damagePromptSection, knownDamage } from './damage';
 
 /**
  * Vision backends.
@@ -70,10 +71,12 @@ Count what has to be put away before the room can be cleaned. These are counts o
 - dishes: dishes, cups, pots, pans and utensils waiting to be washed, in or beside the sink or anywhere else. Count roughly; a full sink is somewhere around 20 to 40.
 If you cannot see the floor or the surfaces well, count only what you can see and lower the room's confidence.
 
+${damagePromptSection()}
+
 Be conservative and evidence-based. If a frame is blurry, dark, or ambiguous, lower your confidence rather than guessing. Do NOT estimate time or price — that is computed separately.
 
 Respond ONLY with JSON matching:
-{"rooms":[{"type":"kitchen","confidence":0.0-1.0,"objects":[{"name":"oven","count":1,"confidence":0.0-1.0}],"materials":[{"name":"natural_stone","confidence":0.0-1.0}],"tidying":{"toClear":0,"elsewhere":0,"dishes":0},"soil":{"dust":0,"grease":0,"stains":0,"clutter":0,"hair":0,"trash":0,"mold":0},"notes":"short observation"}],"warnings":["..."]}
+{"rooms":[{"type":"kitchen","confidence":0.0-1.0,"objects":[{"name":"oven","count":1,"confidence":0.0-1.0}],"materials":[{"name":"natural_stone","confidence":0.0-1.0}],"tidying":{"toClear":0,"elsewhere":0,"dishes":0},"damage":[{"kind":"cabinet","confidence":0.0-1.0}],"soil":{"dust":0,"grease":0,"stains":0,"clutter":0,"hair":0,"trash":0,"mold":0},"notes":"short observation"}],"warnings":["..."]}
 
 Valid room types: ${ROOM_TYPES.join(', ')}.`;
 
@@ -125,6 +128,12 @@ export function coerceObservations(parsed: any): { rooms: RawRoomObservation[]; 
     // A reply without the block leaves it undefined, and the estimator then
     // falls back to the clutter score exactly as it did before counting.
     tidying: coerceTidying(r?.tidying),
+    // Kinds from the table only — a model that volunteers a description or an
+    // opinion about the household gets exactly as far as this line.
+    damage: (() => {
+      const damage = knownDamage(r?.damage);
+      return damage.length ? damage : undefined;
+    })(),
     soil: coerceSoil(r?.soil),
     notes: typeof r?.notes === 'string' ? r.notes.slice(0, 280) : undefined,
   }));
@@ -158,7 +167,9 @@ export const visionLlmAnalyzer: VisionAnalyzer = {
         body: JSON.stringify({
           model: process.env.OPENAI_VISION_MODEL ?? 'gpt-4o',
           temperature: 0.2,
-          max_tokens: 2000,
+          // A seven-room apartment with objects, materials, counts and damage
+          // per room runs past 2000, and a reply cut off mid-JSON prices nothing.
+          max_tokens: 3000,
           response_format: { type: 'json_object' },
           messages: [
             { role: 'system', content: SYSTEM_PROMPT },

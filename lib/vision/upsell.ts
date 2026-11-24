@@ -1,5 +1,13 @@
 import { OBJECT_TIME_COST, depthGapFor, countCapFor, type ObjectDepth } from './model';
-import { ROOM_LABELS_ES, type DetectedObject, type RoomType, type SoilScores, type TidyingCounts } from './types';
+import {
+  ROOM_LABELS_ES,
+  type DetectedDamage,
+  type DetectedObject,
+  type RoomType,
+  type SoilScores,
+  type TidyingCounts,
+} from './types';
+import { DAMAGE, askableDamage, repairPrompt } from './damage';
 import {
   ASK_DISHES_AT,
   ASK_PUT_AWAY_AT,
@@ -50,7 +58,10 @@ export const MAX_QUESTIONS_PER_ROOM = 4;
  */
 const CLUTTER_OFFER_AT = 45;
 
-export type QuestionKind = 'depth' | 'declutter' | 'dishes';
+/** The id suffix of a room's repair question. */
+export const REPAIR = 'repair';
+
+export type QuestionKind = 'depth' | 'declutter' | 'dishes' | 'repair';
 
 export interface RoomQuestion {
   /** Stable id, so an answer can be matched back without string matching. */
@@ -58,12 +69,21 @@ export interface RoomQuestion {
   kind: QuestionKind;
   /** The object this is about, for a depth question. */
   object?: string;
+  /** For a repair question: the kinds of damage seen (keys of DAMAGE). */
+  damage?: string[];
+  /**
+   * The space it was asked in ("Baño 2"), filled in by the walkthrough, which
+   * is the only part that knows. Used where the answer has to say WHICH
+   * bathroom — a repair lead that says "baño" in a three-bathroom home sends
+   * somebody looking.
+   */
+  place?: string;
   roomType: RoomType;
   /** Spanish, spoken and shown. */
   prompt: string;
   /** What it adds if they say yes. Shown so a yes is informed, not a trap. */
   extraMinutes: number;
-  /** What answering yes means for the estimate. */
+  /** What answering yes means for the estimate. A repair question changes nothing. */
   yes: ObjectDepth;
 }
 
@@ -219,9 +239,32 @@ export function questionsForRoom(
   roomType: RoomType,
   objects: DetectedObject[],
   soil: SoilScores,
-  { alreadyDeep = false, tidying }: { alreadyDeep?: boolean; tidying?: TidyingCounts } = {},
+  {
+    alreadyDeep = false,
+    tidying,
+    damage,
+  }: { alreadyDeep?: boolean; tidying?: TidyingCounts; damage?: DetectedDamage[] } = {},
 ): RoomQuestion[] {
   const questions: RoomQuestion[] = [];
+
+  // Asked first, and never cut for room: it is not an upsell on the clean but
+  // a different job the customer may well want done, and the person standing
+  // in front of the broken cabinet is the one who can say so. One question per
+  // room, however many things are broken in it.
+  const broken = askableDamage(damage);
+  const repair = repairPrompt(broken);
+  if (repair) {
+    questions.push({
+      id: `${roomType}:${REPAIR}`,
+      kind: 'repair',
+      damage: broken,
+      roomType,
+      prompt: repair,
+      // No minutes and no price. A yes is a request to be contacted.
+      extraMinutes: 0,
+      yes: 'surface',
+    });
+  }
 
   if (!alreadyDeep) {
     const seen = new Set<string>();
@@ -353,4 +396,35 @@ export function noteFrom(questions: RoomQuestion[], answers: Answers): string | 
   if (putAway.length) parts.push(`llevar cada cosa a su sitio (${putAway.join(', ')})`);
   if (dishes.length) parts.push(`lavar los platos (${dishes.join(', ')})`);
   return parts.length ? `El cliente pidió también: ${parts.join('; ')}.` : undefined;
+}
+
+export interface RepairRequest {
+  /** Where, as the walkthrough named it: "Cocina", "Baño 2". */
+  place: string;
+  /** What, in short Spanish: "gabinete o cajón roto". */
+  items: string[];
+}
+
+/**
+ * The repairs the customer said yes to, for the company that gets the lead.
+ *
+ * Kept apart from the cleaning notes on purpose: these are not part of the
+ * job being quoted, have no price, and may go to a different person — the
+ * company decides whether it fixes them, refers them, or declines.
+ */
+export function repairsFrom(questions: RoomQuestion[], answers: Answers): RepairRequest[] {
+  return questions
+    .filter((q) => q.kind === 'repair' && answers[q.id] === true)
+    .map((q) => ({
+      place: q.place ?? ROOM_LABELS_ES[q.roomType] ?? q.roomType,
+      items: (q.damage ?? []).filter((k) => DAMAGE[k]).map((k) => DAMAGE[k].label),
+    }))
+    .filter((r) => r.items.length > 0);
+}
+
+/** One line for a lead or a WhatsApp message, or undefined with nothing to say. */
+export function repairNote(repairs: RepairRequest[]): string | undefined {
+  if (!repairs.length) return undefined;
+  const list = repairs.map((r) => `${r.items.join(', ')} (${r.place})`).join('; ');
+  return `Quiere que le contacten para arreglar: ${list}.`;
 }

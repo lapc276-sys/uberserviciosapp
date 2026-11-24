@@ -55,13 +55,15 @@ export async function POST(req: Request) {
   const result = await scoutRoom(frames, roomType as RoomType);
   if (!result.ok) return NextResponse.json(SILENT);
 
-  // Room for every depth question plus the two tidying ones. The depth list is
-  // already capped inside questionsForRoom; this outer slice only guards
-  // against the whole card growing past what anyone answers standing up.
+  // Room for the repair question, every depth question and the two tidying
+  // ones. The depth list is already capped inside questionsForRoom; this
+  // outer slice only guards against the whole card growing past what anyone
+  // answers standing up.
   const questions = questionsForRoom(roomType as RoomType, result.objects, result.soil, {
     alreadyDeep: isDeepService(serviceSlug),
     tidying: result.tidying,
-  }).slice(0, MAX_QUESTIONS_PER_ROOM + 2);
+    damage: result.damage,
+  }).slice(0, MAX_QUESTIONS_PER_ROOM + 3);
 
   return NextResponse.json({
     questions,

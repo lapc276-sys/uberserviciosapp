@@ -23,7 +23,7 @@ flowchart TD
     CAP["captionFor<br/>[kitchen-1] kitchen — Dentro del horno"]
 
     API["POST /api/vision/analyze"]
-    VAL["validateFrames + validateCaptions<br/>≤24 fotos · ≤4 MB · sin IP literales"]
+    VAL["validateFrames + validateCaptions<br/>≤36 fotos · ≤4 MB · sin IP literales"]
     VLM["visionLlmAnalyzer<br/>GPT-4o · detail:'low' · 85 tokens/imagen"]
     EST["buildAnalysis<br/>código determinista, sin IA"]
     PRICE["priceFromAnalysis<br/>tarifas del inquilino"]

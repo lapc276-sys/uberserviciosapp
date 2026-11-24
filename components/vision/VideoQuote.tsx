@@ -78,6 +78,7 @@ export function VideoQuote() {
     captions: string[] | undefined,
     service: string,
     focus?: string,
+    depthChoices?: Record<string, 'surface' | 'deep'>,
   ) {
     setError('');
     setAnalysis(null);
@@ -90,7 +91,9 @@ export function VideoQuote() {
       const res = await fetch('/api/vision/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ frames: extracted, captions, serviceSlug: service, city, focus }),
+        // The room questions are asked on this page too; their answers have
+        // to reach the price or the questions are theatre.
+        body: JSON.stringify({ frames: extracted, captions, serviceSlug: service, city, focus, depthChoices }),
       });
 
       const { data, failure } = await readJson<any>(res);
@@ -187,7 +190,9 @@ export function VideoQuote() {
               <div className="mx-auto max-w-md text-left">
                 <GuidedCapture
                   serviceSlug={serviceSlug}
-                  onComplete={({ frames: shot, captions, focus }) => analyze(shot, captions, serviceSlug, focus)}
+                  onComplete={({ frames: shot, captions, focus, depthChoices }) =>
+                    analyze(shot, captions, serviceSlug, focus, depthChoices)
+                  }
                   fallback={
                     <button
                       onClick={() => inputRef.current?.click()}

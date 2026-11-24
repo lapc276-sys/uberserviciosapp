@@ -188,6 +188,76 @@ Las frases para el equipo salen de las mismas que las preguntas al cliente
 (`taskFor` en `upsell.ts`), para que lo que se vende y lo que se ordena hacer no
 puedan describir trabajos distintos.
 
+### El recorrido nunca deja un cuarto fuera sin decirlo
+
+Hasta noviembre de 2026, un apartamento de 2 habitaciones, 2 baños, sala y
+comedor filmaba la cocina, los dos baños y **una** habitación. La pantalla solo
+decía "dejaré fuera 6 tomas de detalle". La IA nunca veía los otros tres
+cuartos, así que el precio no los cobraba: cerca de un tercio del apartamento.
+
+Ahora `buildPlan` (`lib/capture/guide.ts`) recorta en este orden, y solo lo
+necesario: (1) los cuartos secundarios se quedan en paneo + una foto de cerca
+(`core: true`), empezando por el último; (2) las tomas opcionales; (3) cuartos
+enteros, **con su nombre** en pantalla. Cocina, baños y armario son
+`keepWhole`: nunca se recortan. El tope subió de 24 a 36 fotos
+(`MAX_GUIDED_FRAMES` y `MAX_FRAMES` del servidor van juntos; hay un test).
+
+### El bot habla de la foto, sin preguntarle al modelo
+
+`lib/capture/quality.ts`: si la foto sale oscura, pide luz (en Android Chrome
+enciende la linterna él mismo); si el teléfono no para de moverse, pide
+sujetarlo; si el paneo es un manotazo, pide ir más despacio. Todo es
+aritmética sobre la miniatura que ya existe, como el disparador.
+
+Cada aviso se dice **una vez por paso** y el paso **siempre** termina con una
+foto: un bot que insiste es un bot al que dejan de escuchar, y uno que se
+atasca en un sótano sin luz es un recorrido abandonado.
+
+Los umbrales (`DARK_P90`, `PAN_TOO_FAST`) **no están medidos en un teléfono**.
+Solo se midió la cámara falsa de Chromium, para garantizar que los tests no
+disparan avisos. Son flojos a propósito. Mídelos con un teléfono antes de
+tocarlos, igual que los de `scene.ts`.
+
+### Nada de lo que dice el bot puede ser una respuesta
+
+El altavoz llega al micrófono y la protección es un temporizador: un resultado
+que llega un segundo después de que el teléfono calla se cuela. Si la pregunta
+hablada fuera "¿por encima, a fondo o de mudanza?", el teléfono podía oírse a
+sí mismo y reservar una mudanza. Por eso las opciones van en pantalla y la voz
+solo pregunta. `tests/conversation.test.ts` pasa cada frase del bot por cada
+intérprete de respuestas; si añades una frase, tiene que salir vacía de todos.
+
+Y lo que no está claro no es una respuesta: "no sé" o "sí, pero no el horno"
+dejan la pregunta abierta. Un "sí" mal oído suma minutos a la factura de
+alguien.
+
+### Los daños se preguntan, no se cobran
+
+`lib/vision/damage.ts`. Cuando el recorrido ve algo roto (pared, gabinete,
+azulejos…) pregunta "¿Quieres que te contactemos para arreglar eso también?".
+Un sí es un **aviso para la empresa**, nunca minutos ni precio: el motor no
+cotiza reparaciones y no debe parecer que lo hace.
+
+Lo roto también llega al plan del equipo como "ya estaba así en el recorrido",
+una vez por cuarto. La conversación más cara de este oficio es "me rompiste el
+gabinete".
+
+Dos umbrales como en materiales: se pregunta al cliente con ≥ 0,6 (decirle
+"veo un hueco en tu pared" sin que lo haya es un insulto) y se avisa al equipo
+con ≥ 0,4. Solo tipos de la tabla: el modelo no puede colar descripciones ni
+opiniones sobre quien vive ahí.
+
+### La charla del final no toca el precio
+
+Día, productos y aspiradora (`lib/capture/conversation.ts`). Va a la empresa
+en `notes` (WhatsApp, formulario del lead), **no** en `focus`, que es lo que
+lee el modelo para saber dónde mirar.
+
+La única respuesta que cambia algo es "ecológicos", y cambia el **plan**, no
+el precio: el limpiahornos y el quitamoho con cloro se **sustituyen** (no se
+quitan: el moho sigue ahí), y el ácido del baño sigue esperando al enjuague,
+porque el peróxido y el ácido tampoco se mezclan.
+
 ### El archivo de fotogramas viene apagado
 
 `VISION_ARCHIVE_MODE=off` por defecto. Guardar fotos del interior de casas
@@ -265,6 +335,9 @@ ser el de `tail`, siempre 0, y una ejecución con cinco fallos parece correcta.
 Los tests de `tests/` cubren lo que no se puede revisar leyendo: que la cámara
 dispare sola, que el botón atrás retroceda, que repetir una foto no la
 duplique, y que el detector no se active con el teléfono quieto.
+`conversation.spec.ts` comprueba que las respuestas (el horno por dentro, la
+reparación, la charla del final) llegan al precio y al mensaje, en vez de
+perderse por el camino como les pasaba en la página de las otras empresas.
 
 Si tocas `lib/capture/scene.ts`, `lib/capture/guide.ts` o
 `components/capture/GuidedCapture.tsx`, **ejecútalos**. Un fallo ahí no aparece

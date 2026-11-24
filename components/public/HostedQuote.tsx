@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { Video, Loader2, Check, RotateCcw, AlertTriangle } from 'lucide-react';
 import { extractFrames, readImages, UnsupportedVideoError, DEFAULT_FRAME_COUNT } from '@/lib/vision/frames';
-import { GuidedCapture } from '@/components/capture/GuidedCapture';
+import { GuidedCapture, type GuidedResult } from '@/components/capture/GuidedCapture';
 import { readJson } from '@/lib/http';
 
 /**
@@ -75,6 +75,12 @@ export function HostedQuote({
   const [serviceSlug, setServiceSlug] = useState(services[0]?.slug ?? 'house-cleaning');
   const [progress, setProgress] = useState({ done: 0, total: DEFAULT_FRAME_COUNT });
   const [quote, setQuote] = useState<Quote | null>(null);
+  /**
+   * What the customer told the walkthrough that the price does not carry —
+   * the day, the products, the repairs they want looked at. Sent with the
+   * lead, so the company reads it before calling instead of asking again.
+   */
+  const [walkNotes, setWalkNotes] = useState<string | undefined>();
   const [error, setError] = useState('');
 
   const busy = stage === 'reading' || stage === 'analyzing' || stage === 'sending';
@@ -84,18 +90,28 @@ export function HostedQuote({
     frames: string[],
     captions: string[] | undefined,
     service: string,
-    focus?: string,
+    walk?: Pick<GuidedResult, 'focus' | 'depthChoices' | 'visit' | 'notes'>,
   ) {
     setError('');
     setQuote(null);
     setServiceSlug(service);
+    setWalkNotes(walk?.notes);
 
     try {
       setStage('analyzing');
       const res = await fetch(`/api/public/quote/${slug}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ frames, captions, serviceSlug: service, focus }),
+        body: JSON.stringify({
+          frames,
+          captions,
+          serviceSlug: service,
+          focus: walk?.focus,
+          // The yes to "¿limpiamos el horno por dentro?" was being asked here
+          // and then dropped on the way to the price.
+          depthChoices: walk?.depthChoices,
+          products: walk?.visit?.products,
+        }),
       });
       const { data, failure } = await readJson<any>(res);
       if (failure || !data) {
@@ -156,7 +172,9 @@ export function HostedQuote({
         email: String(form.get('email') || ''),
         phone: String(form.get('phone') || ''),
         address: String(form.get('address') || ''),
-        notes: String(form.get('notes') || ''),
+        // Theirs first, then what the walkthrough recorded. Capped to what the
+        // lead route accepts, so a long conversation cannot bounce the lead.
+        notes: [String(form.get('notes') || '').trim(), walkNotes].filter(Boolean).join('\n').slice(0, 1000),
         serviceSlug,
         quoteLow: quote.low,
         quoteHigh: quote.high,
@@ -201,9 +219,7 @@ export function HostedQuote({
       {stage !== 'quoted' && !busy && (
         <div className="rounded-2xl border p-5">
           <GuidedCapture
-            onComplete={({ frames, captions, serviceSlug: chosen, focus, depthChoices }) =>
-              requestQuote(frames, captions, chosen, focus)
-            }
+            onComplete={(result) => requestQuote(result.frames, result.captions, result.serviceSlug, result)}
             fallback={
               <label className="flex min-h-[64px] cursor-pointer items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 text-sm font-medium">
                 <Video className="h-5 w-5" /> Subir un vídeo que ya tengas
@@ -327,6 +343,14 @@ export function HostedQuote({
 
           <form action={submitLead} className="space-y-3 rounded-2xl border p-5">
             <p className="text-sm font-medium">3. ¿Te lo reservamos?</p>
+            {/* Shown before it is sent: the customer should see what the
+                company will read about their visit, in the words it will
+                read it. */}
+            {walkNotes && (
+              <p className="rounded-xl bg-slate-50 p-3 text-xs text-slate-600 dark:bg-white/5 dark:text-slate-300">
+                Lo que nos contaste en el recorrido: {walkNotes}
+              </p>
+            )}
             <input name="name" required placeholder="Tu nombre" className={inputClass} />
             <input name="phone" type="tel" placeholder="Teléfono" className={inputClass} />
             <input name="email" type="email" placeholder="Email" className={inputClass} />

@@ -59,6 +59,14 @@ export interface StepTemplate {
    * one is how a walkthrough gets abandoned halfway.
    */
   optional?: boolean;
+  /**
+   * Kept when this space has to be cut down to fit a big home into one walk.
+   *
+   * The overview pan is always kept — it is the only frame of the whole room,
+   * and the one the room's questions are built from — so this marks the one
+   * close-up worth keeping beside it.
+   */
+  core?: boolean;
 }
 
 export interface SpaceTemplate {
@@ -68,6 +76,15 @@ export interface SpaceTemplate {
   label: string;
   emoji: string;
   steps: StepTemplate[];
+  /**
+   * Never cut down to make room.
+   *
+   * Kitchens and bathrooms carry most of the labour and most of the variance
+   * between homes, so they keep every shot. A closet is here for the opposite
+   * reason: its shots are only worth anything as a set — closed, open, top,
+   * bottom — and half of that set prices nothing.
+   */
+  keepWhole?: boolean;
 }
 
 /**
@@ -95,6 +112,7 @@ export const SPACE_TEMPLATES: SpaceTemplate[] = [
     roomType: 'kitchen',
     label: 'Cocina',
     emoji: '🍳',
+    keepWhole: true,
     steps: [
       {
         title: 'Vista general',
@@ -132,6 +150,7 @@ export const SPACE_TEMPLATES: SpaceTemplate[] = [
     roomType: 'bathroom',
     label: 'Baño',
     emoji: '🚿',
+    keepWhole: true,
     steps: [
       { title: 'Vista general', spoken: 'Desde la puerta, haz un paneo lento de todo el baño.', mode: 'pan', frames: 2 },
       { title: 'Inodoro', spoken: 'Enfoca el inodoro de cerca, por dentro y por detrás.' },
@@ -148,7 +167,7 @@ export const SPACE_TEMPLATES: SpaceTemplate[] = [
     steps: [
       { title: 'Vista general', spoken: 'Desde la puerta, haz un paneo lento de toda la habitación.', mode: 'pan', frames: 2 },
       { title: 'Cama', spoken: 'Enfoca la cama y la ropa de cama.' },
-      { title: 'Suelo', spoken: 'Apunta al suelo, incluyendo debajo de la cama si puedes.' },
+      { title: 'Suelo', spoken: 'Apunta al suelo, incluyendo debajo de la cama si puedes.', core: true },
       { title: 'Superficies y ventanas', spoken: 'Enfoca las mesitas, la cómoda y las ventanas.', optional: true },
     ],
   },
@@ -159,7 +178,7 @@ export const SPACE_TEMPLATES: SpaceTemplate[] = [
     emoji: '🛋️',
     steps: [
       { title: 'Vista general', spoken: 'Desde una esquina, haz un paneo lento de toda la sala.', mode: 'pan', frames: 2 },
-      { title: 'Sofá y sillones', spoken: 'Enfoca el sofá de cerca, incluyendo los cojines.' },
+      { title: 'Sofá y sillones', spoken: 'Enfoca el sofá de cerca, incluyendo los cojines.', core: true },
       { title: 'Mesas y superficies', spoken: 'Apunta a las mesas y a lo que haya encima.' },
       { title: 'Suelo o alfombra', spoken: 'Enfoca el suelo o la alfombra.' },
     ],
@@ -172,7 +191,7 @@ export const SPACE_TEMPLATES: SpaceTemplate[] = [
     steps: [
       { title: 'Vista general', spoken: 'Haz un paneo lento de todo el comedor.', mode: 'pan', frames: 2 },
       { title: 'Mesa y sillas', spoken: 'Enfoca la mesa y las sillas de cerca.' },
-      { title: 'Suelo', spoken: 'Apunta al suelo, sobre todo debajo de la mesa.' },
+      { title: 'Suelo', spoken: 'Apunta al suelo, sobre todo debajo de la mesa.', core: true },
     ],
   },
   {
@@ -186,6 +205,7 @@ export const SPACE_TEMPLATES: SpaceTemplate[] = [
         title: 'Lavadora y secadora',
         spoken: 'Abre la lavadora y apunta al tambor por dentro.',
         after: 'Ya puedes cerrarla.',
+        core: true,
       },
       { title: 'Pila o fregadero', spoken: 'Si hay pila, apunta adentro.', optional: true },
       { title: 'Suelo', spoken: 'Enfoca el suelo y detrás de las máquinas.' },
@@ -198,7 +218,7 @@ export const SPACE_TEMPLATES: SpaceTemplate[] = [
     emoji: '💻',
     steps: [
       { title: 'Vista general', spoken: 'Haz un paneo lento de toda la oficina.', mode: 'pan', frames: 2 },
-      { title: 'Escritorio', spoken: 'Enfoca el escritorio y lo que haya encima.' },
+      { title: 'Escritorio', spoken: 'Enfoca el escritorio y lo que haya encima.', core: true },
       { title: 'Suelo', spoken: 'Apunta al suelo y debajo del escritorio.' },
     ],
   },
@@ -209,7 +229,7 @@ export const SPACE_TEMPLATES: SpaceTemplate[] = [
     emoji: '🚪',
     steps: [
       { title: 'Vista general', spoken: 'Haz un paneo lento a lo largo del pasillo.', mode: 'pan', frames: 2 },
-      { title: 'Suelo y esquinas', spoken: 'Enfoca el suelo, las esquinas y los rodapiés.' },
+      { title: 'Suelo y esquinas', spoken: 'Enfoca el suelo, las esquinas y los rodapiés.', core: true },
     ],
   },
   {
@@ -217,6 +237,7 @@ export const SPACE_TEMPLATES: SpaceTemplate[] = [
     roomType: 'other',
     label: 'Armario / despensa (organizar)',
     emoji: '🗄️',
+    keepWhole: true,
     steps: [
       {
         title: 'Armario cerrado',
@@ -245,7 +266,7 @@ export const SPACE_TEMPLATES: SpaceTemplate[] = [
     emoji: '📦',
     steps: [
       { title: 'Vista general', spoken: 'Desde la entrada, haz un paneo lento de todo el espacio.', mode: 'pan', frames: 2 },
-      { title: 'Lo más sucio', spoken: 'Ahora acércate a la parte que más trabajo va a dar.' },
+      { title: 'Lo más sucio', spoken: 'Ahora acércate a la parte que más trabajo va a dar.', core: true },
       { title: 'Suelo', spoken: 'Enfoca el suelo.', optional: true },
     ],
   },
@@ -276,17 +297,30 @@ export interface CaptureStep {
  * The ceiling on frames in one walkthrough.
  *
  * Bounded by the request size limit, not by the model: the shared encode
- * budget divides 3.8MB across however many frames are planned, so more frames
- * means smaller frames, and past roughly two dozen the images get too soft to
- * judge grout by. That is the real limit, so it is the one written down.
+ * budget (TOTAL_BUDGET_CHARS in lib/vision/frames.ts) is divided across however
+ * many frames are planned, so more frames means smaller frames. At 36 each gets
+ * about 55K characters — roughly 1.7 bits per pixel at the 512px the model
+ * actually looks at, which is still a clean JPEG. Past that the images start
+ * getting too soft to judge grout by.
+ *
+ * It was 24 while frames were encoded at 768px, and 24 does not hold an
+ * ordinary two-bedroom apartment: the planner used to fit one by filming the
+ * kitchen, both bathrooms and one bedroom, and quietly not filming the rest.
  */
-export const MAX_GUIDED_FRAMES = 24;
+export const MAX_GUIDED_FRAMES = 36;
 
 /** A person can only hold a phone up for so long. Four spaces is already ~3 min. */
 export const MAX_SPACES = 8;
 
 export interface CapturePlan {
   steps: CaptureStep[];
+  /**
+   * Spaces cut down to their overview pan plus one close-up, to fit.
+   *
+   * The first thing given up, because a bedroom's pan already shows most of
+   * what a bedroom costs, and the alternative is losing a whole room.
+   */
+  lightened: string[];
   /**
    * Optional steps dropped to fit `MAX_GUIDED_FRAMES`.
    *
@@ -295,8 +329,25 @@ export interface CapturePlan {
    * wonder why the app skipped them.
    */
   droppedOptional: number;
-  /** True when even the required steps don't fit — the selection is too big. */
+  /**
+   * Whole spaces that still did not fit, by name.
+   *
+   * Never silent. A room that is not filmed is a room the model never sees,
+   * and a room the model never sees is a room the price does not charge for —
+   * the customer is quoted for a smaller home than the one the crew walks into.
+   */
+  droppedSpaces: string[];
+  /** True when any whole space was left out. */
   tooManySpaces: boolean;
+}
+
+/** One step plus what the trimmer needs to know about it. */
+interface Planned {
+  step: CaptureStep;
+  /** Survives its space being cut down. */
+  keep: boolean;
+  /** The space it belongs to may be cut down at all. */
+  trimmable: boolean;
 }
 
 /**
@@ -306,10 +357,20 @@ export interface CapturePlan {
  * the labour and most of the variance, so they are filmed first. If someone
  * gives up halfway through — which happens — the frames already captured are
  * the ones worth having.
+ *
+ * When the home is too big for one walk, it is shortened in this order, each
+ * stage only as far as needed:
+ *
+ *   1. Secondary spaces (bedrooms, living, dining…) are cut to their pan plus
+ *      one close-up, starting with the last one filmed.
+ *   2. Optional detail shots go, from the end.
+ *   3. Whole spaces go, from the end — and are named on the planning screen.
+ *
+ * Every space is kept, even if lighter, before any space is lost.
  */
 export function buildPlan(selection: SpaceSelection): CapturePlan {
   const ordered = SPACE_TEMPLATES.filter((t) => (selection[t.key] ?? 0) > 0);
-  const steps: CaptureStep[] = [];
+  let planned: Planned[] = [];
 
   for (const template of ordered) {
     const count = Math.min(selection[template.key] ?? 0, MAX_SPACES);
@@ -318,17 +379,22 @@ export function buildPlan(selection: SpaceSelection): CapturePlan {
       const spaceKey = `${template.key}-${n}`;
 
       for (const [i, step] of template.steps.entries()) {
-        steps.push({
-          id: `${spaceKey}-${i}`,
-          spaceKey,
-          roomType: template.roomType,
-          spaceLabel,
-          title: step.title,
-          spoken: step.spoken,
-          after: step.after,
-          mode: step.mode ?? 'settle',
-          frames: step.mode === 'pan' ? (step.frames ?? 2) : 1,
-          optional: step.optional ?? false,
+        const mode = step.mode ?? 'settle';
+        planned.push({
+          step: {
+            id: `${spaceKey}-${i}`,
+            spaceKey,
+            roomType: template.roomType,
+            spaceLabel,
+            title: step.title,
+            spoken: step.spoken,
+            after: step.after,
+            mode,
+            frames: mode === 'pan' ? (step.frames ?? 2) : 1,
+            optional: step.optional ?? false,
+          },
+          keep: mode === 'pan' || Boolean(step.core),
+          trimmable: !template.keepWhole,
         });
       }
     }
@@ -336,33 +402,83 @@ export function buildPlan(selection: SpaceSelection): CapturePlan {
 
   // The cap is on frames, not on steps: a pan contributes several, so counting
   // steps would let an eight-room plan sail past the limit it is meant to hold.
-  const frameTotal = (list: CaptureStep[]) => list.reduce((sum, s) => sum + s.frames, 0);
+  const frames = (list: Planned[]) => list.reduce((sum, p) => sum + p.step.frames, 0);
+  const fits = () => frames(planned) <= MAX_GUIDED_FRAMES;
 
-  if (frameTotal(steps) <= MAX_GUIDED_FRAMES) {
-    return { steps, droppedOptional: 0, tooManySpaces: false };
+  if (fits()) {
+    return { steps: planned.map((p) => p.step), lightened: [], droppedOptional: 0, droppedSpaces: [], tooManySpaces: false };
   }
 
-  // Trim optional steps from the end first. The spaces filmed last are the
-  // ones the estimate depends on least, so their detail shots are the cheapest
-  // thing to lose.
-  const kept = [...steps];
-  let dropped = 0;
-  for (let i = kept.length - 1; i >= 0 && frameTotal(kept) > MAX_GUIDED_FRAMES; i--) {
-    if (kept[i].optional) {
-      kept.splice(i, 1);
-      dropped += 1;
+  const labels = new Map(planned.map((p) => [p.step.spaceKey, p.step.spaceLabel]));
+  const spaces = [...labels.keys()];
+
+  // 1. Cut secondary spaces down, the last one filmed first.
+  const lightened: string[] = [];
+  for (const key of [...spaces].reverse()) {
+    if (fits()) break;
+    const cut = planned.filter((p) => p.step.spaceKey === key && p.trimmable && !p.keep);
+    if (cut.length === 0) continue;
+    planned = planned.filter((p) => !cut.includes(p));
+    lightened.unshift(labels.get(key)!);
+  }
+
+  // 2. Optional detail shots, from the end.
+  let droppedOptional = 0;
+  for (let i = planned.length - 1; i >= 0 && !fits(); i--) {
+    if (planned[i].step.optional) {
+      planned.splice(i, 1);
+      droppedOptional += 1;
     }
   }
 
-  // Still over: drop whole steps off the end rather than truncating mid-pan,
-  // which would leave a step promising three frames and delivering one.
-  while (kept.length > 0 && frameTotal(kept) > MAX_GUIDED_FRAMES) kept.pop();
+  // 3. Whole spaces, from the end. A space goes entirely or not at all: half a
+  // bathroom is a bathroom the model scores from the wrong evidence.
+  const droppedSpaces: string[] = [];
+  while (planned.length > 0 && !fits()) {
+    const last = planned[planned.length - 1].step.spaceKey;
+    droppedSpaces.unshift(labels.get(last)!);
+    planned = planned.filter((p) => p.step.spaceKey !== last);
+  }
 
   return {
-    steps: kept,
-    droppedOptional: dropped,
-    tooManySpaces: frameTotal(steps) > MAX_GUIDED_FRAMES && dropped === 0,
+    steps: planned.map((p) => p.step),
+    // A space cut down and then dropped anyway is reported once, as dropped.
+    lightened: lightened.filter((label) => !droppedSpaces.includes(label)),
+    droppedOptional,
+    droppedSpaces,
+    tooManySpaces: droppedSpaces.length > 0,
   };
+}
+
+/** "A", "A y B", "A, B y C". */
+export function joinEs(items: string[]): string {
+  if (items.length <= 1) return items[0] ?? '';
+  return `${items.slice(0, -1).join(', ')} y ${items[items.length - 1]}`;
+}
+
+/**
+ * What the planning screen says about a shortened walk, or null when nothing
+ * was shortened. Spelled out per space, because "dejaré fuera 6 tomas" was the
+ * sentence that hid three missing rooms.
+ */
+export function shortenedNote(plan: CapturePlan): string | null {
+  const parts: string[] = [];
+  if (plan.lightened.length) {
+    parts.push(`en ${joinEs(plan.lightened)} solo haré el paneo y una foto de cerca`);
+  }
+  if (plan.droppedOptional > 0) {
+    parts.push(
+      `dejaré fuera ${plan.droppedOptional} ${plan.droppedOptional === 1 ? 'toma' : 'tomas'} de detalle (dentro del horno, la basura y parecidos)`,
+    );
+  }
+  return parts.length ? `Para que no se haga largo, ${parts.join(', y ')}.` : null;
+}
+
+/** The warning for spaces that do not fit at all, or null when everything does. */
+export function droppedNote(plan: CapturePlan): string | null {
+  if (!plan.droppedSpaces.length) return null;
+  const these = plan.droppedSpaces.length === 1 ? 'ese espacio' : 'esos espacios';
+  return `No cabe todo en un recorrido: se quedarían sin filmar ${joinEs(plan.droppedSpaces)}, y el precio no los contaría. Quita ${these} de la lista y hazlos en un segundo recorrido.`;
 }
 
 /** Total frames a plan will produce, which is what the size budget divides. */

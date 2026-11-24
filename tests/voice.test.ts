@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { SAY } from '../lib/capture/quality';
 
 /**
  * The walkthrough listens and speaks at the same time, on a device whose
@@ -60,6 +61,18 @@ test('nothing the phone says can trigger the shutter', () => {
     [],
     `The app would hear itself and fire:\n  ${offenders.join('\n  ')}`,
   );
+});
+
+test('nothing the bot says about a bad shot can trigger the shutter', () => {
+  // "Sujeta el teléfono quieto para la foto" would take the photo it asks for,
+  // pointed wherever the phone is while the person reads the sentence.
+  const words = captureWords();
+  const offenders: string[] = [];
+  for (const line of Object.values(SAY)) {
+    const spoken = normalize(line).split(' ');
+    for (const w of words) if (spoken.includes(w)) offenders.push(`"${line}" contains "${w}"`);
+  }
+  assert.deepEqual(offenders, [], offenders.join('\n'));
 });
 
 test('commands are not words said by accident', () => {

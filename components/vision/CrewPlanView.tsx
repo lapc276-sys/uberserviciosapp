@@ -36,6 +36,16 @@ export function CrewPlanView({ plan }: { plan: CrewPlan }) {
           {plan.overlappedMinutes > 0 &&
             ` · los productos trabajan ${duration(plan.overlappedMinutes)} mientras haces otra cosa`}
         </p>
+        {/* What the customer asked to be cleaned with, before the first step:
+            it decides which bottles come out of the van at all. */}
+        {plan.notes?.map((note) => (
+          <p
+            key={note}
+            className="mt-2 rounded-xl bg-emerald-50 p-2.5 text-xs font-medium text-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200"
+          >
+            {note}
+          </p>
+        ))}
         {plan.idleMinutes > 0 && (
           // Said plainly rather than absorbed: a wait the crew knows about is
           // one they can fill, or avoid by spraying before unloading the van.
