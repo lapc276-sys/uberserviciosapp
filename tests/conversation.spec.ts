@@ -15,7 +15,10 @@ import { test, expect, type Page } from '@playwright/test';
  * do not depend on a model; the analyzer is stubbed so the price does not.
  */
 
+const REMARK = 'La cocina está bastante bien. Lo que más trabajo va a dar es la campana, que tiene grasa; ahí vamos a poner énfasis.';
+
 const SCOUT = {
+  remark: REMARK,
   questions: [
     {
       id: 'kitchen:repair',
@@ -38,11 +41,14 @@ const SCOUT = {
   ],
 };
 
+let scoutLang: string | undefined;
+
 async function stubModel(page: Page): Promise<() => Record<string, any> | null> {
   let seen: Record<string, any> | null = null;
-  await page.route('**/api/vision/scout', (route) =>
-    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(SCOUT) }),
-  );
+  await page.route('**/api/vision/scout', (route) => {
+    scoutLang = JSON.parse(route.request().postData() ?? '{}').lang;
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(SCOUT) });
+  });
   await page.route('**/api/vision/analyze', async (route) => {
     seen = JSON.parse(route.request().postData() ?? '{}');
     await route.fulfill({
@@ -84,6 +90,11 @@ test('answers in the rooms and the closing chat reach the price and the message'
     if (await shoot.isVisible().catch(() => false)) await shoot.click({ timeout: 5000 }).catch(() => {});
     await page.waitForTimeout(300);
   }
+
+  // The room's remark is on the card — the bot says it before the first question.
+  await expect(page.getByText(REMARK)).toBeVisible();
+  // The scout was asked in the walkthrough's language.
+  expect(scoutLang).toBe('es');
 
   // The repair question comes first, and neither is pre-answered.
   await expect(page.getByText(/gabinete o un cajón roto/)).toBeVisible();

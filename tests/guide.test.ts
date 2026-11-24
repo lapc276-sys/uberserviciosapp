@@ -2,7 +2,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildPlan,
+  captionFor,
   droppedNote,
+  joinList,
+  wordsFor,
   estimateWalkSeconds,
   joinEs,
   planFrameCount,
@@ -65,7 +68,7 @@ test('a space cut down keeps its pan and one close-up', () => {
   const plan = buildPlan(HOMES['2 hab / 2 baños + sala + comedor']);
   assert.ok(plan.lightened.length > 0, 'this home needs shortening — the test is not testing anything');
 
-  for (const label of plan.lightened) {
+  for (const { es: label } of plan.lightened) {
     const steps = plan.steps.filter((s) => s.spaceLabel === label);
     // The pan is what the room's questions are built from, and the only frame
     // of the whole room. Losing it would leave a close-up of a floor.
@@ -78,7 +81,11 @@ test('the shortening is said, per space', () => {
   const plan = buildPlan(HOMES['2 hab / 2 baños + sala + comedor']);
   const note = shortenedNote(plan);
   assert.ok(note);
-  for (const label of plan.lightened) assert.ok(note.includes(label), `"${note}" does not name ${label}`);
+  for (const { es: label } of plan.lightened) assert.ok(note.includes(label), `"${note}" does not name ${label}`);
+  // And in English, with the English names.
+  const noteEn = shortenedNote(plan, 'en');
+  assert.ok(noteEn?.startsWith('To keep it short'));
+  for (const { en: label } of plan.lightened) assert.ok(noteEn!.includes(label), `"${noteEn}" does not name ${label}`);
 });
 
 test('a small home is not shortened at all', () => {
@@ -98,10 +105,12 @@ test('a home that cannot fit names what is left out', () => {
 
   const note = droppedNote(plan);
   assert.ok(note);
-  for (const label of plan.droppedSpaces) assert.ok(note.includes(label), `"${note}" does not name ${label}`);
+  for (const { es: label } of plan.droppedSpaces) assert.ok(note.includes(label), `"${note}" does not name ${label}`);
+  const noteEn = droppedNote(plan, 'en');
+  for (const { en: label } of plan.droppedSpaces) assert.ok(noteEn!.includes(label), `"${noteEn}" does not name ${label}`);
 
   // Whole spaces only: a dropped space contributes nothing, a kept one keeps its pan.
-  for (const label of plan.droppedSpaces) {
+  for (const { es: label } of plan.droppedSpaces) {
     assert.equal(plan.steps.filter((s) => s.spaceLabel === label).length, 0, `${label} half-dropped`);
   }
   for (const key of new Set(plan.steps.map((s) => s.spaceKey))) {
@@ -111,7 +120,7 @@ test('a home that cannot fit names what is left out', () => {
     );
   }
   // And the kitchen, filmed first, is never what goes.
-  assert.ok(!plan.droppedSpaces.includes('Cocina'));
+  assert.ok(!plan.droppedSpaces.some((s) => s.es === 'Cocina'));
 });
 
 test('a two-bedroom apartment stays a few minutes long', () => {
@@ -139,4 +148,29 @@ test('joinEs reads like Spanish', () => {
   assert.equal(joinEs(['Sala']), 'Sala');
   assert.equal(joinEs(['Sala', 'Comedor']), 'Sala y Comedor');
   assert.equal(joinEs(['Habitación 1', 'Sala', 'Comedor']), 'Habitación 1, Sala y Comedor');
+});
+
+test('every step can be said in English, with its space named in English', () => {
+  const plan = buildPlan({ kitchen: 1, bathroom: 2, bedroom: 1, living_room: 1, dining_room: 1, laundry: 1, office: 1, hallway: 1, closet: 1, other: 1 });
+  for (const step of plan.steps) {
+    assert.ok(step.en.title && step.en.spoken, `${step.id} has no English`);
+    assert.ok(Boolean(step.after) === Boolean(step.en.after), `${step.id}: "after" exists in one language only`);
+    assert.notEqual(step.en.spoken, step.spoken, `${step.id} is not translated`);
+  }
+  const bath2 = plan.steps.find((s) => s.spaceKey === 'bathroom-2')!;
+  assert.equal(bath2.spaceLabel, 'Baño 2');
+  assert.equal(bath2.en.spaceLabel, 'Bathroom 2');
+  assert.equal(wordsFor(bath2, 'en').spaceLabel, 'Bathroom 2');
+  assert.equal(wordsFor(bath2, 'es').spoken, bath2.spoken);
+});
+
+test('the caption the model reads stays Spanish whatever language the walk is in', () => {
+  // Two caption languages would be two ways of describing one oven to the
+  // thing that prices it.
+  const [first] = buildPlan({ kitchen: 1 }).steps;
+  assert.equal(captionFor(first), '[kitchen-1] kitchen — Vista general (Cocina)');
+});
+
+test('joinList reads like English too', () => {
+  assert.equal(joinList(['Kitchen', 'Bathroom', 'Office'], 'en'), 'Kitchen, Bathroom and Office');
 });

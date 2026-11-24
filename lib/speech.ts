@@ -63,13 +63,22 @@ function spokenDurationMs(text: string, rate: number): number {
   return (text.length / 13 / rate) * 1000 + 600;
 }
 
+/**
+ * How long a line will take to say, for callers that have to wait for it —
+ * a step that opens with a remark about the last room must not start its
+ * sweep while the remark is still being read.
+ */
+export function estimateSpeechMs(text: string, rate = 0.95): number {
+  return spokenDurationMs(text, rate);
+}
+
 /** True while the phone is talking, so the recogniser can ignore itself. */
 export function isSpeaking(): boolean {
   return Date.now() < speakingUntil;
 }
 
 /**
- * Says something out loud in Spanish.
+ * Says something out loud — in Spanish unless told otherwise.
  *
  * The guided walkthrough depends on this: the phone is held up facing a room,
  * so the person cannot read the next instruction off the screen while they
@@ -79,13 +88,13 @@ export function isSpeaking(): boolean {
  * Queued speech is cancelled first. Instructions supersede each other — an
  * old one still playing when you have already moved on is worse than silence.
  */
-export function speak(text: string, { rate = 0.95 }: { rate?: number } = {}): void {
+export function speak(text: string, { rate = 0.95, lang = 'es-US' }: { rate?: number; lang?: string } = {}): void {
   if (!synthesisSupported()) return;
 
   try {
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = 'es-US';
+    utterance.lang = lang;
     utterance.rate = rate;
 
     speakingUntil = Date.now() + spokenDurationMs(text, rate);
@@ -97,12 +106,14 @@ export function speak(text: string, { rate = 0.95 }: { rate?: number } = {}): vo
       speakingUntil = 0;
     };
 
-    // Pick a Spanish voice when the platform has one. Without this, some
-    // Android builds read Spanish text with an English voice, which is close
-    // to unintelligible.
-    const voice = window.speechSynthesis
-      .getVoices()
-      .find((v) => v.lang?.toLowerCase().startsWith('es'));
+    // Pick a voice in the right language when the platform has one — the
+    // exact regional one first. Without this, some Android builds read
+    // Spanish text with an English voice, which is close to unintelligible.
+    const wanted = lang.toLowerCase();
+    const voices = window.speechSynthesis.getVoices();
+    const voice =
+      voices.find((v) => v.lang?.toLowerCase().replace('_', '-') === wanted) ??
+      voices.find((v) => v.lang?.toLowerCase().startsWith(wanted.split('-')[0]));
     if (voice) utterance.voice = voice;
 
     window.speechSynthesis.speak(utterance);

@@ -10,6 +10,7 @@ import {
 import { OBJECT_TIME_COST } from './model';
 import { coerceTidying } from './tidying';
 import { damagePromptSection, knownDamage } from './damage';
+import { ISSUES, coerceConditions, type ObjectCondition } from './remarks';
 
 /**
  * A quick look at one room, mid-walkthrough, so the next question can be
@@ -40,6 +41,8 @@ ${Object.keys(OBJECT_TIME_COST).sort().join(', ')}
 
 Count what you see. Ten cabinet doors is cabinet:10. Do not list an object because a room of this type usually has one: a kitchen you cannot see the oven in has no oven. If a frame is dark or blurry, lower your confidence rather than guessing.
 
+For each object, also rate how dirty THAT object looks, as "dirt": 0 = clean, 1 = a little (light dust, a few marks), 2 = dirty (visible grease, stains or buildup), 3 = very dirty. When it is 1 or more, name the main problem as "issue", using exactly one of: ${ISSUES.join(', ')}. If you cannot see the object well enough to judge, leave "dirt" out.
+
 Also rate clutter 0-100: how much is out of place and would have to be moved before cleaning could start. 0 is clear surfaces, 100 is unusable.
 
 And count, roughly, three things you can see:
@@ -50,7 +53,7 @@ And count, roughly, three things you can see:
 ${damagePromptSection()}
 
 Respond ONLY with JSON:
-{"objects":[{"name":"oven","count":1,"confidence":0.0-1.0}],"clutter":0,"tidying":{"toClear":0,"elsewhere":0,"dishes":0},"damage":[{"kind":"cabinet","confidence":0.0-1.0}]}`;
+{"objects":[{"name":"oven","count":1,"confidence":0.0-1.0,"dirt":0,"issue":"grease"}],"clutter":0,"tidying":{"toClear":0,"elsewhere":0,"dishes":0},"damage":[{"kind":"cabinet","confidence":0.0-1.0}]}`;
 
 export interface ScoutResult {
   objects: DetectedObject[];
@@ -59,6 +62,8 @@ export interface ScoutResult {
   tidying?: TidyingCounts;
   /** Broken things, for the repair question. Known kinds only. */
   damage?: DetectedDamage[];
+  /** How dirty each object looked, for the remark said as the room is left. */
+  conditions?: ObjectCondition[];
   /** False when nothing could be looked at — no key, no network, bad reply. */
   ok: boolean;
 }
@@ -89,7 +94,16 @@ export function coerceScout(parsed: unknown): ScoutResult {
   for (const dim of SOIL_DIMENSIONS) soil[dim] = 0;
   soil.clutter = Number.isFinite(clutter) ? Math.max(0, Math.min(100, Math.round(clutter))) : 0;
 
-  return { objects, soil, tidying: coerceTidying(raw?.tidying), damage: knownDamage(raw?.damage), ok: true };
+  return {
+    objects,
+    soil,
+    tidying: coerceTidying(raw?.tidying),
+    damage: knownDamage(raw?.damage),
+    // Catalogue names only, like the objects: a condition for something the
+    // price never heard of would be a remark about nothing.
+    conditions: coerceConditions(raw?.objects).filter((c) => Boolean(OBJECT_TIME_COST[c.name])),
+    ok: true,
+  };
 }
 
 /**
@@ -121,7 +135,7 @@ export async function scoutRoom(
       body: JSON.stringify({
         model: process.env.OPENAI_VISION_MODEL ?? 'gpt-4o',
         temperature: 0.1,
-        max_tokens: 600,
+        max_tokens: 800,
         response_format: { type: 'json_object' },
         messages: [
           { role: 'system', content: SYSTEM_PROMPT },

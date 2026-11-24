@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { MessageCircle, Phone, MapPin, Check, Loader2, Languages } from 'lucide-react';
 import { QuickQuote } from '@/components/klaudy/QuickQuote';
 import { startingPrice } from '@/lib/pricing/klaudy';
@@ -8,6 +8,7 @@ import { services } from '@/lib/config/services';
 import { site } from '@/lib/config/site';
 import { whatsappLink, telLink, OPENERS } from '@/lib/contact';
 import { COPY, DEFAULT_LOCALE, type Locale } from '@/lib/i18n';
+import { browserLanguages, phoneLanguage } from '@/lib/capture/lang';
 
 /**
  * The page that has to bring in work this month.
@@ -27,6 +28,15 @@ import { COPY, DEFAULT_LOCALE, type Locale } from '@/lib/i18n';
 export function Landing() {
   const [locale, setLocale] = useState<Locale>(DEFAULT_LOCALE);
   const t = COPY[locale];
+
+  // The phone's own language, once the page is in the browser: a Spanish
+  // phone gets the Spanish page without hunting for the switch. Read after
+  // mount, so the server's English first frame and the browser agree; the
+  // switch in the header still overrides it.
+  useEffect(() => {
+    const lang = phoneLanguage(browserLanguages()).lang;
+    if (lang && lang !== DEFAULT_LOCALE) setLocale(lang);
+  }, []);
 
   const [sent, setSent] = useState(false);
   const [sending, setSending] = useState(false);

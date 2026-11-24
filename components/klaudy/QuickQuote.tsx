@@ -245,7 +245,9 @@ export function QuickQuote({ locale }: { locale: Locale }) {
           >
             ← {locale === 'es' ? 'Volver al formulario' : 'Back to the form'}
           </button>
-          <GuidedCapture onComplete={priceFromCamera} />
+          {/* The page's language is the walkthrough's starting language; the
+              walkthrough still lets them switch. */}
+          <GuidedCapture onComplete={priceFromCamera} locale={locale} />
         </div>
       ) : (
         <div className="space-y-5">

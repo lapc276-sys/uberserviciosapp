@@ -10,6 +10,7 @@ import {
   droppedNote,
   estimateWalkSeconds,
   shortenedNote,
+  wordsFor,
   planFrameCount,
   MAX_GUIDED_FRAMES,
   MAX_SPACES,
@@ -19,6 +20,7 @@ import {
 import { SettleWatcher, STILL, difference, signatureOf, spreadPick, type Signature } from '@/lib/capture/scene';
 import { SAY, grayOf, isTooDark, panTooFast, sharpnessOf, usablePanFrames } from '@/lib/capture/quality';
 import {
+  COMMANDS,
   PRODUCT_LABELS,
   SAY_CHAT,
   TIME_LABELS,
@@ -38,7 +40,27 @@ import {
   type VisitDetails,
   type WhenPreference,
 } from '@/lib/capture/conversation';
-import { getRecognition, isSpeaking, speak, stopSpeaking, synthesisSupported, type SpeechRecognitionLike } from '@/lib/speech';
+import {
+  estimateSpeechMs,
+  getRecognition,
+  isSpeaking,
+  speak,
+  stopSpeaking,
+  synthesisSupported,
+  type SpeechRecognitionLike,
+} from '@/lib/speech';
+import { COPY } from '@/lib/capture/copy';
+import {
+  LANGS,
+  LANG_NAMES,
+  SPEECH_TAG,
+  browserLanguages,
+  initialLang,
+  isLang,
+  languageName,
+  phoneLanguage,
+  type Lang,
+} from '@/lib/capture/lang';
 import { normalize } from '@/lib/vision/voice-commands';
 import { readJson } from '@/lib/http';
 import type { RoomQuestion, Answers, RepairRequest } from '@/lib/vision/upsell';
@@ -88,8 +110,10 @@ export interface GuidedResult {
    * is otherwise included and billed.
    */
   depthChoices?: Record<string, 'surface' | 'deep'>;
-  /** The spaces actually filmed, by name — so a message describes the home that was walked. */
+  /** The spaces actually filmed, named in the walkthrough's language. */
   spaces: string[];
+  /** The language the walkthrough was done in. */
+  lang: Lang;
   /** What they answered in the closing chat: when, which products, whose vacuum. */
   visit?: VisitDetails;
   /** Broken things they want to be contacted about. Never priced. */
@@ -123,6 +147,12 @@ export interface GuidedCaptureProps {
   onPlan?: (steps: CaptureStep[]) => void;
   /** Shown above the walkthrough, e.g. "Repite el recorrido del principio". */
   title?: string;
+  /**
+   * The page's language, when the page has one (the home page's ES/EN switch).
+   * Without it the phone's own language decides, and either way the planning
+   * screen lets the person change it.
+   */
+  locale?: string;
 }
 
 type Stage =
@@ -140,23 +170,8 @@ type Stage =
 type ChatTopic = 'when' | 'products' | 'tools';
 const CHAT_ORDER: ChatTopic[] = ['when', 'products', 'tools'];
 
-const DEPTH_OPTIONS = [
-  {
-    slug: 'house-cleaning',
-    label: 'Por encima',
-    detail: 'Mantenimiento: polvo, suelos, baños y cocina por fuera.',
-  },
-  {
-    slug: 'deep-cleaning',
-    label: 'A fondo',
-    detail: 'Todo lo anterior más hornos, dentro de electrodomésticos, juntas y rodapiés.',
-  },
-  {
-    slug: 'move-out-cleaning',
-    label: 'Mudanza / entrega',
-    detail: 'Casa vacía, todo dentro y fuera de armarios, para entregar las llaves.',
-  },
-];
+/** The depths offered at the end, in order. Their words live in COPY. */
+const DEPTH_SLUGS = ['house-cleaning', 'deep-cleaning', 'move-out-cleaning'] as const;
 
 /**
  * Spoken words that mean "take the shot" and "I don't have that one".
@@ -173,8 +188,8 @@ const DEPTH_OPTIONS = [
  *   "ya", "ok" and "ahora" constantly without addressing the app at all. A
  *   command has to be a word you would not say by accident.
  */
-const SAY_CAPTURE = ['listo', 'foto', 'toma', 'dale', 'ready'];
-const SAY_SKIP = ['saltar', 'salta', 'no tengo', 'no hay', 'siguiente', 'pasa', 'skip'];
+// The lists themselves are COMMANDS in lib/capture/conversation.ts, one per
+// language, next to everything else the walkthrough says and hears.
 
 /** How often the stream is sampled while looking for the shot. */
 const WATCH_INTERVAL_MS = 400;
@@ -240,6 +255,7 @@ export function GuidedCapture({
   plan: fixedPlan,
   onPlan,
   title,
+  locale,
 }: GuidedCaptureProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -270,6 +286,52 @@ export function GuidedCapture({
 
   const [stage, setStage] = useState<Stage>('plan');
   stageRef.current = stage;
+
+  /**
+   * The walkthrough's language.
+   *
+   * Starts from the page's language, else Spanish; the phone's preference is
+   * applied after mount, because reading `navigator` during render would make
+   * the server's first frame and the browser's disagree.
+   */
+  const [lang, setLang] = useState<Lang>(() => initialLang(locale, []));
+  const langRef = useRef<Lang>(lang);
+  langRef.current = lang;
+  /** Once the person taps a language, nothing guesses over them. */
+  const langChosen = useRef(false);
+  /** The phone's first language when it is one not spoken yet ("ru"), to say so. */
+  const [phonePrimary, setPhonePrimary] = useState<string | null>(null);
+  const copy = COPY[lang];
+
+  useEffect(() => {
+    const phone = phoneLanguage(browserLanguages());
+    setPhonePrimary(phone.primary && !isLang(phone.primary) ? phone.primary : null);
+    if (langChosen.current) return;
+    if (isLang(locale)) setLang(locale);
+    else if (phone.lang) setLang(phone.lang);
+  }, [locale]);
+
+  /** Says a line in the walkthrough's language. Reads the ref, so timers set long ago say it right. */
+  const talk = useCallback((text: string) => speak(text, { lang: SPEECH_TAG[langRef.current] }), []);
+
+  /**
+   * What the bot says about each room as it is left, from the scout — see
+   * lib/vision/remarks.ts. Said once per room: before that room's questions
+   * when it has some, else at the start of the next instruction.
+   */
+  const remarksRef = useRef<Record<string, string>>({});
+  const toldRemarks = useRef<Set<string>>(new Set());
+  /** A remark waiting to open the next step's instruction. */
+  const prefaceRef = useRef<string | null>(null);
+  /** The remark on screen while it is being said. */
+  const [remarkShown, setRemarkShown] = useState<string | null>(null);
+  /** The room's remark if it has not been said yet — and marks it said. */
+  const takeRemark = useCallback((spaceKey: string | undefined): string | undefined => {
+    if (!spaceKey || toldRemarks.current.has(spaceKey)) return undefined;
+    const remark = remarksRef.current[spaceKey];
+    if (remark) toldRemarks.current.add(spaceKey);
+    return remark;
+  }, []);
   const [selection, setSelection] = useState<SpaceSelection>({ kitchen: 1, bathroom: 1, living_room: 1 });
   const [steps, setSteps] = useState<CaptureStep[]>([]);
   const [index, setIndex] = useState(0);
@@ -426,9 +488,10 @@ export function GuidedCapture({
         const res = await fetch('/api/vision/scout', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ frames, roomType, serviceSlug }),
+          body: JSON.stringify({ frames, roomType, serviceSlug, lang: langRef.current }),
         });
-        const { data } = await readJson<{ questions?: RoomQuestion[] }>(res);
+        const { data } = await readJson<{ questions?: RoomQuestion[]; remark?: string | null }>(res);
+        if (data?.remark) remarksRef.current[spaceKey] = data.remark;
         // A broken thing belongs to THIS space, not to every bathroom: the
         // server only knows the room type, so the walkthrough names the place.
         const questions = (data?.questions ?? []).map((q) =>
@@ -452,7 +515,7 @@ export function GuidedCapture({
       if (action === 'capture') {
         const frames = collected?.length ? collected : [grabFrame()].filter((f): f is string => !!f);
         if (frames.length === 0) {
-          setError('La cámara todavía no está lista. Espera un segundo.');
+          setError(COPY[langRef.current].cameraNotReady);
           return;
         }
         setShots((prev) => {
@@ -465,7 +528,8 @@ export function GuidedCapture({
           return [...before, ...fresh, ...without.slice(at)];
         });
         if (typeof navigator !== 'undefined' && 'vibrate' in navigator) navigator.vibrate?.(40);
-        if (step.after) speak(step.after);
+        const after = wordsFor(step, langRef.current).after;
+        if (after) talk(after);
 
         // The pan is the only step that sees the whole room, so it is the one
         // worth asking the model about. Fired and not awaited.
@@ -502,16 +566,21 @@ export function GuidedCapture({
         return;
       }
 
+      // Leaving a room with nothing to ask: its remark, if any, opens the
+      // next instruction instead ("La cocina se ve muy bien… Ahora el baño").
+      const remark = leavingSpace ? takeRemark(step.spaceKey) : undefined;
+
       if (next >= steps.length) {
         stopStream();
         stopVoice();
-        speak('Listo, ya tengo todo.');
+        talk([remark, SAY_CHAT[langRef.current].done].filter(Boolean).join(' '));
         setStage('review');
       } else {
+        prefaceRef.current = remark ?? null;
         setIndex(next);
       }
     },
-    [index, steps, grabFrame, stopStream, stopVoice, retakeOf, scouted, scoutSpace, answers],
+    [index, steps, grabFrame, stopStream, stopVoice, retakeOf, scouted, scoutSpace, answers, takeRemark, talk],
   );
 
   /** Closes the question card and puts the walkthrough back where it was. */
@@ -522,7 +591,7 @@ export function GuidedCapture({
     if (next >= steps.length) {
       stopStream();
       stopVoice();
-      speak('Listo, ya tengo todo.');
+      talk(SAY_CHAT[langRef.current].done);
       setStage('review');
     } else {
       setStage('guiding');
@@ -545,14 +614,11 @@ export function GuidedCapture({
 
   answerRef.current = (heard: string) => {
     if (stageRef.current !== 'questions') return;
-    if (wantsToContinue(heard)) {
-      resumeFromQuestions();
-      return;
-    }
-    if (!openQuestion) return;
-    const yes = parseYesNo(heard);
+    // An answer first, "move on" only if it was not one: "sí, listo" is a yes.
+    const yes = openQuestion ? parseYesNo(heard) : null;
     // Not clearly a yes or a no: leave the question open rather than guess.
-    if (yes !== null) answerQuestion(openQuestion.id, yes, 'voice');
+    if (openQuestion && yes !== null) answerQuestion(openQuestion.id, yes, 'voice');
+    else if (wantsToContinue(heard)) resumeFromQuestions();
   };
 
   /**
@@ -566,11 +632,15 @@ export function GuidedCapture({
   useEffect(() => {
     if (stage !== 'questions') return;
     if (openQuestion) {
-      speak(spokenQuestion(openQuestion));
+      // The room's remark opens its first question: "La cocina se ve muy
+      // bien… ¿Quieres que limpiemos el horno por dentro?"
+      const remark = takeRemark(steps[index]?.spaceKey);
+      const question = spokenQuestion(openQuestion, langRef.current);
+      talk(remark ? `${remark} ${question}` : question);
       return;
     }
     if (lastAnswerVia.current === 'voice') {
-      speak(SAY_CHAT.moveOn);
+      talk(SAY_CHAT[langRef.current].moveOn);
       const t = setTimeout(() => resumeRef.current(), 1200);
       return () => clearTimeout(t);
     }
@@ -604,41 +674,50 @@ export function GuidedCapture({
       return;
     }
     if (at !== 'chat') return;
-    if (wantsToContinue(heard)) {
-      setStage('depth');
-      return;
-    }
     // Only the open question is listened for: "por la tarde" while the bot is
-    // asking about products is not an answer to anything.
+    // asking about products is not an answer to anything. And an answer is
+    // tried before "move on", so "la semana siguiente" books a week instead
+    // of skipping the question.
+    let answered = false;
     if (openChat === 'when') {
       const parsed = parseWhen(heard);
-      if (parsed.when || parsed.timeOfDay) setVisitPart(parsed, 'voice');
+      if (parsed.when || parsed.timeOfDay) {
+        setVisitPart(parsed, 'voice');
+        answered = true;
+      }
     } else if (openChat === 'products') {
       const products = parseProducts(heard);
-      if (products) setVisitPart({ products }, 'voice');
+      if (products) {
+        setVisitPart({ products }, 'voice');
+        answered = true;
+      }
     } else if (openChat === 'tools') {
       const tools = parseTools(heard);
-      if (tools) setVisitPart({ tools }, 'voice');
+      if (tools) {
+        setVisitPart({ tools }, 'voice');
+        answered = true;
+      }
     }
+    if (!answered && wantsToContinue(heard)) setStage('depth');
   };
 
   /** Asks the open closing question aloud; carries on by itself after a spoken last answer. */
   useEffect(() => {
     if (stage !== 'chat') return;
     if (openChat) {
-      speak(SAY_CHAT[openChat]);
+      talk(SAY_CHAT[langRef.current][openChat]);
       return;
     }
     if (chatVia.current === 'voice') {
-      speak(SAY_CHAT.closing);
+      talk(SAY_CHAT[langRef.current].closing);
       const t = setTimeout(() => setStage('depth'), 900);
       return () => clearTimeout(t);
     }
-  }, [stage, openChat]);
+  }, [stage, openChat, talk]);
 
   useEffect(() => {
-    if (stage === 'depth') speak(SAY_CHAT.depth);
-  }, [stage]);
+    if (stage === 'depth') talk(SAY_CHAT[langRef.current].depth);
+  }, [stage, talk]);
 
   /**
    * Runs one step: speak it, watch the stream, shoot when it is right.
@@ -658,15 +737,23 @@ export function GuidedCapture({
   useEffect(() => {
     if (stage !== 'guiding' || !current) return;
 
-    speak(current.spoken);
-    stepStartedAt.current = Date.now();
+    // A remark about the room just left opens this instruction, and the step
+    // waits for it: a sweep must not start while the bot is still talking
+    // about the kitchen.
+    const preface = prefaceRef.current;
+    prefaceRef.current = null;
+    const words = wordsFor(current, langRef.current);
+    talk(preface ? `${preface} ${words.spoken}` : words.spoken);
+    const prefaceMs = preface ? estimateSpeechMs(preface) : 0;
+    stepStartedAt.current = Date.now() + prefaceMs;
+    setRemarkShown(preface);
     setWatching('waiting');
     setNotice(null);
 
     const watcher = new SettleWatcher();
     const panBuffer: PanSample[] = [];
     const panDeltas: number[] = [];
-    let startedAt = Date.now();
+    let startedAt = Date.now() + prefaceMs;
     let previous: Signature | null = null;
     let done = false;
     let warnedDark = false;
@@ -705,11 +792,11 @@ export function GuidedCapture({
       }
       darkSpaces.current.add(current.spaceKey);
       if (lightTorch()) {
-        speak(SAY.darkTorch);
-        setNotice('Está oscuro: encendí la linterna');
+        talk(SAY[langRef.current].darkTorch);
+        setNotice(COPY[langRef.current].darkTorchNotice);
       } else {
-        speak(SAY.dark);
-        setNotice('Está muy oscuro: enciende la luz');
+        talk(SAY[langRef.current].dark);
+        setNotice(COPY[langRef.current].darkNotice);
       }
       return true;
     };
@@ -747,7 +834,7 @@ export function GuidedCapture({
 
         if (!warnedFast && panTooFast(panDeltas)) {
           warnedFast = true;
-          speak(SAY.slower);
+          talk(SAY[langRef.current].slower);
           panExtraMs = PAN_SLOWER_EXTRA_MS;
         }
 
@@ -797,7 +884,7 @@ export function GuidedCapture({
       // front of the lens. Ask for a steady hand first.
       if (!warnedShake && watcher.state === 'moving' && elapsed >= LEAD_IN_MS + SHAKE_WARN_MS) {
         warnedShake = true;
-        speak(SAY.steady);
+        talk(SAY[langRef.current].steady);
       }
     }, WATCH_INTERVAL_MS);
 
@@ -806,7 +893,7 @@ export function GuidedCapture({
       done = true;
       if (torchOn) void setTorch(false);
     };
-  }, [stage, current, grabFrame, grabSignature, grabGray, torchAvailable, setTorch]);
+  }, [stage, current, grabFrame, grabSignature, grabGray, torchAvailable, setTorch, talk]);
 
   /**
    * Re-binds the stream whenever the stage swaps one `<video>` for another.
@@ -831,7 +918,7 @@ export function GuidedCapture({
     const recognition = getRecognition();
     if (!recognition) return;
 
-    recognition.lang = 'es-US';
+    recognition.lang = SPEECH_TAG[langRef.current];
     recognition.continuous = false;
     recognition.interimResults = false;
 
@@ -868,8 +955,9 @@ export function GuidedCapture({
       const text = normalize(transcript);
       setHeard(transcript);
 
-      if (SAY_SKIP.some((w) => text.includes(w))) advanceRef.current('skip');
-      else if (SAY_CAPTURE.some((w) => text.split(' ').includes(w))) advanceRef.current('capture');
+      const commands = COMMANDS[langRef.current];
+      if (commands.skip.some((w) => text.includes(w))) advanceRef.current('skip');
+      else if (commands.capture.some((w) => text.split(' ').includes(w))) advanceRef.current('capture');
     };
 
     recognition.onerror = (event) => {
@@ -911,7 +999,7 @@ export function GuidedCapture({
 
     const built = fixedPlan?.length ? { steps: fixedPlan } : buildPlan(selection);
     if (built.steps.length === 0) {
-      setError('Elige al menos un espacio.');
+      setError(copy.pickOne);
       return;
     }
 
@@ -935,15 +1023,16 @@ export function GuidedCapture({
       // A new walkthrough may be in a different home, or the same one with the
       // lights now on.
       darkSpaces.current = new Set();
+      remarksRef.current = {};
+      toldRemarks.current = new Set();
+      prefaceRef.current = null;
       setStage('guiding');
       startVoice();
     } catch (err) {
       const name = err instanceof Error ? err.name : '';
       setStage(name === 'NotAllowedError' || name === 'SecurityError' ? 'denied' : 'unsupported');
       setError(
-        name === 'NotAllowedError'
-          ? 'No diste permiso a la cámara. Pulsa otra vez y acepta, o sube un vídeo que ya tengas.'
-          : 'No pude abrir la cámara en este navegador.',
+        name === 'NotAllowedError' ? copy.denied : copy.unsupported,
       );
     }
   }
@@ -967,7 +1056,8 @@ export function GuidedCapture({
       serviceSlug: slug,
       focus: focusNotes || undefined,
       depthChoices: depthChoicesFrom(asked, answers),
-      spaces: [...new Set(shots.map((s) => s.step.spaceLabel))],
+      spaces: [...new Set(shots.map((s) => wordsFor(s.step, lang).spaceLabel))],
+      lang,
       visit: Object.keys(visit).length ? visit : undefined,
       repairs: repairs.length ? repairs : undefined,
       notes: companyNotes || undefined,
@@ -997,7 +1087,7 @@ export function GuidedCapture({
       startVoice();
     } catch {
       setRetakeOf(null);
-      setError('No pude volver a abrir la cámara.');
+      setError(copy.reopenFailed);
     }
   }
 
@@ -1037,7 +1127,7 @@ export function GuidedCapture({
             }}
             className="inline-flex min-h-[48px] w-full items-center justify-center gap-2 rounded-xl border text-sm font-medium"
           >
-            <RotateCcw className="h-4 w-4" /> Reintentar la cámara
+            <RotateCcw className="h-4 w-4" /> {copy.retryCamera}
           </button>
         )}
         {fallback}
@@ -1047,15 +1137,12 @@ export function GuidedCapture({
 
   if ((stage === 'plan' || stage === 'starting') && fixedPlan?.length) {
     // Replaying a known plan: nothing to choose, so nothing is asked.
-    const spaces = Array.from(new Set(fixedPlan.map((s) => s.spaceLabel)));
+    const spaces = Array.from(new Set(fixedPlan.map((s) => wordsFor(s, lang).spaceLabel)));
     return (
       <div className="space-y-4">
         <div>
-          <h3 className="font-semibold">{title ?? 'Repite el mismo recorrido'}</h3>
-          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-            Los mismos {fixedPlan.length} pasos, en el mismo orden. Te voy guiando igual que antes — así
-            cada foto del después se compara con la misma foto del antes.
-          </p>
+          <h3 className="font-semibold">{title ?? copy.replayTitle}</h3>
+          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{copy.replayIntro(fixedPlan.length)}</p>
         </div>
 
         <ul className="rounded-2xl border divide-y text-sm">
@@ -1076,7 +1163,7 @@ export function GuidedCapture({
           className="inline-flex min-h-[56px] w-full items-center justify-center gap-2 rounded-xl bg-brand-600 text-base font-semibold text-white disabled:opacity-60"
         >
           <Camera className="h-5 w-5" />
-          {stage === 'starting' ? 'Abriendo la cámara…' : 'Empezar'}
+          {stage === 'starting' ? copy.opening : copy.startShort}
         </button>
 
         <video ref={videoRef} playsInline muted className="hidden" />
@@ -1088,10 +1175,39 @@ export function GuidedCapture({
     return (
       <div className="space-y-4">
         <div>
-          <h3 className="font-semibold">¿Qué espacios vamos a ver?</h3>
-          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-            Te voy guiando uno por uno. Yo te digo a dónde apuntar y tomo la foto — tú solo caminas.
-          </p>
+          <p className="text-sm font-medium">{copy.langQuestion}</p>
+          <div className="mt-2 grid grid-cols-2 gap-2" role="group" aria-label={copy.langQuestion}>
+            {LANGS.map((code) => (
+              <button
+                key={code}
+                type="button"
+                aria-pressed={lang === code}
+                onClick={() => {
+                  langChosen.current = true;
+                  setLang(code);
+                }}
+                className={`min-h-[44px] rounded-xl border-2 text-sm font-medium transition-colors ${
+                  lang === code
+                    ? 'border-brand-600 bg-brand-50 text-brand-800 dark:bg-brand-950/40 dark:text-brand-200'
+                    : 'dark:border-white/15'
+                }`}
+              >
+                {LANG_NAMES[code]}
+              </button>
+            ))}
+          </div>
+          {/* Honest about the limit instead of silently answering a Russian
+              speaker in English: the phone said Russian, and we heard it. */}
+          {phonePrimary && (
+            <p className="mt-1.5 text-xs text-slate-500 dark:text-slate-400">
+              {copy.phoneLanguageNote(languageName(phonePrimary, lang))}
+            </p>
+          )}
+        </div>
+
+        <div>
+          <h3 className="font-semibold">{copy.planTitle}</h3>
+          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{copy.planIntro}</p>
         </div>
 
         <ul className="divide-y rounded-2xl border">
@@ -1102,11 +1218,11 @@ export function GuidedCapture({
                 <span className="text-xl" aria-hidden>
                   {tpl.emoji}
                 </span>
-                <span className="flex-1 text-sm font-medium">{tpl.label}</span>
+                <span className="flex-1 text-sm font-medium">{lang === 'en' ? tpl.labelEn : tpl.label}</span>
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
-                    aria-label={`Quitar ${tpl.label}`}
+                    aria-label={copy.remove(lang === 'en' ? tpl.labelEn : tpl.label)}
                     onClick={() => setCount(tpl.key, -1)}
                     disabled={count === 0}
                     className="flex h-9 w-9 items-center justify-center rounded-lg border disabled:opacity-30"
@@ -1116,7 +1232,7 @@ export function GuidedCapture({
                   <span className="w-5 text-center text-sm font-semibold tabular-nums">{count}</span>
                   <button
                     type="button"
-                    aria-label={`Añadir ${tpl.label}`}
+                    aria-label={copy.add(lang === 'en' ? tpl.labelEn : tpl.label)}
                     onClick={() => setCount(tpl.key, 1)}
                     className="flex h-9 w-9 items-center justify-center rounded-lg border"
                   >
@@ -1131,22 +1247,24 @@ export function GuidedCapture({
         {/* Named, never counted. "6 tomas de detalle" is the sentence that
             once hid three whole rooms — and a room nobody filmed is a room
             the price does not charge for. */}
-        {droppedNote(plan) && (
+        {droppedNote(plan, lang) && (
           <p className="flex items-start gap-2 rounded-xl bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-950/30 dark:text-amber-300">
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-            {droppedNote(plan)}
+            {droppedNote(plan, lang)}
           </p>
         )}
 
-        {shortenedNote(plan) && (
-          <p className="text-xs text-slate-500 dark:text-slate-400">{shortenedNote(plan)}</p>
+        {shortenedNote(plan, lang) && (
+          <p className="text-xs text-slate-500 dark:text-slate-400">{shortenedNote(plan, lang)}</p>
         )}
 
         {totalSpaces > 0 && (
           <p className="text-sm text-slate-500 dark:text-slate-400">
-            {plan.steps.length} pasos · {planFrameCount(plan.steps)} fotos · unos{' '}
-            {Math.ceil(estimateWalkSeconds(plan.steps) / 60)} min caminando. No tienes que pulsar nada:
-            la cámara dispara sola.
+            {copy.planSummary(
+              plan.steps.length,
+              planFrameCount(plan.steps),
+              Math.ceil(estimateWalkSeconds(plan.steps) / 60),
+            )}
           </p>
         )}
 
@@ -1159,7 +1277,7 @@ export function GuidedCapture({
           className="inline-flex min-h-[56px] w-full items-center justify-center gap-2 rounded-xl bg-brand-600 text-base font-semibold text-white disabled:opacity-60"
         >
           <Camera className="h-5 w-5" />
-          {stage === 'starting' ? 'Abriendo la cámara…' : 'Empezar el recorrido'}
+          {stage === 'starting' ? copy.opening : copy.start}
         </button>
 
         <video ref={videoRef} playsInline muted className="hidden" />
@@ -1168,6 +1286,7 @@ export function GuidedCapture({
   }
 
   if (stage === 'guiding' || stage === 'questions') {
+    const words = current ? wordsFor(current, lang) : null;
     return (
       <div className="space-y-3">
         <div className="relative overflow-hidden rounded-2xl bg-slate-900 aspect-[3/4]">
@@ -1175,9 +1294,13 @@ export function GuidedCapture({
 
           <div className="absolute inset-x-0 top-0 bg-gradient-to-b from-black/80 to-transparent p-4">
             <p className="text-xs font-medium uppercase tracking-wide text-white/70">
-              {current?.spaceLabel} · {index + 1} de {steps.length}
+              {copy.stepCounter(words?.spaceLabel ?? '', index + 1, steps.length)}
             </p>
-            <p className="mt-1 text-xl font-semibold leading-snug text-white">{current?.spoken}</p>
+            {/* The remark about the room just left, while it is being said. */}
+            {remarkShown && stage === 'guiding' && (
+              <p className="mt-1 text-sm leading-snug text-white/80">“{remarkShown}”</p>
+            )}
+            <p className="mt-1 text-xl font-semibold leading-snug text-white">{words?.spoken}</p>
             {notice && (
               <p className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-amber-500/90 px-2.5 py-1 text-sm font-medium text-black">
                 <AlertTriangle className="h-4 w-4" /> {notice}
@@ -1199,17 +1322,17 @@ export function GuidedCapture({
                 }`}
               />
               {current?.mode === 'pan'
-                ? 'Grabando el paneo…'
+                ? copy.sweeping
                 : watching === 'settling'
-                  ? 'Quieto… tomando la foto'
+                  ? copy.settling
                   : watching === 'moving'
-                    ? 'Te veo, sujeta el teléfono quieto'
-                    : 'Esperando a que apuntes'}
+                    ? copy.moving
+                    : copy.waiting}
             </span>
             {voiceOn && (
               <span className="inline-flex items-center gap-1 text-xs text-white/60">
                 <Mic className="h-3.5 w-3.5" />
-                {heard ? `“${heard}”` : 'di “listo”'}
+                {heard ? `“${heard}”` : copy.sayReady}
               </span>
             )}
           </div>
@@ -1230,14 +1353,18 @@ export function GuidedCapture({
         {stage === 'questions' && gateNext !== null && (
           <div className="space-y-3 rounded-2xl border-2 border-brand-500 bg-brand-50 p-4 dark:bg-brand-950/30">
             <p className="text-sm font-medium text-brand-900 dark:text-brand-200">
-              {roomQuestions.length === 1
-                ? 'Antes de seguir, una pregunta sobre este espacio'
-                : 'Antes de seguir, unas preguntas sobre este espacio'}
+              {roomQuestions.length === 1 ? copy.oneQuestion : copy.someQuestions}
             </p>
+            {/* What the bot just said about the room, kept on screen. */}
+            {remarksRef.current[steps[index]?.spaceKey] && (
+              <p className="rounded-xl bg-white/70 p-3 text-sm italic text-brand-950 dark:bg-white/5 dark:text-brand-100">
+                “{remarksRef.current[steps[index]?.spaceKey]}”
+              </p>
+            )}
             {voiceOn && (
               <p className="flex items-center gap-1.5 text-xs text-brand-900/70 dark:text-brand-200/70">
                 <Mic className="h-3.5 w-3.5" />
-                {heard ? `Te oí: “${heard}”` : 'Contesta en voz alta: “sí” o “no”'}
+                {heard ? copy.heard(heard) : copy.answerAloud}
               </p>
             )}
 
@@ -1255,13 +1382,13 @@ export function GuidedCapture({
                     /* Shown so a yes is informed rather than a trap: nobody
                        should discover what they agreed to on the invoice. */
                     <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-                      Añade unos {q.extraMinutes} min al trabajo
+                      {copy.addsMinutes(q.extraMinutes)}
                     </p>
                   )}
                   <div className="mt-2 grid grid-cols-2 gap-2">
                     {[
-                      { label: 'Sí', value: true },
-                      { label: 'No', value: false },
+                      { label: copy.yes, value: true },
+                      { label: copy.no, value: false },
                     ].map((opt) => (
                       <button
                         key={opt.label}
@@ -1286,12 +1413,12 @@ export function GuidedCapture({
               onClick={resumeFromQuestions}
               className="min-h-[52px] w-full rounded-xl bg-brand-600 text-base font-semibold text-white"
             >
-              Seguir
+              {copy.carryOn}
             </button>
             {/* Unanswered is a real answer: it leaves the service default
                 alone rather than forcing a choice nobody wanted to make. */}
             <p className="text-center text-xs text-brand-900/60 dark:text-brand-200/60">
-              Lo que no contestes se queda como en una limpieza normal
+              {copy.unansweredStandard}
             </p>
           </div>
         )}
@@ -1307,14 +1434,14 @@ export function GuidedCapture({
             onClick={() => advance('capture')}
             className="inline-flex min-h-[56px] flex-1 items-center justify-center gap-2 rounded-xl bg-brand-600 text-base font-semibold text-white"
           >
-            <Camera className="h-5 w-5" /> {retakeOf !== null ? 'Repetir esta foto' : 'Tomar ya'}
+            <Camera className="h-5 w-5" /> {retakeOf !== null ? copy.retakeThis : copy.takeNow}
           </button>
           <button
             type="button"
             onClick={() => advance('skip')}
             className="inline-flex min-h-[56px] flex-1 items-center justify-center gap-2 rounded-xl border text-sm font-medium"
           >
-            <SkipForward className="h-4 w-4" /> {current?.optional ? 'No tengo' : 'Saltar'}
+            <SkipForward className="h-4 w-4" /> {current?.optional ? copy.dontHave : copy.skip}
           </button>
         </div>
         )}
@@ -1329,13 +1456,13 @@ export function GuidedCapture({
             onClick={goBack}
             className="inline-flex min-h-[44px] w-full items-center justify-center gap-2 rounded-xl text-sm font-medium text-slate-500"
           >
-            <ChevronLeft className="h-4 w-4" /> Atrás — repetir “{steps[index - 1]?.title}”
+            <ChevronLeft className="h-4 w-4" /> {copy.back(steps[index - 1] ? wordsFor(steps[index - 1], lang).title : '')}
           </button>
         )}
 
         {!synthesisSupported() && (
           <p className="text-center text-xs text-slate-500">
-            Este navegador no habla en voz alta — lee la instrucción de arriba.
+            {copy.noSpeech}
           </p>
         )}
       </div>
@@ -1356,28 +1483,28 @@ export function GuidedCapture({
     return (
       <div className="space-y-4">
         <div>
-          <h3 className="font-semibold">Ya casi está</h3>
+          <h3 className="font-semibold">{copy.chatTitle}</h3>
           <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-            Tres preguntas rápidas para quien vaya a limpiar. Contesta en voz alta o tocando.
+            {copy.chatIntro}
           </p>
           {voiceOn && (
             <p className="mt-1 flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
-              <Mic className="h-3.5 w-3.5" /> {heard ? `Te oí: “${heard}”` : 'Te escucho'}
+              <Mic className="h-3.5 w-3.5" /> {heard ? copy.heard(heard) : copy.listening}
             </p>
           )}
         </div>
 
         <div className={block('when')}>
-          <p className="font-medium">¿Qué día te vendría bien?</p>
+          <p className="font-medium">{copy.whenQuestion}</p>
           <div className="mt-2 grid grid-cols-2 gap-2">
-            {(Object.keys(WHEN_LABELS) as WhenPreference[]).map((w) => (
+            {(Object.keys(WHEN_LABELS[lang]) as WhenPreference[]).map((w) => (
               <button
                 key={w}
                 type="button"
                 onClick={() => setVisitPart({ when: w }, 'touch')}
                 className={chip(visit.when === w)}
               >
-                {WHEN_LABELS[w]}
+                {WHEN_LABELS[lang][w]}
               </button>
             ))}
           </div>
@@ -1386,52 +1513,52 @@ export function GuidedCapture({
               type="date"
               min={today}
               value={visit.date ?? ''}
-              aria-label="Día de la limpieza"
+              aria-label={copy.dayLabel}
               onChange={(e) => setVisitPart({ date: e.target.value || undefined }, 'touch')}
               className="mt-2 min-h-[44px] w-full rounded-xl border bg-white px-3 text-base dark:bg-white/5"
             />
           )}
           <div className="mt-2 flex flex-wrap gap-2">
-            {(Object.keys(TIME_LABELS) as TimeOfDay[]).map((t) => (
+            {(Object.keys(TIME_LABELS[lang]) as TimeOfDay[]).map((t) => (
               <button
                 key={t}
                 type="button"
                 onClick={() => setVisitPart({ timeOfDay: t }, 'touch')}
                 className={chip(visit.timeOfDay === t)}
               >
-                {TIME_LABELS[t]}
+                {TIME_LABELS[lang][t]}
               </button>
             ))}
           </div>
         </div>
 
         <div className={block('products')}>
-          <p className="font-medium">¿Con qué productos limpiamos?</p>
+          <p className="font-medium">{copy.productsQuestion}</p>
           <div className="mt-2 grid grid-cols-2 gap-2">
-            {(Object.keys(PRODUCT_LABELS) as ProductPreference[]).map((p) => (
+            {(Object.keys(PRODUCT_LABELS[lang]) as ProductPreference[]).map((p) => (
               <button
                 key={p}
                 type="button"
                 onClick={() => setVisitPart({ products: p }, 'touch')}
                 className={chip(visit.products === p)}
               >
-                {PRODUCT_LABELS[p]}
+                {PRODUCT_LABELS[lang][p]}
               </button>
             ))}
           </div>
         </div>
 
         <div className={block('tools')}>
-          <p className="font-medium">¿Tienes aspiradora y trapeador que podamos usar?</p>
+          <p className="font-medium">{copy.toolsQuestion}</p>
           <div className="mt-2 grid grid-cols-2 gap-2">
-            {(Object.keys(TOOLS_LABELS) as ToolsPreference[]).map((t) => (
+            {(Object.keys(TOOLS_LABELS[lang]) as ToolsPreference[]).map((t) => (
               <button
                 key={t}
                 type="button"
                 onClick={() => setVisitPart({ tools: t }, 'touch')}
                 className={chip(visit.tools === t)}
               >
-                {TOOLS_LABELS[t]}
+                {TOOLS_LABELS[lang][t]}
               </button>
             ))}
           </div>
@@ -1442,12 +1569,12 @@ export function GuidedCapture({
           onClick={() => setStage('depth')}
           className="inline-flex min-h-[56px] w-full items-center justify-center gap-2 rounded-xl bg-brand-600 text-base font-semibold text-white"
         >
-          Seguir <ChevronRight className="h-5 w-5" />
+          {copy.carryOn} <ChevronRight className="h-5 w-5" />
         </button>
         {/* Unanswered is fine: the company asks on the phone, as it would have
             without any of this. */}
         <p className="text-center text-xs text-slate-500 dark:text-slate-400">
-          Lo que no contestes lo hablas luego con la empresa.
+          {copy.unansweredLater}
         </p>
       </div>
     );
@@ -1457,10 +1584,8 @@ export function GuidedCapture({
   return (
     <div className="space-y-4">
       <div>
-        <h3 className="font-semibold">¿Está todo?</h3>
-        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-          Esto es lo que tengo. Toca cualquier foto para repetirla, o añade un espacio que falte.
-        </p>
+        <h3 className="font-semibold">{copy.reviewTitle}</h3>
+        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{copy.reviewIntro}</p>
       </div>
 
       {/* Grouped by space and named, because "18 fotos" tells nobody whether
@@ -1469,9 +1594,10 @@ export function GuidedCapture({
       {(() => {
         const bySpace = new Map<string, typeof shots>();
         for (const shot of shots) {
-          const list = bySpace.get(shot.step.spaceLabel) ?? [];
+          const name = wordsFor(shot.step, lang).spaceLabel;
+          const list = bySpace.get(name) ?? [];
           list.push(shot);
-          bySpace.set(shot.step.spaceLabel, list);
+          bySpace.set(name, list);
         }
         const skipped = steps.filter((st) => !shots.some((sh) => sh.step.id === st.id));
 
@@ -1493,11 +1619,11 @@ export function GuidedCapture({
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
                         src={shot.frame}
-                        alt={shot.step.title}
+                        alt={wordsFor(shot.step, lang).title}
                         className="aspect-square w-full rounded-lg object-cover"
                       />
                       <span className="block truncate text-[10px] leading-tight text-slate-500">
-                        {shot.step.title}
+                        {wordsFor(shot.step, lang).title}
                       </span>
                     </button>
                   ))}
@@ -1507,7 +1633,7 @@ export function GuidedCapture({
 
             {skipped.length > 0 && (
               <div className="rounded-xl border border-dashed p-3">
-                <p className="text-sm font-medium">Te saltaste {skipped.length}:</p>
+                <p className="text-sm font-medium">{copy.skipped(skipped.length)}</p>
                 <div className="mt-2 flex flex-wrap gap-1.5">
                   {skipped.map((st) => (
                     <button
@@ -1516,7 +1642,7 @@ export function GuidedCapture({
                       onClick={() => retake(steps.findIndex((x) => x.id === st.id))}
                       className="rounded-full border px-2.5 py-1 text-xs"
                     >
-                      + {st.spaceLabel} · {st.title}
+                      + {wordsFor(st, lang).spaceLabel} · {wordsFor(st, lang).title}
                     </button>
                   ))}
                 </div>
@@ -1529,7 +1655,7 @@ export function GuidedCapture({
       {shots.length === 0 && (
         <p className="flex items-start gap-2 rounded-xl bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-950/30 dark:text-amber-300">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-          No se tomó ninguna foto. Repite el recorrido y pulsa “Tomar la foto” en cada paso.
+          {copy.noPhotos}
         </p>
       )}
 
@@ -1538,10 +1664,10 @@ export function GuidedCapture({
           <button
             type="button"
             disabled={shots.length === 0}
-            onClick={() => (serviceSlug || fixedPlan?.length ? finish(serviceSlug ?? DEPTH_OPTIONS[0].slug) : beginChat())}
+            onClick={() => (serviceSlug || fixedPlan?.length ? finish(serviceSlug ?? DEPTH_SLUGS[0]) : beginChat())}
             className="inline-flex min-h-[56px] w-full items-center justify-center gap-2 rounded-xl bg-brand-600 text-base font-semibold text-white disabled:opacity-60"
           >
-            Continuar <ChevronRight className="h-5 w-5" />
+            {copy.continue} <ChevronRight className="h-5 w-5" />
           </button>
           {!fixedPlan?.length && (
             <button
@@ -1553,7 +1679,7 @@ export function GuidedCapture({
               }}
               className="inline-flex min-h-[48px] w-full items-center justify-center gap-2 rounded-xl border text-sm font-medium"
             >
-              <RotateCcw className="h-4 w-4" /> Falta un espacio entero — empezar de nuevo
+              <RotateCcw className="h-4 w-4" /> {copy.startOver}
             </button>
           )}
         </div>
@@ -1564,11 +1690,8 @@ export function GuidedCapture({
           {/* Asked before the depth buttons, because those submit. A field
               underneath a button that ends the flow is a field nobody fills. */}
           <label className="block">
-            <span className="font-semibold">¿Hay algo en lo que quieras que nos enfoquemos?</span>
-            <span className="mt-1 block text-sm text-slate-500 dark:text-slate-400">
-              Opcional. Por ejemplo: “las juntas de la ducha”, “la cocina sobre todo”, “tengo un
-              perro y suelta mucho pelo”.
-            </span>
+            <span className="font-semibold">{copy.focusQuestion}</span>
+            <span className="mt-1 block text-sm text-slate-500 dark:text-slate-400">{copy.focusHint}</span>
             <textarea
               value={focus}
               onChange={(e) => setFocus(e.target.value)}
@@ -1578,17 +1701,15 @@ export function GuidedCapture({
             />
           </label>
 
-          <h4 className="pt-2 font-semibold">¿Qué tan a fondo lo quieres?</h4>
-          <p className="text-sm text-slate-500 dark:text-slate-400">
-            Lo mismo de sucio da precios distintos según hasta dónde quieras llegar.
-          </p>
+          <h4 className="pt-2 font-semibold">{copy.depthQuestion}</h4>
+          <p className="text-sm text-slate-500 dark:text-slate-400">{copy.depthIntro}</p>
           {voiceOn && (
             <p className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
               <Mic className="h-3.5 w-3.5" />
-              {heard ? `Te oí: “${heard}”` : 'Puedes decir “por encima”, “a fondo” o “mudanza”'}
+              {heard ? copy.heard(heard) : copy.depthVoiceHint}
             </p>
           )}
-          {DEPTH_OPTIONS.map((opt) => (
+          {DEPTH_SLUGS.map((slug) => ({ slug, ...copy.depth[slug] })).map((opt) => (
             <button
               key={opt.slug}
               type="button"

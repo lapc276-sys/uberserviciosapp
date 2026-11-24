@@ -65,8 +65,15 @@ test('the bot never answers its own question', () => {
       if (prompt && parseYesNo(prompt) !== null) offenders.push(prompt);
     }
   }
-  for (const line of Object.values(SAY_CHAT)) {
+  for (const line of [...Object.values(SAY_CHAT.es), ...Object.values(SAY_CHAT.en)]) {
     if (parseYesNo(line) !== null || wantsToContinue(line)) offenders.push(line);
+  }
+  // And the same questions in English.
+  for (const name of Object.keys(OBJECT_TIME_COST)) {
+    for (const room of ROOM_TYPES) {
+      const prompt = promptFor(name, room, 'en');
+      if (prompt && parseYesNo(spokenQuestion({ prompt, extraMinutes: 12 }, 'en')) !== null) offenders.push(prompt);
+    }
   }
   assert.deepEqual([...new Set(offenders)], []);
   // Sanity: the check above is looking at real sentences.
@@ -106,7 +113,7 @@ test('nothing the bot says can be heard back as an answer', () => {
   // The speaking guard is a timer, and a result arriving a second after the
   // phone stops talking gets past it. "¿Por encima, a fondo o de mudanza?"
   // heard back would have booked a move-out clean.
-  for (const line of Object.values(SAY_CHAT)) {
+  for (const line of [...Object.values(SAY_CHAT.es), ...Object.values(SAY_CHAT.en)]) {
     assert.equal(parseYesNo(line), null, `yes/no: ${line}`);
     assert.equal(wantsToContinue(line), false, `continue: ${line}`);
     assert.deepEqual(parseWhen(line), {}, `when: ${line}`);
@@ -126,4 +133,50 @@ test('the company gets one readable paragraph, or nothing', () => {
   // Chose "Elegir día" and never picked one: say nothing rather than "el undefined".
   assert.equal(visitNote({ when: 'date' }), undefined);
   assert.equal(visitNote({ products: 'own', tools: 'bring' }), 'Productos: usa los del cliente. Aspiradora y trapeador: hay que llevarlos.');
+});
+
+// ── English ─────────────────────────────────────────────────────────────────
+
+test('English answers are understood, and Spanish ones still are', () => {
+  for (const yes of ['Yes', 'yeah', 'Sure', 'yes please', 'of course', 'go ahead', 'sí']) {
+    assert.equal(parseYesNo(yes), true, yes);
+  }
+  for (const no of ['No', 'nope', 'no thanks', 'not really', 'no thank you']) {
+    assert.equal(parseYesNo(no), false, no);
+  }
+  for (const unclear of ["I don't know", 'not sure', 'maybe', 'the oven']) {
+    assert.equal(parseYesNo(unclear), null, unclear);
+  }
+  assert.equal(wantsToContinue('next'), true);
+  assert.equal(wantsToContinue('keep going'), true);
+});
+
+test('"next week" is a day, not "move on" — in either language', () => {
+  // The chat used to check "move on" first: "next week" skipped the question.
+  assert.equal(wantsToContinue('next week'), false);
+  assert.equal(wantsToContinue('la semana siguiente'), false);
+  assert.equal(wantsToContinue('la siguiente semana'), false);
+  assert.deepEqual(parseWhen('next week in the afternoon'), { when: 'next_week', timeOfDay: 'afternoon' });
+  assert.deepEqual(parseWhen('as soon as possible'), { when: 'asap' });
+  assert.deepEqual(parseWhen('this week, any time'), { when: 'this_week', timeOfDay: 'any' });
+});
+
+test('English products, tools and depth are understood', () => {
+  assert.equal(parseProducts('eco-friendly please'), 'eco');
+  assert.equal(parseProducts('fragrance free'), 'unscented');
+  assert.equal(parseProducts('I will use mine'), 'own');
+  assert.equal(parseProducts('the usual'), 'standard');
+  assert.equal(parseTools('yes, I have them'), 'customer');
+  assert.equal(parseTools("I don't have a vacuum"), 'bring');
+  assert.equal(parseTools('please bring yours'), 'bring');
+  assert.equal(parseDepth('a deep clean'), 'deep-cleaning');
+  assert.equal(parseDepth("we're moving out"), 'move-out-cleaning');
+  assert.equal(parseDepth('just standard'), 'house-cleaning');
+});
+
+test('the minutes are said in the walk\'s language', () => {
+  assert.equal(
+    spokenQuestion({ prompt: 'Would you like us to clean the inside of the oven?', extraMinutes: 14 }, 'en'),
+    'Would you like us to clean the inside of the oven? That is about 14 more minutes.',
+  );
 });

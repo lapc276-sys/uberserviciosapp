@@ -57,10 +57,18 @@ export const SOFT_RATIO = 0.5;
  * phone's own microphone.
  */
 export const SAY = {
-  dark: 'Está muy oscuro y no veo bien. ¿Puedes encender la luz?',
-  darkTorch: 'Está oscuro, te enciendo la linterna.',
-  steady: 'Sujeta el teléfono quieto un momento.',
-  slower: 'Un poco más despacio, por favor.',
+  es: {
+    dark: 'Está muy oscuro y no veo bien. ¿Puedes encender la luz?',
+    darkTorch: 'Está oscuro, te enciendo la linterna.',
+    steady: 'Sujeta el teléfono quieto un momento.',
+    slower: 'Un poco más despacio, por favor.',
+  },
+  en: {
+    dark: 'It is very dark and I cannot see well. Could you turn on the light?',
+    darkTorch: 'It is dark, I am turning on the flashlight.',
+    steady: 'Hold the phone still for a moment.',
+    slower: 'A little slower, please.',
+  },
 } as const;
 
 /** The 90th-percentile luma of a signature, or null with nothing to measure. */

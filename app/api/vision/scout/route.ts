@@ -6,6 +6,8 @@ import { isDeepService } from '@/lib/vision/model';
 import { validateFrames } from '@/lib/vision/input';
 import { ROOM_TYPES, type RoomType } from '@/lib/vision/types';
 import { rateLimit, clientIp } from '@/lib/rate-limit';
+import { roomRemark } from '@/lib/vision/remarks';
+import { LANGS } from '@/lib/capture/lang';
 
 /**
  * POST /api/vision/scout — what is in this room, and what should we ask about it.
@@ -34,10 +36,12 @@ const schema = z.object({
   frames: z.array(z.string()).min(1).max(MAX_FRAMES),
   roomType: z.string().refine((r) => (ROOM_TYPES as readonly string[]).includes(r), 'Unknown room'),
   serviceSlug: z.string().min(1),
+  /** The walkthrough's language; the questions and the remark come back in it. */
+  lang: z.enum(LANGS).optional(),
 });
 
 /** Nothing to ask. Used for every failure, deliberately indistinguishable. */
-const SILENT = { questions: [], objects: [], clutter: 0, scouted: false };
+const SILENT = { questions: [], objects: [], clutter: 0, remark: null, scouted: false };
 
 export async function POST(req: Request) {
   const limit = rateLimit(`scout:${clientIp(req)}`, RATE_LIMIT, RATE_WINDOW_MS);
@@ -47,6 +51,7 @@ export async function POST(req: Request) {
   if (!parsed.success) return NextResponse.json(SILENT);
 
   const { frames, roomType, serviceSlug } = parsed.data;
+  const lang = parsed.data.lang ?? 'es';
 
   // The same validation the analyzer uses, so one path cannot become a way
   // in that the other closed.
@@ -63,12 +68,15 @@ export async function POST(req: Request) {
     alreadyDeep: isDeepService(serviceSlug),
     tidying: result.tidying,
     damage: result.damage,
+    lang,
   }).slice(0, MAX_QUESTIONS_PER_ROOM + 3);
 
   return NextResponse.json({
     questions,
     objects: result.objects,
     clutter: result.soil.clutter,
+    // Built from the same scores the questions come from — see remarks.ts.
+    remark: roomRemark(roomType as RoomType, result.conditions ?? [], lang),
     scouted: true,
   });
 }

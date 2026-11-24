@@ -8,6 +8,7 @@ import {
   type TidyingCounts,
 } from './types';
 import { DAMAGE, askableDamage, repairPrompt } from './damage';
+import type { Lang } from '../capture/lang';
 import {
   ASK_DISHES_AT,
   ASK_PUT_AWAY_AT,
@@ -176,12 +177,98 @@ const ASK: Record<string, string | ((roomType: RoomType) => string)> = {
   'pet crate': 'limpiemos la jaula de la mascota a fondo',
 };
 
-/** The Spanish question for an object, or null when there is none to ask. */
-export function promptFor(name: string, roomType: RoomType): string | null {
-  const entry = ASK[name];
+/**
+ * The same offers in English, key for key.
+ *
+ * Written, not translated phrase by phrase: "hagamos la estufa a fondo" is
+ * "deep clean the stove", and a word-for-word version reads like a machine,
+ * which is exactly what a customer should not be thinking about while
+ * deciding whether to trust the price. A key missing here means the object is
+ * not asked about in English — the same rule as the Spanish table.
+ */
+const ASK_EN: Record<string, string | ((roomType: RoomType) => string)> = {
+  // Kitchen
+  oven: 'clean the inside of the oven',
+  stove: 'deep clean the stove, burners and grates included',
+  cooktop: 'deep clean the cooktop',
+  'range hood': 'deep clean the range hood, filters included',
+  refrigerator: 'clean the inside of the fridge',
+  fridge: 'clean the inside of the fridge',
+  freezer: 'clean the inside of the freezer',
+  microwave: 'clean the inside of the microwave',
+  dishwasher: 'clean the inside of the dishwasher',
+  'toaster oven': 'clean the inside of the toaster oven',
+  'air fryer': 'clean the inside of the air fryer',
+  sink: (room) => (room === 'bathroom' ? 'deep clean the bathroom sink' : 'deep clean the kitchen sink'),
+  backsplash: 'deep clean the kitchen backsplash',
+  countertop: 'clear and clean the whole countertop',
+  'kitchen island': 'clear and clean the whole kitchen island',
+  cabinet: 'empty and clean the inside of the cabinets',
+  drawer: 'empty and clean the inside of the drawers',
+  pantry: 'empty and clean the inside of the pantry',
+  'trash can': 'wash out the trash can',
+
+  // Bathroom
+  toilet: 'deep clean the toilet, base and seals included',
+  bidet: 'deep clean the bidet',
+  shower: 'deep clean the shower, grout included',
+  bathtub: 'deep clean the bathtub, grout included',
+  'shower door': 'remove the limescale from the shower door',
+  'shower curtain': 'wash the shower curtain',
+  vanity: 'empty and clean the inside of the vanity',
+  'medicine cabinet': 'empty and clean the inside of the medicine cabinet',
+  'exhaust fan': 'deep clean the exhaust fan',
+
+  // Bedrooms and living areas
+  closet: 'empty and clean the inside of the closet',
+  wardrobe: 'empty and clean the inside of the wardrobe',
+  dresser: 'empty and clean the inside of the dresser',
+  bookshelf: 'clean the bookshelf, taking everything off the shelves',
+  desk: 'clear and clean the desk',
+  bed: 'clean under and around the bed as well',
+  'bunk bed': 'deep clean the bunk bed',
+  mattress: 'vacuum the mattress thoroughly',
+  sofa: 'vacuum the sofa thoroughly, cushions included',
+  couch: 'vacuum the sofa thoroughly, cushions included',
+  carpet: 'treat the stains on the carpet',
+  rug: 'treat the stains on the rug',
+  curtains: 'vacuum the curtains thoroughly',
+  blinds: 'clean the blinds slat by slat',
+  // Inside only, as in Spanish.
+  window: 'clean the windows on the inside, frames and tracks included',
+  baseboard: 'clean the baseboards one by one',
+  'ceiling fan': 'deep clean the ceiling fan',
+  chandelier: 'clean the chandelier piece by piece',
+  radiator: 'deep clean the radiator',
+  fireplace: 'deep clean the fireplace',
+  piano: 'deep clean the piano',
+
+  // Laundry and outside
+  'washing machine': 'clean the inside of the washing machine',
+  dryer: 'clean the inside of the dryer',
+  balcony: 'deep clean the balcony',
+
+  // Babies and pets
+  crib: 'deep clean the crib',
+  'high chair': 'deep clean the high chair',
+  playpen: 'deep clean the playpen',
+  stroller: 'deep clean the stroller',
+  'litter box': 'empty and wash the litter box',
+  'pet bed': 'wash the pet bed',
+  'pet crate': 'deep clean the pet crate',
+};
+
+/** The question for an object, or null when there is none to ask in that language. */
+export function promptFor(name: string, roomType: RoomType, lang: Lang = 'es'): string | null {
+  const entry = (lang === 'en' ? ASK_EN : ASK)[name];
   if (!entry) return null;
   const phrase = typeof entry === 'function' ? entry(roomType) : entry;
-  return `¿Quieres que ${phrase}?`;
+  return lang === 'en' ? `Would you like us to ${phrase}?` : `¿Quieres que ${phrase}?`;
+}
+
+/** Which objects have a question, per language — for the test that keeps the two tables in step. */
+export function askedObjects(lang: Lang): string[] {
+  return Object.keys(lang === 'en' ? ASK_EN : ASK);
 }
 
 /**
@@ -243,7 +330,8 @@ export function questionsForRoom(
     alreadyDeep = false,
     tidying,
     damage,
-  }: { alreadyDeep?: boolean; tidying?: TidyingCounts; damage?: DetectedDamage[] } = {},
+    lang = 'es',
+  }: { alreadyDeep?: boolean; tidying?: TidyingCounts; damage?: DetectedDamage[]; lang?: Lang } = {},
 ): RoomQuestion[] {
   const questions: RoomQuestion[] = [];
 
@@ -252,7 +340,7 @@ export function questionsForRoom(
   // in front of the broken cabinet is the one who can say so. One question per
   // room, however many things are broken in it.
   const broken = askableDamage(damage);
-  const repair = repairPrompt(broken);
+  const repair = repairPrompt(broken, lang);
   if (repair) {
     questions.push({
       id: `${roomType}:${REPAIR}`,
@@ -273,7 +361,7 @@ export function questionsForRoom(
       .filter((o) => OBJECT_TIME_COST[o.name])
       .filter((o) => (o.confidence ?? 0.5) >= MIN_CONFIDENCE)
       .filter((o) => depthGapFor(o.name) >= MIN_GAP_MINUTES)
-      .map((o) => ({ object: o, minutes: gapMinutes(o), prompt: promptFor(o.name, roomType) }))
+      .map((o) => ({ object: o, minutes: gapMinutes(o), prompt: promptFor(o.name, roomType, lang) }))
       .filter((c): c is { object: DetectedObject; minutes: number; prompt: string } => c.prompt !== null)
       .sort((a, b) => b.minutes - a.minutes)
       // One question per kind of thing, judged by the question itself: two
@@ -307,7 +395,10 @@ export function questionsForRoom(
         id: `${roomType}:${PUT_AWAY}`,
         kind: 'declutter',
         roomType,
-        prompt: `Veo unas ${tidying.elsewhere} cosas que parecen de otro cuarto. ¿Quieres que las llevemos a su sitio?`,
+        prompt:
+          lang === 'en'
+            ? `I can see about ${tidying.elsewhere} things that seem to belong in another room. Would you like us to put them back where they go?`
+            : `Veo unas ${tidying.elsewhere} cosas que parecen de otro cuarto. ¿Quieres que las llevemos a su sitio?`,
         extraMinutes: Math.round(putAwayMinutes(tidying)),
         yes: 'deep',
       });
@@ -317,7 +408,10 @@ export function questionsForRoom(
       id: `${roomType}:${PUT_AWAY}`,
       kind: 'declutter',
       roomType,
-      prompt: 'Veo bastantes cosas fuera de sitio. ¿Quieres que las ordenemos también?',
+      prompt:
+        lang === 'en'
+          ? 'I can see quite a few things out of place. Would you like us to tidy up as well?'
+          : 'Veo bastantes cosas fuera de sitio. ¿Quieres que las ordenemos también?',
       extraMinutes: 0,
       yes: 'deep',
     });
@@ -331,7 +425,10 @@ export function questionsForRoom(
       id: `${roomType}:${DISHES}`,
       kind: 'dishes',
       roomType,
-      prompt: `Veo unos ${tidying.dishes} platos y ollas por lavar. ¿Quieres que los lavemos?`,
+      prompt:
+        lang === 'en'
+          ? `I can see about ${tidying.dishes} dishes and pots waiting to be washed. Would you like us to wash them?`
+          : `Veo unos ${tidying.dishes} platos y ollas por lavar. ¿Quieres que los lavemos?`,
       extraMinutes: Math.round(dishesMinutes(tidying)),
       yes: 'deep',
     });

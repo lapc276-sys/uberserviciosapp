@@ -26,6 +26,8 @@ export interface DamageKind {
   looksLike: string;
   /** Said to the customer after "Veo …". */
   seen: string;
+  /** Said to the customer after "I can see …". */
+  seenEn: string;
   /** Short, for the crew's notes and the company's lead. */
   label: string;
 }
@@ -34,41 +36,49 @@ export const DAMAGE: Record<string, DamageKind> = {
   wall: {
     looksLike: 'a hole, crack, dent or broken plaster in a wall',
     seen: 'un golpe o un hueco en la pared',
+    seenEn: 'a dent or a hole in the wall',
     label: 'pared dañada',
   },
   ceiling: {
     looksLike: 'a water stain, crack, sag or peeling patch on a ceiling',
     seen: 'una mancha de agua o una grieta en el techo',
+    seenEn: 'a water stain or a crack in the ceiling',
     label: 'techo con mancha o grieta',
   },
   cabinet: {
     looksLike: 'a cabinet or drawer that is broken, hanging off its hinge, missing its door, or swollen from water',
     seen: 'un gabinete o un cajón roto',
+    seenEn: 'a broken cabinet or drawer',
     label: 'gabinete o cajón roto',
   },
   door: {
     looksLike: 'a room door that is broken, off its hinges, or has a hole in it',
     seen: 'una puerta dañada',
+    seenEn: 'a damaged door',
     label: 'puerta dañada',
   },
   floor: {
     looksLike: 'floorboards or floor tiles that are broken, lifted, missing or water-damaged',
     seen: 'una parte del suelo levantada o rota',
+    seenEn: 'a part of the floor that is lifted or broken',
     label: 'suelo levantado o roto',
   },
   tile: {
     looksLike: 'wall tiles that are cracked, broken or missing, or grout that has fallen out',
     seen: 'azulejos rotos o sin junta',
+    seenEn: 'broken tiles or missing grout',
     label: 'azulejos rotos o sin junta',
   },
   fixture: {
     looksLike: 'a faucet, handle, knob, towel bar or light fixture that is broken, hanging loose or missing',
     seen: 'un grifo, una manija o una lámpara rota',
+    seenEn: 'a broken faucet, handle or light',
     label: 'grifo, manija o lámpara rota',
   },
   window: {
     looksLike: 'a cracked window pane, a broken frame, or a torn screen',
     seen: 'una ventana rota o con la malla rasgada',
+    seenEn: 'a broken window or a torn screen',
     label: 'ventana dañada',
   },
 };
@@ -103,18 +113,22 @@ export function knownDamage(raw: unknown): DetectedDamage[] {
   return [...best.entries()].map(([kind, confidence]) => ({ kind, confidence }));
 }
 
-function joinEs(items: string[]): string {
+function join(items: string[], and: string): string {
   if (items.length <= 1) return items[0] ?? '';
-  return `${items.slice(0, -1).join(', ')} y ${items[items.length - 1]}`;
+  return `${items.slice(0, -1).join(', ')} ${and} ${items[items.length - 1]}`;
 }
 
 /**
- * The question, in Spanish — one per room however many things are broken in
- * it. A yes is a request to be contacted, nothing more.
+ * The question — one per room however many things are broken in it. A yes is
+ * a request to be contacted, nothing more, in either language.
  */
-export function repairPrompt(kinds: string[]): string | null {
-  const seen = kinds.filter((k) => DAMAGE[k]).map((k) => DAMAGE[k].seen);
-  return seen.length ? `Veo ${joinEs(seen)}. ¿Quieres que te contactemos para arreglar eso también?` : null;
+export function repairPrompt(kinds: string[], lang: 'es' | 'en' = 'es'): string | null {
+  const known = kinds.filter((k) => DAMAGE[k]);
+  if (!known.length) return null;
+  if (lang === 'en') {
+    return `I can see ${join(known.map((k) => DAMAGE[k].seenEn), 'and')}. Would you like us to contact you about fixing that as well?`;
+  }
+  return `Veo ${join(known.map((k) => DAMAGE[k].seen), 'y')}. ¿Quieres que te contactemos para arreglar eso también?`;
 }
 
 /** The kinds firm enough to mention to the customer, firmest first. */

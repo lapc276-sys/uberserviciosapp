@@ -262,6 +262,44 @@ el precio: el limpiahornos y el quitamoho con cloro se **sustituyen** (no se
 quitan: el moho sigue ahí), y el ácido del baño sigue esperando al enjuague,
 porque el peróxido y el ácido tampoco se mezclan.
 
+### Dos idiomas completos, no veinte a medias
+
+El recorrido habla y entiende **español e inglés** (`lib/capture/lang.ts`,
+`copy.ts`). "Completo" quiere decir las dos mitades: el bot dice cada frase en
+ese idioma **y** entiende las respuestas en él. Un idioma nuevo entra solo con
+las dos mitades y con sus frases pasadas por los tests de "no se oye a sí
+mismo". Un bot que habla ruso pero no entiende "да" es peor que uno que dice
+con honestidad que habla dos.
+
+El idioma por defecto sale del teléfono (`navigator.languages`, sin cookies ni
+permisos) o del idioma de la página, y la pantalla de planificación **siempre**
+deja cambiarlo: mucha gente aquí tiene el teléfono en inglés y prefiere
+español. Si el teléfono está en un idioma que no hablamos, se dice ("Tu
+teléfono está en ruso. Por ahora hablo español e inglés").
+
+Tres cosas que se quedan en español aunque el cliente hable inglés, a
+propósito: los **pies de foto** que lee el modelo (dos idiomas serían dos
+formas de describirle el mismo horno), las **notas para la empresa** (las lee
+la empresa, no el cliente) y las **instrucciones del plan del equipo**. Que
+una empresa trabaje en inglés será un ajuste por empresa, no una suposición.
+
+Las respuestas se entienden en los dos idiomas a la vez, hable el bot el que
+hable: en casa se mezcla ("yes, a fondo").
+
+### El comentario de cada cuarto sale de los números, no de la IA
+
+"La cocina se ve muy bien; lo que más trabajo va a dar es la campana, que tiene
+grasa" (`lib/vision/remarks.ts`). La mirada rápida puntúa cada objeto de 0 a 3
+con un problema de una lista fija, y la frase se arma con plantillas. No se
+deja escribir a la IA por dos motivos: un modelo amable dice "¡tu cocina está
+genial!" de una cocina que luego cobra como sucia, y el texto libre puede
+describir a la gente además de la estufa. "Impecable" solo con dos o más
+objetos vistos limpios.
+
+Se dice una vez por cuarto, al salir: antes de su primera pregunta, o al
+principio de la siguiente instrucción, y en ese caso el paso **espera** a que
+termine de hablar antes de empezar el paneo.
+
 ### El archivo de fotogramas viene apagado
 
 `VISION_ARCHIVE_MODE=off` por defecto. Guardar fotos del interior de casas
@@ -342,6 +380,9 @@ duplique, y que el detector no se active con el teléfono quieto.
 `conversation.spec.ts` comprueba que las respuestas (el horno por dentro, la
 reparación, la charla del final) llegan al precio y al mensaje, en vez de
 perderse por el camino como les pasaba en la página de las otras empresas.
+`english.spec.ts` recorre lo mismo en un teléfono en inglés. El resto de specs
+corren con el navegador en `es-US` (`playwright.config.ts`): leen palabras en
+español de la pantalla, y el recorrido ahora habla el idioma del teléfono.
 
 Si tocas `lib/capture/scene.ts`, `lib/capture/guide.ts` o
 `components/capture/GuidedCapture.tsx`, **ejecútalos**. Un fallo ahí no aparece

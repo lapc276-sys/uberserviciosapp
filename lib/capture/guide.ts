@@ -1,4 +1,5 @@
 import type { RoomType } from '@/lib/vision/types';
+import type { Lang } from './lang';
 
 /**
  * The script the app reads out loud during a walkthrough.
@@ -39,8 +40,22 @@ import type { RoomType } from '@/lib/vision/types';
  */
 export type StepMode = 'settle' | 'pan';
 
+/** What a step says, in one language. */
+export interface StepWords {
+  title: string;
+  spoken: string;
+  after?: string;
+}
+
 export interface StepTemplate {
-  /** Short label shown on screen and used as the frame's caption. */
+  /**
+   * Short label shown on screen and used as the frame's caption.
+   *
+   * The caption is always this Spanish title, whatever language the person
+   * walks in: it is read by the model, whose prompt describes captions in
+   * Spanish, and two caption languages would be two ways to describe one
+   * oven to the thing that prices it.
+   */
   title: string;
   /** Read aloud. Written as an instruction to a person holding a phone. */
   spoken: string;
@@ -49,6 +64,8 @@ export interface StepTemplate {
    * something open — nobody should have to guess when they can close the oven.
    */
   after?: string;
+  /** The same step in English. Written, not machine-translated. */
+  en: StepWords;
   mode?: StepMode;
   /** How many frames a `pan` step keeps. Ignored by `settle`. */
   frames?: number;
@@ -72,8 +89,9 @@ export interface StepTemplate {
 export interface SpaceTemplate {
   key: string;
   roomType: RoomType;
-  /** Spanish, because the person holding the phone is reading this. */
+  /** Spanish: also the name the company reads in notes and messages. */
   label: string;
+  labelEn: string;
   emoji: string;
   steps: StepTemplate[];
   /**
@@ -111,151 +129,323 @@ export const SPACE_TEMPLATES: SpaceTemplate[] = [
     key: 'kitchen',
     roomType: 'kitchen',
     label: 'Cocina',
+    labelEn: 'Kitchen',
     emoji: '🍳',
     keepWhole: true,
     steps: [
       {
         title: 'Vista general',
         spoken: 'Ponte en la puerta y haz un paneo lento de la cocina, de izquierda a derecha.',
+        en: { title: 'Overview', spoken: 'Stand in the doorway and slowly sweep across the kitchen, from left to right.' },
         mode: 'pan',
         frames: 3,
       },
-      { title: 'Encimeras', spoken: 'Ahora enfoca las encimeras y todo lo que haya encima.' },
-      { title: 'Fregadero', spoken: 'Apunta al fregadero por dentro, con el grifo.' },
-      { title: 'Estufa y hornillas', spoken: 'Enfoca la estufa y las hornillas de cerca.' },
+      {
+        title: 'Encimeras',
+        spoken: 'Ahora enfoca las encimeras y todo lo que haya encima.',
+        en: { title: 'Countertops', spoken: 'Now point at the countertops and everything on them.' },
+      },
+      {
+        title: 'Fregadero',
+        spoken: 'Apunta al fregadero por dentro, con el grifo.',
+        en: { title: 'Sink', spoken: 'Point inside the sink, faucet included.' },
+      },
+      {
+        title: 'Estufa y hornillas',
+        spoken: 'Enfoca la estufa y las hornillas de cerca.',
+        en: { title: 'Stove and burners', spoken: 'Get close to the stove and the burners.' },
+      },
       {
         title: 'Dentro del microondas',
         spoken: 'Abre el microondas y apunta adentro. Sujeta el teléfono quieto un segundo.',
         after: 'Muy bien, puedes cerrarlo.',
+        en: {
+          title: 'Inside the microwave',
+          spoken: 'Open the microwave and point inside. Hold the phone still for a second.',
+          after: 'Great, you can close it.',
+        },
         optional: true,
       },
       {
         title: 'Dentro del horno',
         spoken: 'Ahora abre el horno y apunta adentro.',
         after: 'Ya está, ciérralo.',
+        en: { title: 'Inside the oven', spoken: 'Now open the oven and point inside.', after: 'That\'s it, close it.' },
         optional: true,
       },
       {
         title: 'Dentro de la nevera',
         spoken: 'Abre la nevera y apunta a los estantes.',
         after: 'Perfecto, ciérrala.',
+        en: { title: 'Inside the fridge', spoken: 'Open the fridge and point at the shelves.', after: 'Perfect, close it.' },
         optional: true,
       },
-      { title: 'Suelo', spoken: 'Baja el teléfono y enfoca el suelo, sobre todo debajo de los muebles.' },
-      { title: 'Zona de basura', spoken: 'Por último, apunta a donde está la basura.', optional: true },
+      {
+        title: 'Suelo',
+        spoken: 'Baja el teléfono y enfoca el suelo, sobre todo debajo de los muebles.',
+        en: { title: 'Floor', spoken: 'Lower the phone and point at the floor, especially under the cabinets.' },
+      },
+      {
+        title: 'Zona de basura',
+        spoken: 'Por último, apunta a donde está la basura.',
+        en: { title: 'Trash area', spoken: 'Finally, point at where the trash is.' },
+        optional: true,
+      },
     ],
   },
   {
     key: 'bathroom',
     roomType: 'bathroom',
     label: 'Baño',
+    labelEn: 'Bathroom',
     emoji: '🚿',
     keepWhole: true,
     steps: [
-      { title: 'Vista general', spoken: 'Desde la puerta, haz un paneo lento de todo el baño.', mode: 'pan', frames: 2 },
-      { title: 'Inodoro', spoken: 'Enfoca el inodoro de cerca, por dentro y por detrás.' },
-      { title: 'Ducha o bañera', spoken: 'Ahora la ducha. Acércate a las juntas de los azulejos.' },
-      { title: 'Lavamanos y espejo', spoken: 'Apunta al lavamanos y al espejo.' },
-      { title: 'Suelo', spoken: 'Enfoca el suelo y las esquinas.' },
+      {
+        title: 'Vista general',
+        spoken: 'Desde la puerta, haz un paneo lento de todo el baño.',
+        en: { title: 'Overview', spoken: 'From the doorway, slowly sweep across the whole bathroom.' },
+        mode: 'pan',
+        frames: 2,
+      },
+      {
+        title: 'Inodoro',
+        spoken: 'Enfoca el inodoro de cerca, por dentro y por detrás.',
+        en: { title: 'Toilet', spoken: 'Get close to the toilet, inside and behind it.' },
+      },
+      {
+        title: 'Ducha o bañera',
+        spoken: 'Ahora la ducha. Acércate a las juntas de los azulejos.',
+        en: { title: 'Shower or tub', spoken: 'Now the shower. Get close to the grout between the tiles.' },
+      },
+      {
+        title: 'Lavamanos y espejo',
+        spoken: 'Apunta al lavamanos y al espejo.',
+        en: { title: 'Sink and mirror', spoken: 'Point at the sink and the mirror.' },
+      },
+      {
+        title: 'Suelo',
+        spoken: 'Enfoca el suelo y las esquinas.',
+        en: { title: 'Floor', spoken: 'Point at the floor and the corners.' },
+      },
     ],
   },
   {
     key: 'bedroom',
     roomType: 'bedroom',
     label: 'Habitación',
+    labelEn: 'Bedroom',
     emoji: '🛏️',
     steps: [
-      { title: 'Vista general', spoken: 'Desde la puerta, haz un paneo lento de toda la habitación.', mode: 'pan', frames: 2 },
-      { title: 'Cama', spoken: 'Enfoca la cama y la ropa de cama.' },
-      { title: 'Suelo', spoken: 'Apunta al suelo, incluyendo debajo de la cama si puedes.', core: true },
-      { title: 'Superficies y ventanas', spoken: 'Enfoca las mesitas, la cómoda y las ventanas.', optional: true },
+      {
+        title: 'Vista general',
+        spoken: 'Desde la puerta, haz un paneo lento de toda la habitación.',
+        en: { title: 'Overview', spoken: 'From the doorway, slowly sweep across the whole bedroom.' },
+        mode: 'pan',
+        frames: 2,
+      },
+      {
+        title: 'Cama',
+        spoken: 'Enfoca la cama y la ropa de cama.',
+        en: { title: 'Bed', spoken: 'Point at the bed and the bedding.' },
+      },
+      {
+        title: 'Suelo',
+        spoken: 'Apunta al suelo, incluyendo debajo de la cama si puedes.',
+        en: { title: 'Floor', spoken: 'Point at the floor, including under the bed if you can.' },
+        core: true,
+      },
+      {
+        title: 'Superficies y ventanas',
+        spoken: 'Enfoca las mesitas, la cómoda y las ventanas.',
+        en: { title: 'Surfaces and windows', spoken: 'Point at the nightstands, the dresser and the windows.' },
+        optional: true,
+      },
     ],
   },
   {
     key: 'living_room',
     roomType: 'living_room',
     label: 'Sala',
+    labelEn: 'Living room',
     emoji: '🛋️',
     steps: [
-      { title: 'Vista general', spoken: 'Desde una esquina, haz un paneo lento de toda la sala.', mode: 'pan', frames: 2 },
-      { title: 'Sofá y sillones', spoken: 'Enfoca el sofá de cerca, incluyendo los cojines.', core: true },
-      { title: 'Mesas y superficies', spoken: 'Apunta a las mesas y a lo que haya encima.' },
-      { title: 'Suelo o alfombra', spoken: 'Enfoca el suelo o la alfombra.' },
+      {
+        title: 'Vista general',
+        spoken: 'Desde una esquina, haz un paneo lento de toda la sala.',
+        en: { title: 'Overview', spoken: 'From a corner, slowly sweep across the whole living room.' },
+        mode: 'pan',
+        frames: 2,
+      },
+      {
+        title: 'Sofá y sillones',
+        spoken: 'Enfoca el sofá de cerca, incluyendo los cojines.',
+        en: { title: 'Sofa and armchairs', spoken: 'Get close to the sofa, cushions included.' },
+        core: true,
+      },
+      {
+        title: 'Mesas y superficies',
+        spoken: 'Apunta a las mesas y a lo que haya encima.',
+        en: { title: 'Tables and surfaces', spoken: 'Point at the tables and whatever is on them.' },
+      },
+      {
+        title: 'Suelo o alfombra',
+        spoken: 'Enfoca el suelo o la alfombra.',
+        en: { title: 'Floor or rug', spoken: 'Point at the floor or the rug.' },
+      },
     ],
   },
   {
     key: 'dining_room',
     roomType: 'dining_room',
     label: 'Comedor',
+    labelEn: 'Dining room',
     emoji: '🍽️',
     steps: [
-      { title: 'Vista general', spoken: 'Haz un paneo lento de todo el comedor.', mode: 'pan', frames: 2 },
-      { title: 'Mesa y sillas', spoken: 'Enfoca la mesa y las sillas de cerca.' },
-      { title: 'Suelo', spoken: 'Apunta al suelo, sobre todo debajo de la mesa.', core: true },
+      {
+        title: 'Vista general',
+        spoken: 'Haz un paneo lento de todo el comedor.',
+        en: { title: 'Overview', spoken: 'Slowly sweep across the whole dining room.' },
+        mode: 'pan',
+        frames: 2,
+      },
+      {
+        title: 'Mesa y sillas',
+        spoken: 'Enfoca la mesa y las sillas de cerca.',
+        en: { title: 'Table and chairs', spoken: 'Get close to the table and the chairs.' },
+      },
+      {
+        title: 'Suelo',
+        spoken: 'Apunta al suelo, sobre todo debajo de la mesa.',
+        en: { title: 'Floor', spoken: 'Point at the floor, especially under the table.' },
+        core: true,
+      },
     ],
   },
   {
     key: 'laundry',
     roomType: 'laundry',
     label: 'Lavadero',
+    labelEn: 'Laundry room',
     emoji: '🧺',
     steps: [
-      { title: 'Vista general', spoken: 'Haz un paneo lento de todo el lavadero.', mode: 'pan', frames: 2 },
+      {
+        title: 'Vista general',
+        spoken: 'Haz un paneo lento de todo el lavadero.',
+        en: { title: 'Overview', spoken: 'Slowly sweep across the whole laundry area.' },
+        mode: 'pan',
+        frames: 2,
+      },
       {
         title: 'Lavadora y secadora',
         spoken: 'Abre la lavadora y apunta al tambor por dentro.',
         after: 'Ya puedes cerrarla.',
+        en: {
+          title: 'Washer and dryer',
+          spoken: 'Open the washer and point inside the drum.',
+          after: 'You can close it now.',
+        },
         core: true,
       },
-      { title: 'Pila o fregadero', spoken: 'Si hay pila, apunta adentro.', optional: true },
-      { title: 'Suelo', spoken: 'Enfoca el suelo y detrás de las máquinas.' },
+      {
+        title: 'Pila o fregadero',
+        spoken: 'Si hay pila, apunta adentro.',
+        en: { title: 'Utility sink', spoken: 'If there is a utility sink, point inside it.' },
+        optional: true,
+      },
+      {
+        title: 'Suelo',
+        spoken: 'Enfoca el suelo y detrás de las máquinas.',
+        en: { title: 'Floor', spoken: 'Point at the floor and behind the machines.' },
+      },
     ],
   },
   {
     key: 'office',
     roomType: 'office',
     label: 'Oficina',
+    labelEn: 'Office',
     emoji: '💻',
     steps: [
-      { title: 'Vista general', spoken: 'Haz un paneo lento de toda la oficina.', mode: 'pan', frames: 2 },
-      { title: 'Escritorio', spoken: 'Enfoca el escritorio y lo que haya encima.', core: true },
-      { title: 'Suelo', spoken: 'Apunta al suelo y debajo del escritorio.' },
+      {
+        title: 'Vista general',
+        spoken: 'Haz un paneo lento de toda la oficina.',
+        en: { title: 'Overview', spoken: 'Slowly sweep across the whole office.' },
+        mode: 'pan',
+        frames: 2,
+      },
+      {
+        title: 'Escritorio',
+        spoken: 'Enfoca el escritorio y lo que haya encima.',
+        en: { title: 'Desk', spoken: 'Point at the desk and whatever is on it.' },
+        core: true,
+      },
+      {
+        title: 'Suelo',
+        spoken: 'Apunta al suelo y debajo del escritorio.',
+        en: { title: 'Floor', spoken: 'Point at the floor and under the desk.' },
+      },
     ],
   },
   {
     key: 'hallway',
     roomType: 'hallway',
     label: 'Pasillo / escaleras',
+    labelEn: 'Hallway / stairs',
     emoji: '🚪',
     steps: [
-      { title: 'Vista general', spoken: 'Haz un paneo lento a lo largo del pasillo.', mode: 'pan', frames: 2 },
-      { title: 'Suelo y esquinas', spoken: 'Enfoca el suelo, las esquinas y los rodapiés.', core: true },
+      {
+        title: 'Vista general',
+        spoken: 'Haz un paneo lento a lo largo del pasillo.',
+        en: { title: 'Overview', spoken: 'Slowly sweep along the hallway.' },
+        mode: 'pan',
+        frames: 2,
+      },
+      {
+        title: 'Suelo y esquinas',
+        spoken: 'Enfoca el suelo, las esquinas y los rodapiés.',
+        en: { title: 'Floor and corners', spoken: 'Point at the floor, the corners and the baseboards.' },
+        core: true,
+      },
     ],
   },
   {
     key: 'closet',
     roomType: 'other',
     label: 'Armario / despensa (organizar)',
+    labelEn: 'Closet / pantry (organizing)',
     emoji: '🗄️',
     keepWhole: true,
     steps: [
       {
         title: 'Armario cerrado',
         spoken: 'Ponte frente al armario, con las puertas cerradas, y apunta.',
+        en: { title: 'Closet closed', spoken: 'Stand in front of the closet with the doors shut, and point at it.' },
       },
       {
         title: 'Armario abierto',
         spoken: 'Ahora ábrelo del todo y apunta adentro. Sujeta el teléfono quieto.',
         after: 'Déjalo abierto, vamos por los estantes.',
+        en: {
+          title: 'Closet open',
+          spoken: 'Now open it all the way and point inside. Hold the phone still.',
+          after: 'Leave it open, let\'s do the shelves.',
+        },
       },
       {
         title: 'Estantes de arriba',
         spoken: 'Enfoca los estantes de arriba, de cerca.',
+        en: { title: 'Top shelves', spoken: 'Get close to the top shelves.' },
       },
       {
         title: 'Estantes de abajo',
         spoken: 'Ahora los de abajo y el suelo del armario.',
         after: 'Perfecto, puedes cerrarlo.',
+        en: {
+          title: 'Bottom shelves',
+          spoken: 'Now the bottom ones and the closet floor.',
+          after: 'Perfect, you can close it.',
+        },
       },
     ],
   },
@@ -263,11 +453,28 @@ export const SPACE_TEMPLATES: SpaceTemplate[] = [
     key: 'other',
     roomType: 'other',
     label: 'Otro espacio',
+    labelEn: 'Other space',
     emoji: '📦',
     steps: [
-      { title: 'Vista general', spoken: 'Desde la entrada, haz un paneo lento de todo el espacio.', mode: 'pan', frames: 2 },
-      { title: 'Lo más sucio', spoken: 'Ahora acércate a la parte que más trabajo va a dar.', core: true },
-      { title: 'Suelo', spoken: 'Enfoca el suelo.', optional: true },
+      {
+        title: 'Vista general',
+        spoken: 'Desde la entrada, haz un paneo lento de todo el espacio.',
+        en: { title: 'Overview', spoken: 'From the entrance, slowly sweep across the whole space.' },
+        mode: 'pan',
+        frames: 2,
+      },
+      {
+        title: 'Lo más sucio',
+        spoken: 'Ahora acércate a la parte que más trabajo va a dar.',
+        en: { title: 'The dirtiest part', spoken: 'Now get close to the part that will take the most work.' },
+        core: true,
+      },
+      {
+        title: 'Suelo',
+        spoken: 'Enfoca el suelo.',
+        en: { title: 'Floor', spoken: 'Point at the floor.' },
+        optional: true,
+      },
     ],
   },
 ];
@@ -287,10 +494,26 @@ export interface CaptureStep {
   title: string;
   spoken: string;
   after?: string;
+  /** The same step in English, with its space named in English ("Bathroom 2"). */
+  en: StepWords & { spaceLabel: string };
   mode: StepMode;
   /** Frames this step contributes. 1 for `settle`, more for a pan. */
   frames: number;
   optional: boolean;
+}
+
+/** A step's words in the walkthrough's language. Spanish fields are the canonical ones. */
+export function wordsFor(step: CaptureStep, lang: Lang): StepWords & { spaceLabel: string } {
+  // A plan replayed from before English existed has no `en`; Spanish is the
+  // honest fallback rather than a crash halfway through an "after" pass.
+  if (lang === 'en' && step.en) return step.en;
+  return { title: step.title, spoken: step.spoken, after: step.after, spaceLabel: step.spaceLabel };
+}
+
+/** A space's name in both languages, for the planning screen's notes. */
+export interface SpaceName {
+  es: string;
+  en: string;
 }
 
 /**
@@ -320,7 +543,7 @@ export interface CapturePlan {
    * The first thing given up, because a bedroom's pan already shows most of
    * what a bedroom costs, and the alternative is losing a whole room.
    */
-  lightened: string[];
+  lightened: SpaceName[];
   /**
    * Optional steps dropped to fit `MAX_GUIDED_FRAMES`.
    *
@@ -336,7 +559,7 @@ export interface CapturePlan {
    * and a room the model never sees is a room the price does not charge for —
    * the customer is quoted for a smaller home than the one the crew walks into.
    */
-  droppedSpaces: string[];
+  droppedSpaces: SpaceName[];
   /** True when any whole space was left out. */
   tooManySpaces: boolean;
 }
@@ -376,6 +599,7 @@ export function buildPlan(selection: SpaceSelection): CapturePlan {
     const count = Math.min(selection[template.key] ?? 0, MAX_SPACES);
     for (let n = 1; n <= count; n++) {
       const spaceLabel = count > 1 ? `${template.label} ${n}` : template.label;
+      const spaceLabelEn = count > 1 ? `${template.labelEn} ${n}` : template.labelEn;
       const spaceKey = `${template.key}-${n}`;
 
       for (const [i, step] of template.steps.entries()) {
@@ -389,6 +613,7 @@ export function buildPlan(selection: SpaceSelection): CapturePlan {
             title: step.title,
             spoken: step.spoken,
             after: step.after,
+            en: { ...step.en, spaceLabel: spaceLabelEn },
             mode,
             frames: mode === 'pan' ? (step.frames ?? 2) : 1,
             optional: step.optional ?? false,
@@ -409,7 +634,9 @@ export function buildPlan(selection: SpaceSelection): CapturePlan {
     return { steps: planned.map((p) => p.step), lightened: [], droppedOptional: 0, droppedSpaces: [], tooManySpaces: false };
   }
 
-  const labels = new Map(planned.map((p) => [p.step.spaceKey, p.step.spaceLabel]));
+  const labels = new Map<string, SpaceName>(
+    planned.map((p) => [p.step.spaceKey, { es: p.step.spaceLabel, en: p.step.en.spaceLabel }]),
+  );
   const spaces = [...labels.keys()];
 
   // 1. Cut secondary spaces down, the last one filmed first.
@@ -419,7 +646,7 @@ export function buildPlan(selection: SpaceSelection): CapturePlan {
     const cut = planned.filter((p) => p.step.spaceKey === key && p.trimmable && !p.keep);
     if (cut.length === 0) continue;
     planned = planned.filter((p) => !cut.includes(p));
-    lightened.unshift(labels.get(key)!);
+    lightened.unshift(key);
   }
 
   // 2. Optional detail shots, from the end.
@@ -433,27 +660,32 @@ export function buildPlan(selection: SpaceSelection): CapturePlan {
 
   // 3. Whole spaces, from the end. A space goes entirely or not at all: half a
   // bathroom is a bathroom the model scores from the wrong evidence.
-  const droppedSpaces: string[] = [];
+  const dropped: string[] = [];
   while (planned.length > 0 && !fits()) {
     const last = planned[planned.length - 1].step.spaceKey;
-    droppedSpaces.unshift(labels.get(last)!);
+    dropped.unshift(last);
     planned = planned.filter((p) => p.step.spaceKey !== last);
   }
 
   return {
     steps: planned.map((p) => p.step),
     // A space cut down and then dropped anyway is reported once, as dropped.
-    lightened: lightened.filter((label) => !droppedSpaces.includes(label)),
+    lightened: lightened.filter((key) => !dropped.includes(key)).map((key) => labels.get(key)!),
     droppedOptional,
-    droppedSpaces,
-    tooManySpaces: droppedSpaces.length > 0,
+    droppedSpaces: dropped.map((key) => labels.get(key)!),
+    tooManySpaces: dropped.length > 0,
   };
 }
 
-/** "A", "A y B", "A, B y C". */
-export function joinEs(items: string[]): string {
+/** "A", "A y B", "A, B y C" — or "A, B and C". */
+export function joinList(items: string[], lang: Lang = 'es'): string {
   if (items.length <= 1) return items[0] ?? '';
-  return `${items.slice(0, -1).join(', ')} y ${items[items.length - 1]}`;
+  return `${items.slice(0, -1).join(', ')} ${lang === 'en' ? 'and' : 'y'} ${items[items.length - 1]}`;
+}
+
+/** Kept for callers that only ever spoke Spanish. */
+export function joinEs(items: string[]): string {
+  return joinList(items, 'es');
 }
 
 /**
@@ -461,24 +693,30 @@ export function joinEs(items: string[]): string {
  * was shortened. Spelled out per space, because "dejaré fuera 6 tomas" was the
  * sentence that hid three missing rooms.
  */
-export function shortenedNote(plan: CapturePlan): string | null {
+export function shortenedNote(plan: CapturePlan, lang: Lang = 'es'): string | null {
+  const names = joinList(plan.lightened.map((s) => s[lang]), lang);
+  const n = plan.droppedOptional;
   const parts: string[] = [];
-  if (plan.lightened.length) {
-    parts.push(`en ${joinEs(plan.lightened)} solo haré el paneo y una foto de cerca`);
+  if (lang === 'en') {
+    if (plan.lightened.length) parts.push(`in ${names} I will only do the sweep and one close-up`);
+    if (n > 0) parts.push(`I will leave out ${n} detail ${n === 1 ? 'shot' : 'shots'} (inside the oven, the trash and similar)`);
+    return parts.length ? `To keep it short, ${parts.join(', and ')}.` : null;
   }
-  if (plan.droppedOptional > 0) {
-    parts.push(
-      `dejaré fuera ${plan.droppedOptional} ${plan.droppedOptional === 1 ? 'toma' : 'tomas'} de detalle (dentro del horno, la basura y parecidos)`,
-    );
-  }
+  if (plan.lightened.length) parts.push(`en ${names} solo haré el paneo y una foto de cerca`);
+  if (n > 0) parts.push(`dejaré fuera ${n} ${n === 1 ? 'toma' : 'tomas'} de detalle (dentro del horno, la basura y parecidos)`);
   return parts.length ? `Para que no se haga largo, ${parts.join(', y ')}.` : null;
 }
 
 /** The warning for spaces that do not fit at all, or null when everything does. */
-export function droppedNote(plan: CapturePlan): string | null {
+export function droppedNote(plan: CapturePlan, lang: Lang = 'es'): string | null {
   if (!plan.droppedSpaces.length) return null;
-  const these = plan.droppedSpaces.length === 1 ? 'ese espacio' : 'esos espacios';
-  return `No cabe todo en un recorrido: se quedarían sin filmar ${joinEs(plan.droppedSpaces)}, y el precio no los contaría. Quita ${these} de la lista y hazlos en un segundo recorrido.`;
+  const names = joinList(plan.droppedSpaces.map((s) => s[lang]), lang);
+  const one = plan.droppedSpaces.length === 1;
+  if (lang === 'en') {
+    return `Not everything fits in one walkthrough: ${names} would not be filmed, and the price would not count ${one ? 'it' : 'them'}. Remove ${one ? 'that space' : 'those spaces'} from the list and do ${one ? 'it' : 'them'} in a second walkthrough.`;
+  }
+  const these = one ? 'ese espacio' : 'esos espacios';
+  return `No cabe todo en un recorrido: se quedarían sin filmar ${names}, y el precio no los contaría. Quita ${these} de la lista y hazlos en un segundo recorrido.`;
 }
 
 /** Total frames a plan will produce, which is what the size budget divides. */
