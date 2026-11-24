@@ -197,6 +197,10 @@ flowchart LR
 Cada trabajo hace que el siguiente presupuesto sea mejor. El modelo de visión
 es de OpenAI y cualquiera puede llamarlo mañana; **esta tabla es tuya**.
 
+Cómo aprender además el ritmo de **cada persona** del equipo, y para qué se
+puede usar (y para qué no): `docs/APRENDIZAJE.md`. Es una propuesta; todavía
+no está construida.
+
 ### Estado real de la calibración
 
 Un solo trabajo medido, con cronómetro por tarea:
