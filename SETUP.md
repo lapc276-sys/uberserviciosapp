@@ -122,6 +122,11 @@ npm run db:seed    # admin + datos de ejemplo (opcional)
 > ⚠️ Usa `npm run db:push`, **nunca** `npx prisma db push`. `npx` se descarga
 > Prisma 7 y se lleva por delante `node_modules`; ya pasó una vez.
 
+**Cada vez que traigas código nuevo** que cambie `prisma/schema.prisma`, vuelve
+a ejecutar `npm run db:push` antes de publicar. Si no, la web intenta guardar
+en columnas que la base todavía no tiene y esa parte falla (por ejemplo, el
+cronómetro por persona del 24 nov 2026 añadió tablas nuevas).
+
 Luego **vuelve a publicar**.
 
 ✅ **Resultado:** reservas, clientes, inquilinos y —lo que más importa— las

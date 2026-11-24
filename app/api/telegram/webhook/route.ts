@@ -6,6 +6,7 @@ import {
   closeOpenSegment,
   endSession,
   openSession,
+  resolveWorker,
   startRoom,
   startSession,
   type Session,
@@ -122,7 +123,9 @@ export async function POST(req: Request) {
       break;
 
     case 'startJob': {
-      const session = await startSession(who, command.label);
+      // The same person as on the web timer, so their pace is one number.
+      const worker = await resolveWorker({ telegramChatId: who });
+      const session = await startSession(who, command.label, undefined, { workerId: worker.id });
       await sendMessage(
         chatId,
         `▶️ Trabajo abierto${session.label ? `: <b>${session.label}</b>` : ''}.\nDi el nombre de la habitación para empezar a contar.`,
@@ -131,6 +134,10 @@ export async function POST(req: Request) {
     }
 
     case 'startRoom': {
+      if (!(await openSession(who))) {
+        const worker = await resolveWorker({ telegramChatId: who });
+        await startSession(who, undefined, undefined, { workerId: worker.id });
+      }
       const { closed } = await startRoom(who, command.room, command.task);
       const previous = closed ? `⏹ ${label(closed.roomType)}: <b>${closed.minutes} min</b>\n` : '';
       await sendMessage(chatId, `${previous}▶️ ${label(command.room)} en marcha.`);

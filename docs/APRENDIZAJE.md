@@ -275,6 +275,7 @@ No guarda edad, género, nacionalidad, salud ni nada parecido. No es un olvido.
 | `source` | `field` (trabajo real) · `practice` (día de medición, real pero sin cliente) · `test` (pruebas automáticas). **`test` no entra en ningún cálculo, nunca**, y el filtro vive en un solo sitio. |
 | `crewSize` | Cuántas personas había en la casa. |
 | `arrivalFeeling?` | La pregunta opcional al tocar *Llegué*: bien · normal · cansado. |
+| `closedLate` | Se cerró después, al empezar el siguiente trabajo. Sus cuartos cuentan; su puerta a puerta no. |
 
 Lo que **no** se pregunta porque se calcula: trabajo número N del día, horas ya
 trabajadas, hora de inicio.
@@ -429,18 +430,39 @@ Hoy hay **un** trabajo medido.
 
 ## 11. Fases
 
-**Fase 1 — Medir bien.** Sin esto lo demás aprende de basura.
+**Fase 1 — Medir bien.** ✅ **Construida el 24 nov 2026.** Sin esto lo demás
+aprende de basura.
 
-1. `Worker`: una persona, venga de la web o de Telegram.
-2. El cronómetro se abre **desde el trabajo**: enseña los cuartos que salieron
-   en el recorrido ("Baño 1", "Baño 2") y los extras pagados como botones, y
-   guarda lo predicho en cada segmento.
-3. `source` en cada sesión; las pruebas automáticas escriben `test`.
-4. "Esto está mal" en un segmento: se marca, no se borra.
-5. Al tocar *Me voy*: "¿hubo que repetir algo?". Al tocar *Llegué*, opcional:
-   "¿cómo llegas hoy?".
-6. En `/admin/timings`, una tabla por persona con su confianza
-   (`personalFactor()` ya existe; nadie lo enseña).
+1. ✅ `Worker`: una persona, venga de la web o de Telegram
+   (`resolveWorker()` en `lib/activity/store.ts`).
+2. ✅ El cronómetro se abre **desde el trabajo**
+   (`/pilot/tiempo?analysis=<id>`, enlace "Open" en `/admin/vision`): enseña
+   los cuartos del recorrido ("Baño 1", "Baño 2") y los extras pagados como
+   botones. Lo predicho lo pone el servidor, nunca el teléfono
+   (`lib/workers/job.ts`).
+3. ✅ `source` en cada sesión; `countsAsData()` es el único filtro.
+4. ✅ *Está mal* en un segmento: se marca, no se borra, y sale del cálculo del
+   sobrecoste por los dos lados.
+5. ✅ Al tocar *Me voy*: "¿hubo que repetir algo?" y cuál. Al tocar *Llegué*,
+   opcional: "¿cómo llegas hoy?".
+6. ✅ `/admin/timings`: tabla por persona con ritmo, confianza, fortaleza,
+   debilidad y cuartos rehechos.
+7. ✅ El motor de ritmo (`lib/workers/pace.ts`) con las cuatro capas, la
+   mezcla, la confianza y la casilla global de 3 empresas y 20 cuartos.
+   Pruebas: `tests/pace.test.ts`.
+8. ✅ **Trabajo olvidado.** Si alguien no tocó *Me voy* y abre el siguiente,
+   la pantalla lo dice; el olvidado se cierra donde acabó su último cuarto
+   (`closedLate`) y su puerta a puerta no cuenta. Salió probando: cerrarlo
+   "ahora" habría registrado una visita de veinte horas.
+
+**Falta de la fase 1:**
+
+- **Fotos del después atadas a la sesión.** El recorrido del después y
+  `assessQuality()` existen en el piloto; falta que su resultado escriba un
+  `QualityCheck` (`by: photos`) por cuarto de esta sesión.
+- **La reseña del cliente** como `QualityCheck` (`by: customer`).
+- **Tamaño del equipo** en la pantalla (hoy siempre 1) y el botón de "somos
+  dos en este cuarto" (`together` ya se guarda y se calcula).
 
 **Fase 2 — El perfil.** Cuando haya ~2 trabajos por persona.
 

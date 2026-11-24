@@ -577,6 +577,39 @@ model TenantLead {
  * the whole reason they exist is to produce labelled minutes for the time
  * model when there is nothing else to learn from.
  */
+/**
+ * The person whose pace is being learned — once, whether they log from the
+ * web timer or from Telegram. Before this existed the same cleaner was two
+ * people (an email and a chat id), and a per-person number split in half is
+ * two numbers that each need twice as long to mean anything.
+ *
+ * Deliberately no age, sex, body or nationality fields. See
+ * docs/APRENDIZAJE.md §5b: the person's own measured work beats any group
+ * average after eight rooms, so those columns would only add noise to the
+ * dataset that is the asset.
+ */
+model Worker {
+  id             String   @id @default(cuid())
+  /**
+   * The cleaning company this person works for. Null = Klaudy.
+   */
+  tenantId       String?
+  /**
+   * The marketplace pro this is, when they are one. Not a foreign key, like
+   * VisionFrameArchive.analysisId: a pro row can go for its own reasons.
+   */
+  proId          String?  @unique
+  email          String?  @unique
+  telegramChatId String?  @unique
+  name           String
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now())
+
+  sessions ActivitySession[]
+
+  @@index([tenantId])
+}
+
 model ActivitySession {
   id          String  @id @default(cuid())
   /**
@@ -586,6 +619,44 @@ model ActivitySession {
   label       String?
   serviceSlug String?
 
+  /**
+   * Who worked. Kept beside loggedBy, which stays for rows from before this.
+   */
+  workerId   String?
+  worker     Worker? @relation(fields: [workerId], references: [id])
+  /**
+   * The quote this job was priced from — the "predicted" half of every ratio
+   * the pace model learns from. Not a foreign key, for the same reason as the
+   * frame archive's.
+   */
+  analysisId String?
+  /**
+   * field | practice | test. `test` never reaches a calculation; the filter
+   * lives in one place (lib/workers/pace.ts) so it cannot be forgotten in one.
+   */
+  source     String  @default("field")
+  /**
+   * City of the property, copied from the analysis — the region of the
+   * global prior.
+   */
+  region     String?
+  /**
+   * People on the job. Segments are per person; this is the context.
+   */
+  crewSize   Int     @default(1)
+  /**
+   * Optional answer at the door: good | normal | tired. Recorded, not yet
+   * used for estimates — see docs/APRENDIZAJE.md §3d.
+   */
+  arrivalFeeling String?
+  /**
+   * Closed after the fact — "Me voy" was forgotten and the job was closed when
+   * the next one started. Its end is set to the last room's end, so its rooms
+   * still count; its door-to-door does not, because the packing-up at the end
+   * was never seen and overhead is exactly the number being measured.
+   */
+  closedLate     Boolean @default(false)
+
   startedAt    DateTime  @default(now())
   endedAt      DateTime?
   /**
@@ -593,10 +664,13 @@ model ActivitySession {
    */
   totalMinutes Int?
 
-  notes    String?
-  segments ActivitySegment[]
+  notes         String?
+  segments      ActivitySegment[]
+  qualityChecks QualityCheck[]
 
   @@index([loggedBy, startedAt])
+  @@index([workerId, startedAt])
+  @@index([analysisId])
 }
 
 /**
@@ -613,12 +687,71 @@ model ActivitySegment {
    */
   task     String?
 
+  /**
+   * Which room of the walkthrough ("bathroom-2"), not just which kind — so the
+   * minutes can be set against the prediction for that very room.
+   */
+  roomKey          String?
+  /**
+   * A paid extra timed on its own: a catalogue object plus its depth, e.g.
+   * oven + deep = "el horno por dentro". Never free text.
+   */
+  taskKey          String?
+  depth            String?
+  /**
+   * What the engine predicted for this room or extra, frozen when the segment
+   * started. If the constants change tomorrow, today's ratio still means what
+   * it meant today.
+   */
+  predictedMinutes Float?
+  /**
+   * Two people in the same room at once: counts for the company, not for
+   * either person's pace.
+   */
+  together         Boolean @default(false)
+  /**
+   * Marked wrong ("left the timer running through lunch"). Marked, never
+   * deleted: a record that can be edited without a trace is not ground truth.
+   */
+  excluded         Boolean @default(false)
+  excludedReason   String?
+
   startedAt DateTime
   endedAt   DateTime?
   minutes   Int?
 
   @@index([sessionId])
   @@index([roomType])
+}
+
+/**
+ * Whether the work was good enough to count. A fast room that had to be
+ * redone is not fast, and the pace model skips it.
+ */
+model QualityCheck {
+  id        String          @id @default(cuid())
+  sessionId String
+  session   ActivitySession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  /**
+   * The room checked, or null for the whole job.
+   */
+  roomKey   String?
+  /**
+   * ok | redo
+   */
+  result    String
+  /**
+   * customer | photos | worker | supervisor
+   */
+  by        String
+  /**
+   * 0-100, when it came from the before/after photos or a rating.
+   */
+  score     Float?
+  note      String?
+  createdAt DateTime @default(now())
+
+  @@index([sessionId])
 }
 
 /**

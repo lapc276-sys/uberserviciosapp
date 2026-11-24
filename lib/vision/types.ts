@@ -183,6 +183,12 @@ export interface PropertyAnalysis {
   /** Which engine produced this — surfaced in the admin for auditing. */
   source: 'vision-llm' | 'heuristic';
   warnings: string[];
+  /**
+   * The customer's answers about opening things up, kept with the analysis
+   * they priced. The job timer reads them back to know which extras were
+   * sold ("el horno por dentro") and so which ones to time apart.
+   */
+  depthChoices?: Record<string, 'surface' | 'deep'>;
 }
 
 /** What a vision model is asked to return, before the estimator runs. */

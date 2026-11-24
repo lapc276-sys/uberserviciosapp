@@ -1,4 +1,5 @@
 import { prisma, isDbConfigured } from './db';
+import type { PropertyAnalysis } from './vision/types';
 
 /**
  * Data-access layer. One API for the app; two backends underneath:
@@ -717,6 +718,7 @@ export async function saveVisionAnalysis(input: {
 
   if (!isDbConfigured || !prisma) {
     memory.visionAnalyses.unshift(record);
+    analysisPayloads.set(id, input.analysis);
     return id;
   }
 
@@ -737,6 +739,41 @@ export async function saveVisionAnalysis(input: {
     },
   });
   return row.id;
+}
+
+/** Full analyses kept in memory, so the job timer works without a database. */
+const analysisPayloads = new Map<string, unknown>();
+
+export interface StoredAnalysis {
+  id: string;
+  serviceSlug: string;
+  city: string | null;
+  createdAt: string;
+  analysis: PropertyAnalysis;
+}
+
+/**
+ * One stored analysis with its rooms — what the job timer reads to know which
+ * rooms a job has and what the engine predicted for each. Read on the server
+ * so that a prediction can never arrive from the phone.
+ */
+export async function getVisionAnalysis(id: string): Promise<StoredAnalysis | null> {
+  if (!id || id.length > 64) return null;
+  if (!isDbConfigured || !prisma) {
+    const record = memory.visionAnalyses.find((r) => r.id === id);
+    const payload = analysisPayloads.get(id);
+    if (!record || !payload) return null;
+    return { id, serviceSlug: record.serviceSlug, city: record.city, createdAt: record.createdAt, analysis: payload as PropertyAnalysis };
+  }
+  const row = await prisma.visionAnalysis.findUnique({ where: { id } }).catch(() => null);
+  if (!row) return null;
+  return {
+    id: row.id,
+    serviceSlug: row.serviceSlug,
+    city: row.city,
+    createdAt: row.createdAt.toISOString(),
+    analysis: row.payload as unknown as PropertyAnalysis,
+  };
 }
 
 /** Links an analysis to the booking it produced, so actuals can be compared. */

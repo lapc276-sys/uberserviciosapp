@@ -25,14 +25,24 @@ export const dynamic = 'force-dynamic';
  * screen is the only thing that changes that, so it is deliberately its own
  * page with nothing else on it.
  */
-export default async function JobTimerPage() {
+export default async function JobTimerPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ analysis?: string }>;
+}) {
+  // Opened from a job: the timer's buttons become that job's rooms.
+  const { analysis } = await searchParams;
+  const analysisId = typeof analysis === 'string' && /^[\w-]{1,64}$/.test(analysis) ? analysis : undefined;
   const jar = await cookies();
   const [proSession, adminSession] = await Promise.all([
     verifyProSession(jar.get(PRO_SESSION_COOKIE)?.value),
     verifySessionToken(jar.get(SESSION_COOKIE)?.value),
   ]);
 
-  if (!(proSession?.email || adminSession?.email)) redirect('/pros/login?next=/pilot/tiempo');
+  if (!(proSession?.email || adminSession?.email)) {
+    const back = analysisId ? `/pilot/tiempo?analysis=${analysisId}` : '/pilot/tiempo';
+    redirect(`/pros/login?next=${encodeURIComponent(back)}`);
+  }
 
   return (
     <main className="min-h-screen bg-slate-50 dark:bg-ink">
@@ -48,7 +58,7 @@ export default async function JobTimerPage() {
       </header>
 
       <div className="mx-auto max-w-lg px-4 py-6">
-        <JobTimer />
+        <JobTimer analysisId={analysisId} />
       </div>
     </main>
   );

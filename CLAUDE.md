@@ -336,6 +336,44 @@ Todo lo demás en la app aguanta sin base de datos. Esto no, así que
 `/api/tenants/signup` devuelve 503 y `/empezar` enseña un aviso en vez del
 formulario. No lo "arregles" quitando la comprobación.
 
+### El ritmo de cada persona es un cociente, y nunca toca el precio
+
+`lib/workers/pace.ts`, diseño en `docs/APRENDIZAJE.md`. No aprende "minutos
+de cocina": aprende **minutos reales ÷ minutos que el motor predijo para ese
+mismo cuarto**. La grasa y el tamaño ya están dentro de la predicción, así que
+el cociente se lee con 8 cuartos en vez de con un año de tabla
+persona × tarea × estado.
+
+- **Nunca en el precio del cliente.** Agenda, tamaño del equipo, oferta al
+  limpiador ("para ti, unas 3 h"), fortalezas. Un limpiador lento no encarece
+  una casa, y al cotizar aún no hay nadie asignado.
+- **Lo predicho lo pone el servidor**, leído del análisis guardado
+  (`lib/workers/job.ts`), y se congela en el segmento. El teléfono solo dice
+  qué cuarto ("bathroom-2"). Un predicho que manda el teléfono es un cociente
+  que elige el teléfono.
+- **Cada persona contra la mediana real del equipo, no contra la mezclada.** La
+  mezcla tira hacia la referencia con pocos datos; dividir por ella haría que
+  un equipo de uno pareciera más rápido que sí mismo. Hay test.
+- **`source: 'test'` no entra en nada**, y el filtro es uno: `countsAsData()`.
+- **Nada se borra.** *Está mal* marca el segmento; un cuarto rehecho
+  (`QualityCheck` `redo`) no cuenta para el ritmo; dos personas en un cuarto
+  (`together`) cuentan una vez, para el equipo.
+- **Un trabajo olvidado abierto se cierra donde acabó su último cuarto**
+  (`closedLate`), nunca "ahora": eso registraría una visita de veinte horas
+  y arruinaría la mediana del sobrecoste.
+- **El limpiador no ve lo predicho de cada cuarto mientras trabaja.** Un
+  objetivo en pantalla es un objetivo al que se trabaja.
+- **Los cocientes de todas las empresas se juntan** para la capa global
+  (decisión del dueño, 24 nov 2026); sus clientes (`TenantLead`) no. Una
+  casilla global solo publica con **3 empresas y 20 cuartos**: si la llena una
+  sola, es la cifra de esa empresa con otro nombre.
+- **Sin edad ni complexión.** No es un olvido del esquema: con 8 cuartos el
+  número propio gana a cualquier media por grupo, y la experiencia (trabajos
+  registrados) ya está medida. Motivos en `docs/APRENDIZAJE.md` §5b.
+
+Todos los cortes (8, 30, 25%, 3 empresas, 20 cuartos, 30% de sobrecoste por
+defecto) son hipótesis con nombre en el código, como las constantes de tiempo.
+
 ## Convenciones
 
 - **Texto de cara al usuario en español.** Comentarios y nombres en el código,

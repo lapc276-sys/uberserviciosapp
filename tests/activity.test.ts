@@ -26,6 +26,9 @@ function job(over: Partial<Session> = {}): Session {
   return {
     id: 'as_1',
     loggedBy: 'ana@example.com',
+    source: 'field',
+    crewSize: 1,
+    quality: [],
     startedAt: T(0),
     endedAt: T(120),
     segments: [
@@ -165,4 +168,25 @@ test('a personal factor compares like rooms, not totals', () => {
 
   const bruno = personalFactor(sessions, 'bruno@example.com');
   assert.ok(bruno && bruno.factor > 1, 'Bruno should come out slower than the pool');
+});
+
+test('a segment marked wrong comes out of both sides of the overhead', () => {
+  // Lunch on the clock in the kitchen: 45 + 30 min logged, 30 of it lunch.
+  const span = sessionSpan(
+    job({
+      segments: [
+        { id: 'sg_1', roomType: 'kitchen', startedAt: T(15), endedAt: T(60), minutes: 45 },
+        { id: 'sg_2', roomType: 'kitchen', startedAt: T(60), endedAt: T(90), minutes: 30, excluded: true },
+      ],
+    }),
+  );
+  assert.equal(span.taskMinutes, 45);
+  assert.equal(span.doorToDoorMinutes, 90);
+  assert.equal(span.overheadMinutes, 45);
+});
+
+test('a job closed after the fact never counts towards overhead', () => {
+  const late = job({ id: 'as_late', closedLate: true, endedAt: T(61) });
+  assert.equal(overheadSummary([late]).samples, 0);
+  assert.equal(overheadSummary([job(), late]).samples, 1);
 });

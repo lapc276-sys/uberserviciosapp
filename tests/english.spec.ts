@@ -86,7 +86,8 @@ test.describe('on an English phone', () => {
     await expect.poll(() => (analyzed?.captions as string[] | undefined)?.[0] ?? '', { timeout: 20_000 }).toContain(
       'Vista general',
     );
-    expect(analyzed?.depthChoices).toEqual({ 'kitchen:oven': 'deep' });
+    // Assigned inside the route handler, which TypeScript cannot see from here.
+    expect((analyzed as Record<string, unknown> | null)?.depthChoices).toEqual({ 'kitchen:oven': 'deep' });
   });
 });
 

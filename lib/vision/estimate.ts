@@ -311,6 +311,7 @@ export function buildAnalysis(
     confidence: Number(confidence.toFixed(2)),
     source,
     warnings: allWarnings,
+    ...(depthChoices && Object.keys(depthChoices).length ? { depthChoices } : {}),
   };
 }
 
