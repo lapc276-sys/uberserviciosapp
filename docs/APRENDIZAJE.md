@@ -1,8 +1,7 @@
 # Aprender cómo trabaja cada persona
 
-**Propuesta de diseño. Nada de esto está construido todavía** salvo lo que la
-sección 1 marca como existente. En español, como `ARQUITECTURA.md`, para el
-fundador.
+Diseño y estado de lo construido (la fase 1 y el modo manos libres, 24–25 nov
+2026; ver §11). En español, como `ARQUITECTURA.md`, para el fundador.
 
 La pregunta: ¿cómo hace la app para aprender cuánto tarda **cada** limpiador,
 y luego usar ese número?
@@ -12,6 +11,80 @@ La respuesta corta: no se aprende "cuánto tarda Luis en un horno". Se aprende
 cuarto**. Ese cociente ya trae dentro la grasa, el desorden y el tamaño, porque
 la predicción los contaba. Es la diferencia entre necesitar meses de datos y
 necesitar dos trabajos.
+
+---
+
+## 0. Un día de María, de principio a fin
+
+**No hay otra aplicación.** El teléfono de María abre la misma web, con su
+cuenta, en otra pantalla (`/pilot/tiempo`). Todo cae en la misma base de datos
+que las cotizaciones: no hay nada que "enviar a la app maestra" ni que
+sincronizar, porque es la misma.
+
+```mermaid
+flowchart TB
+    A["1 · El cliente hace el recorrido<br/>cotización guardada:<br/>cocina 40 · horno 14 · baño 25 min"] --> B["2 · La empresa le pasa a María<br/>el enlace de ESE trabajo"]
+    B --> C["3 · María entra con su cuenta<br/>la app sabe que es ella"]
+    C --> D["4 · En la puerta: Manos libres + Llegué<br/>teléfono al pecho, graba"]
+    D --> E["5 · Dice 'cocina', 'horno', 'microondas',<br/>'termino', 'baño'…"]
+    E --> F["6 · Me voy → ¿hubo que repetir algo?"]
+    F --> G[("Base de datos<br/>sesión · cuartos · objetos · calidad<br/>+ video por partes")]
+    G --> H["Su historial y su ritmo<br/>/admin/timings"]
+    G --> I["El ritmo del equipo"]
+    G --> J["La media global por región<br/>sin nombre ni empresa"]
+```
+
+**Paso a paso, con números inventados:**
+
+1. **Antes.** El cliente hizo el recorrido. Quedó guardada la cotización con
+   sus cuartos y lo que el motor predijo para cada uno: cocina 40 min, el
+   horno por dentro 14, baño 25.
+2. **La empresa le da el trabajo a María** con el enlace de ese trabajo. Hoy,
+   el enlace "Open" en `/admin/vision`; más adelante, dentro de la oferta.
+3. **María abre el enlace con su cuenta.** La app crea su ficha (`Worker`) la
+   primera vez; desde entonces, todo lo que mida es de ella, entre por la web
+   o por Telegram.
+4. **En la puerta activa *Manos libres* y toca *Llegué*.** Se pone el teléfono
+   en el pecho o la cabeza. Desde ahí graba, y la hora de llegada queda
+   apuntada: es el principio del puerta a puerta.
+5. **Trabaja diciendo lo que empieza.** "Cocina" → empieza la cocina. "Horno"
+   → empieza el horno, dentro de la cocina, con sus 14 min previstos
+   guardados al lado. "Termino" → para el reloj (lleva cosas al coche). Cada
+   palabra suena con un pitido para que sepa que se oyó.
+6. **"Me voy"**: la pantalla pregunta si hubo que repetir algo. Contesta y se
+   cierra el trabajo. El video termina de subirse (o se queda en el teléfono
+   si no hay almacenamiento configurado, con un botón para guardarlo).
+
+**Lo que queda guardado de esas 2 horas:**
+
+| Qué | Ejemplo |
+|---|---|
+| Puerta a puerta | 2 h 00 |
+| Cocina (con todo lo de dentro) | 38 min, el motor dijo 40 → **0,95** |
+| Horno por dentro | 12 min, el motor dijo 14 → **0,86** |
+| Microondas por fuera | 2 min, el motor dijo 1 → **2,0** |
+| Baño | 30 min, el motor dijo 25 → **1,20** |
+| Lo demás (traslado, montaje, recogida) | 2 h − la suma de los cuartos |
+| Calidad | "no hubo que repetir nada" |
+| Video | una parte cada 30 s (240 en 2 horas), con la hora en que empezó |
+
+**Lo que se calcula con eso** (al momento de mirar, sin procesos aparte):
+
+- **El historial de María** son todos esos cocientes, trabajo tras trabajo.
+- **Su "promedio"** es la **mediana** de sus últimos 40 cuartos, no la media,
+  para que un día raro no la mueva. Hasta 8 cuartos se mezcla con la del
+  equipo; a partir de ahí es cada vez más ella. Por eso el "Unas 2 h 48 para
+  ti" de la pantalla dice *pocos datos todavía* al principio.
+- **Sus fuertes y flojos**: en qué tipo de cuarto va mejor que su propia media.
+- **El equipo** es la mediana de todos; **lo global** junta a todas las
+  empresas, sin nombres, por región.
+
+**Para qué sirve el video si los tiempos ya salen de la voz:** cada palabra
+de María deja una marca de tiempo, así que se sabe en qué segundo del video
+empieza y acaba el horno. Eso permite, en el paso 2, cortar el video por
+objeto, sacar el antes y el después de cada uno, y que la IA aprenda a
+reconocer las tareas sola; y deja un conjunto de video etiquetado que vale por
+sí mismo.
 
 ---
 
@@ -314,6 +387,18 @@ Se alimenta, por orden de importancia hoy:
 **Un cuarto con `redo` no cuenta para el ritmo de nadie.** Rápido y mal no
 cuenta como rápido.
 
+### `JobRecording` — NUEVA (25 nov)
+
+El video de un trabajo grabado con manos libres.
+
+| Campo | Para qué |
+|---|---|
+| `sessionId` | De qué trabajo. |
+| `startedAt` | El segundo 0 del video, **en el mismo reloj que los cuartos**. Inicio de un cuarto − esto = dónde empieza en el video (`videoOffsetSeconds()`). |
+| `mimeType`, `chunkSeconds` | Formato y duración de cada parte (30 s). |
+| `storagePrefix` | Dónde están las partes en el almacenamiento; vacío si el video se quedó en el teléfono. |
+| `chunkIndexes`, `kilobytes` | Qué partes llegaron. Un hueco es un trozo de película perdido, no un tiempo perdido: los tiempos salen de los cuartos. |
+
 ### El perfil — calculado, no guardado
 
 Al principio el perfil se calcula al leerlo, como `overheadSummary()` hoy. Los
@@ -463,6 +548,26 @@ aprende de basura.
 - **La reseña del cliente** como `QualityCheck` (`by: customer`).
 - **Tamaño del equipo** en la pantalla (hoy siempre 1) y el botón de "somos
   dos en este cuarto" (`together` ya se guarda y se calcula).
+
+**Manos libres (paso 1 del video).** ✅ **Construido el 25 nov 2026.**
+
+- El teléfono graba a 480p y 15 imágenes por segundo, en partes de 30 s.
+  Cada parte se guarda primero en el teléfono y se borra solo cuando el
+  almacenamiento confirma que llegó (`components/pilot/HandsFree.tsx`).
+- La subida va del teléfono al almacenamiento directamente, con una URL
+  firmada (`lib/storage/s3.ts`, compatible con Cloudflare R2 y AWS S3). Sin
+  configurarlo, el video se guarda en el teléfono al final.
+- La voz marca cuartos y **cualquier objeto que el recorrido vio**
+  (`lib/workers/voice.ts`, `objects.ts`): "horno", "baño dos", "termino".
+  Contesta con pitidos y vibración, nunca hablando, para no oírse a sí mismo.
+- No graba el audio: solo se usan las órdenes dichas.
+- Probado con cámara falsa: órdenes, subida de 3 partes, y el video guardado
+  en el teléfono se reproduce entero (VP8, 640×480).
+
+**Falta del video:** el paso 2 (cortar el video por objeto con la IA y sacar
+el antes y el después), el paso 3 (pantalla para confirmar la línea de
+tiempo) y medirlo con un teléfono de verdad: batería, calor, y si la voz se
+entiende con la aspiradora encendida.
 
 **Fase 2 — El perfil.** Cuando haya ~2 trabajos por persona.
 

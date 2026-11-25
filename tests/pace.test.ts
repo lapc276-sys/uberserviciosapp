@@ -354,7 +354,15 @@ test("the timer's rooms are the walkthrough's rooms, and the extras are what was
   // A deep clean opens everything up by default — one button per appliance,
   // and the toaster, which nobody is asked about, is never one.
   const deep = jobRooms({ rooms: analysis.rooms }, 'deep-cleaning');
-  assert.deepEqual(deep[0].extras.map((e) => e.taskKey), ['oven', 'fridge']);
+  assert.deepEqual(deep[0].extras.map((e) => e.taskKey), ['oven', 'refrigerator']);
+  // Hands-free can time the rest by name; the standard clean's fridge is a wipe.
+  assert.deepEqual(
+    standard[0].tasks.map((t) => [t.taskKey, t.depth, t.label]),
+    [
+      ['oven', 'deep', 'Limpia el horno por dentro'],
+      ['refrigerator', 'surface', 'Nevera'],
+    ],
+  );
 });
 
 test('the context that explains variance is computed, not asked', () => {

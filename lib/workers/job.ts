@@ -1,6 +1,7 @@
 import type { PropertyAnalysis, RoomType } from '../vision/types';
 import { countCapFor, depthChoiceFor, objectMinutesFor, isDeepService, type DepthChoices } from '../vision/model';
 import { askedObjects, taskFor } from '../vision/upsell';
+import { OBJECT_WORDS, canonicalObject, objectLabel } from './objects';
 
 /**
  * The job as the timer sees it: the rooms the walkthrough filmed, each with
@@ -17,14 +18,18 @@ import { askedObjects, taskFor } from '../vision/upsell';
  * the client could set.
  */
 
-export interface JobExtra {
+export interface JobTask {
   /** Catalogue object, e.g. "oven". */
   taskKey: string;
-  depth: 'deep';
-  /** The crew's wording, the same sentence the customer was asked. */
+  /** Whether this job cleans it inside or wipes it — what was predicted. */
+  depth: 'surface' | 'deep';
+  /** For a sold extra, the same sentence the customer was asked. */
   label: string;
   predictedMinutes: number;
 }
+
+/** A paid extra: a task cleaned inside because the customer said yes. */
+export type JobExtra = JobTask & { depth: 'deep' };
 
 export interface JobRoom {
   /** Stable within the job: "kitchen-1", "bathroom-2". */
@@ -33,7 +38,15 @@ export interface JobRoom {
   label: string;
   /** The engine's minutes for the whole room, extras included. */
   predictedMinutes: number;
+  /** The paid extras — buttons on the timer. */
   extras: JobExtra[];
+  /**
+   * Every object in the room a cleaner can name out loud, extras included —
+   * what hands-free mode can time on its own ("microondas", "inodoro").
+   * Timing the surface wipe of a microwave tests a constant that today is a
+   * guess, exactly as timing the oven inside tests the extra.
+   */
+  tasks: JobTask[];
 }
 
 /** Room labels for the timer, in Spanish like the rest of the crew screens. */
@@ -76,23 +89,34 @@ export function jobRooms(
     const base = ROOM_ES[room.type] ?? ROOM_ES.other;
 
     const extras: JobExtra[] = [];
+    const tasks: JobTask[] = [];
     const named = new Set<string>();
     for (const obj of room.objects) {
-      const key = obj.name.trim().toLowerCase();
-      if (!EXTRA_OBJECTS.has(key)) continue;
-      const depth = depthChoiceFor(key, room.type, analysis.depthChoices) ?? (isDeepService(serviceSlug) ? 'deep' : 'surface');
-      if (depth !== 'deep') continue;
-      const label = taskFor(key, room.type);
-      // "fridge" and "refrigerator" are one appliance and one button.
-      if (!label || named.has(label)) continue;
-      named.add(label);
+      const raw = obj.name.trim().toLowerCase();
+      const key = canonicalObject(raw);
+      if (named.has(key)) continue;
+      const depth =
+        depthChoiceFor(raw, room.type, analysis.depthChoices) ??
+        depthChoiceFor(key, room.type, analysis.depthChoices) ??
+        (isDeepService(serviceSlug) ? 'deep' : 'surface');
       const count = Math.max(1, Math.min(obj.count || 1, countCapFor(key)));
-      extras.push({
-        taskKey: key,
-        depth: 'deep',
-        label,
-        predictedMinutes: round1(objectMinutesFor(key, serviceSlug, 'deep') * count),
-      });
+      const predictedMinutes = round1(objectMinutesFor(key, serviceSlug, depth) * count);
+      if (predictedMinutes <= 0) continue;
+
+      // A sold extra keeps the customer's sentence as its label, so what was
+      // sold and what is timed cannot describe different work.
+      const sold = depth === 'deep' && EXTRA_OBJECTS.has(raw) ? taskFor(raw, room.type) : null;
+      if (sold) {
+        named.add(key);
+        const extra: JobExtra = { taskKey: key, depth: 'deep', label: sold, predictedMinutes };
+        extras.push(extra);
+        tasks.push(extra);
+        continue;
+      }
+      const label = OBJECT_WORDS[key] ? objectLabel(key, room.type) : null;
+      if (!label) continue;
+      named.add(key);
+      tasks.push({ taskKey: key, depth, label: depth === 'deep' ? `${label} a fondo` : label, predictedMinutes });
     }
 
     return {
@@ -101,6 +125,7 @@ export function jobRooms(
       label: (ofType.get(room.type) ?? 0) > 1 ? `${base} ${n}` : base,
       predictedMinutes: round1(room.estimatedMinutes),
       extras,
+      tasks,
     };
   });
 }

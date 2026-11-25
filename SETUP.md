@@ -344,6 +344,47 @@ vez por reserva) y las campañas cada martes.
 
 ---
 
+## Paso 12 — Guardar los videos del equipo (Cloudflare R2) · 10 GB gratis · ~15 min
+
+Solo hace falta si el equipo graba con **manos libres** en `/pilot/tiempo`.
+Sin este paso todo funciona igual: los tiempos se guardan, y el video se queda
+en el teléfono con un botón para guardarlo al terminar.
+
+Una hora de trabajo grabada pesa unos 150–350 MB. El teléfono la sube
+directamente a R2 en partes de 30 segundos; no pasa por Replit.
+
+1. **[dash.cloudflare.com](https://dash.cloudflare.com)** → **R2** → **Create bucket** → nombre `klaudy-trabajos`.
+2. En el bucket → **Settings** → **CORS policy** → **Edit**, y pega esto (cambia la dirección por la tuya):
+   ```json
+   [
+     {
+       "AllowedOrigins": ["https://tudominio.com"],
+       "AllowedMethods": ["PUT"],
+       "AllowedHeaders": ["Content-Type"],
+       "MaxAgeSeconds": 3600
+     }
+   ]
+   ```
+   Sin esto el navegador del teléfono no deja subir nada, y los videos se
+   quedan en el teléfono.
+3. **R2** → **Manage R2 API Tokens** → **Create API token** → permiso
+   **Object Read & Write**, solo para ese bucket. Te enseña un **Access Key
+   ID** y un **Secret Access Key** una sola vez.
+4. En **Replit → Secrets**:
+   - `STORAGE_S3_ENDPOINT` = `https://<TU-ACCOUNT-ID>.r2.cloudflarestorage.com` (aparece en la página de R2)
+   - `STORAGE_S3_BUCKET` = `klaudy-trabajos`
+   - `STORAGE_S3_ACCESS_KEY_ID` = el Access Key ID
+   - `STORAGE_S3_SECRET_ACCESS_KEY` = el Secret Access Key
+5. Vuelve a publicar.
+
+✅ **Resultado:** en el cronómetro, con manos libres, pone "N partes subidas".
+
+> 💸 R2 da 10 GB gratis al mes y luego cobra por GB guardado, sin cobrar por
+> descargar (a noviembre de 2026; compruébalo en su página de precios). Sirve
+> también AWS S3: mismas variables, con su dirección.
+
+---
+
 ## ✅ Checklist final
 
 | Paso | Cuenta | Variable(s) | ¿Listo? |
@@ -360,6 +401,7 @@ vez por reserva) y las campañas cada martes.
 | 10 | GA4 / Pixel | `NEXT_PUBLIC_GA_ID`, `NEXT_PUBLIC_META_PIXEL_ID` | ☐ |
 | 10b | Messenger / Instagram | `META_VERIFY_TOKEN`, `META_PAGE_TOKEN`, `META_APP_SECRET` | ☐ |
 | 11 | Tareas programadas | `CRON_SECRET`, `CRON_TARGET_URL` | ☐ |
+| 12 | Videos del equipo (R2) | `STORAGE_S3_ENDPOINT`, `STORAGE_S3_BUCKET`, `STORAGE_S3_ACCESS_KEY_ID`, `STORAGE_S3_SECRET_ACCESS_KEY` | ☐ |
 
 Todas van en **Replit → Secrets**, y después de cada tanda: **volver a publicar**.
 

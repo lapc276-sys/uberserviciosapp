@@ -374,6 +374,38 @@ persona × tarea × estado.
 Todos los cortes (8, 30, 25%, 3 empresas, 20 cuartos, 30% de sobrecoste por
 defecto) son hipótesis con nombre en el código, como las constantes de tiempo.
 
+### Manos libres: la voz marca, la cámara graba, y el teléfono no habla
+
+`components/pilot/HandsFree.tsx`. El teléfono va en la cabeza o el pecho, no
+se puede tocar, así que cada cuarto **y cada objeto** se marca diciéndolo
+(`lib/workers/voice.ts`): "horno", "baño dos", "termino".
+
+- **Contesta con pitidos y vibración, nunca hablando.** Un teléfono que dijera
+  "horno" se oiría y abriría el horno otra vez. Misma regla que el recorrido.
+- **"Termino el horno" para; no empieza el horno.** Se mira parar antes que
+  objeto, y objeto antes que cuarto ("poceta" es el inodoro, no el baño). Decir
+  lo que ya está en marcha no lo parte en dos. Hay tests.
+- **Solo se cronometran objetos que el recorrido vio**: sin predicción no hay
+  cociente que aprender, así que un objeto que no estaba no hace nada.
+- **El video no lleva audio.** Solo se usan las órdenes dichas: archivos más
+  pequeños y ninguna conversación ajena grabada dentro de una casa.
+- **Cada parte de 30 s se escribe primero en el teléfono** (IndexedDB) y se
+  borra solo cuando el almacenamiento confirma que llegó. Un sótano sin señal
+  retrasa la subida; no pierde película.
+- **Los bytes van del teléfono al almacenamiento** con una URL firmada
+  (`lib/storage/s3.ts`, SigV4 sin SDK, probado contra el ejemplo publicado de
+  AWS). El servidor nunca los recibe. Sin las cuatro variables `STORAGE_S3_*`
+  el video se queda en el teléfono y se descarga al final.
+- **El segundo 0 del video es la hora del servidor**, el mismo reloj que los
+  cuartos: inicio del cuarto − inicio de la grabación = dónde está en el video.
+- **Esto no es el archivo de fotogramas del cliente.** `VISION_ARCHIVE_MODE`
+  sigue apagado con sus tres puertas; esto es video del equipo en su trabajo,
+  en su propia tabla (`JobRecording`).
+
+Los umbrales del video (480p, 15 fps, 0,8 Mbit/s, partes de 30 s) están
+puestos, no medidos en un teléfono de verdad: batería y calor en 3 horas están
+por medir.
+
 ## Convenciones
 
 - **Texto de cara al usuario en español.** Comentarios y nombres en el código,

@@ -667,6 +667,7 @@ model ActivitySession {
   notes         String?
   segments      ActivitySegment[]
   qualityChecks QualityCheck[]
+  recordings    JobRecording[]
 
   @@index([loggedBy, startedAt])
   @@index([workerId, startedAt])
@@ -722,6 +723,42 @@ model ActivitySegment {
 
   @@index([sessionId])
   @@index([roomType])
+}
+
+/**
+ * Video of a job, recorded hands-free from a phone on the head or chest.
+ *
+ * Its clock is the server's, like the segments': a segment's startedAt minus
+ * this startedAt is where that room or object begins in the video. That one
+ * subtraction is what lets the footage be cut per object later — and what
+ * turns a job into labelled demonstrations rather than three hours of film.
+ *
+ * The bytes live in an S3-compatible bucket (lib/storage/s3.ts) as 30-second
+ * pieces, uploaded by the phone directly. Without a bucket the video stays
+ * on the phone and this row still records that it existed.
+ */
+model JobRecording {
+  id           String          @id @default(cuid())
+  sessionId    String
+  session      ActivitySession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  startedAt    DateTime        @default(now())
+  endedAt      DateTime?
+  mimeType     String
+  chunkSeconds Int
+  /**
+   * Bucket prefix; each piece is <prefix>/<00001>.<ext>. Null when the video
+   * stayed on the phone.
+   */
+  storagePrefix String?
+  /**
+   * Pieces confirmed in the bucket. A gap is a piece that never arrived — a
+   * hole in the film, not in the times, which come from the segments.
+   */
+  chunkIndexes Int[]  @default([])
+  kilobytes    Int    @default(0)
+  createdAt    DateTime @default(now())
+
+  @@index([sessionId])
 }
 
 /**

@@ -6,6 +6,9 @@ import { readJson } from '@/lib/http';
 import type { Session, Segment, SessionSpan } from '@/lib/activity/store';
 import type { JobRoom } from '@/lib/workers/job';
 import type { DurationEstimate } from '@/lib/workers/pace';
+import type { JobVoiceAction } from '@/lib/workers/voice';
+import { HandsFree, unlockAudio, type HandsFreeHandle, type RecordingSummary } from './HandsFree';
+import { downloadRecording, forgetRecording } from './recordingStore';
 
 /**
  * The job timer, as it is actually used: one hand, often a glove, in a
@@ -127,6 +130,11 @@ export function JobTimer({ analysisId }: { analysisId?: string }) {
   const [leaving, setLeaving] = useState(false);
   const [redoRooms, setRedoRooms] = useState<string[] | null>(null);
   const [otherRooms, setOtherRooms] = useState(false);
+  // Hands-free: the phone on the head or chest films, the voice marks.
+  const [handsFree, setHandsFree] = useState(false);
+  const [recording, setRecording] = useState<RecordingSummary | null>(null);
+  const [savedNote, setSavedNote] = useState('');
+  const hfRef = useRef<HandsFreeHandle>(null);
   // The job's names, kept for the summary after the job closes.
   const lastJob = useRef<JobView | null>(null);
   // Re-renders the running clocks without touching the server.
@@ -239,10 +247,59 @@ export function JobTimer({ analysisId }: { analysisId?: string }) {
           </div>
         )}
 
+        {recording && (
+          <div className="rounded-2xl border p-4 text-sm dark:border-white/10" data-testid="recording-summary">
+            <p className="font-medium">Video del trabajo</p>
+            {recording.onPhone === 0 ? (
+              <p className="mt-1 text-slate-600 dark:text-slate-300">
+                {recording.uploads
+                  ? `${recording.uploaded} ${recording.uploaded === 1 ? 'parte guardada' : 'partes guardadas'} en la nube.`
+                  : 'Guardado en el teléfono, y espacio liberado.'}
+              </p>
+            ) : (
+              <>
+                <p className="mt-1 text-slate-600 dark:text-slate-300">
+                  {recording.uploads
+                    ? `${recording.onPhone} ${recording.onPhone === 1 ? 'parte sigue' : 'partes siguen'} en este teléfono: se subirán cuando lo guardes o haya señal.`
+                    : `El video está en este teléfono (${recording.onPhone} ${recording.onPhone === 1 ? 'parte' : 'partes'}).`}
+                </p>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const n = await downloadRecording(recording.recordingId, `trabajo-${new Date().toISOString().slice(0, 10)}`);
+                    setSavedNote(n ? 'Guardado. Cuando lo tengas a salvo, libera el espacio.' : 'No quedaba video en el teléfono.');
+                  }}
+                  className="mt-3 min-h-[48px] w-full rounded-xl border-2 font-semibold dark:border-white/20"
+                >
+                  Guardar el video en el teléfono
+                </button>
+                {savedNote && (
+                  <>
+                    <p className="mt-2 text-xs text-slate-500">{savedNote}</p>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        await forgetRecording(recording.recordingId);
+                        setRecording({ ...recording, onPhone: 0 });
+                        setSavedNote('');
+                      }}
+                      className="mt-1 min-h-[40px] text-xs text-slate-500 underline"
+                    >
+                      Liberar espacio
+                    </button>
+                  </>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
         <button
           type="button"
           onClick={() => {
             setDone(null);
+            setRecording(null);
+            setSavedNote('');
             void send(null);
           }}
           className="min-h-[56px] w-full rounded-xl border-2 text-base font-semibold dark:border-white/20"
@@ -305,16 +362,38 @@ export function JobTimer({ analysisId }: { analysisId?: string }) {
           </div>
         </div>
 
+        {job && (
+          <button
+            type="button"
+            aria-pressed={handsFree}
+            onClick={() => setHandsFree(!handsFree)}
+            className={`w-full rounded-2xl border-2 p-4 text-left ${
+              handsFree ? 'border-red-400 bg-red-50 dark:border-red-800 dark:bg-red-950/30' : 'dark:border-white/15'
+            }`}
+          >
+            <span className="flex items-center justify-between gap-3 font-semibold">
+              Manos libres
+              <span className={`text-sm ${handsFree ? 'text-red-600' : 'text-slate-400'}`}>{handsFree ? 'Activado' : 'Apagado'}</span>
+            </span>
+            <span className="mt-1 block text-sm text-slate-600 dark:text-slate-400">
+              El teléfono en la cabeza o el pecho graba el trabajo, y tú marcas cada cosa diciendo su nombre:
+              “horno”, “baño dos”, “termino”.
+            </span>
+          </button>
+        )}
+
         <button
           type="button"
           disabled={busy}
-          onClick={() =>
-            send({
+          onClick={() => {
+            // The tap is what lets the phone beep later, with no hand free.
+            if (handsFree) unlockAudio();
+            void send({
               action: 'start',
               ...(job ? { analysisId: job.analysisId } : {}),
               ...(feeling ? { arrivalFeeling: feeling } : {}),
-            })
-          }
+            });
+          }}
           className="inline-flex min-h-[72px] w-full items-center justify-center gap-2 rounded-2xl bg-brand-600 text-lg font-semibold text-white disabled:opacity-60"
         >
           {busy ? <Loader2 className="h-6 w-6 animate-spin" /> : <Play className="h-6 w-6" />}
@@ -363,15 +442,42 @@ export function JobTimer({ analysisId }: { analysisId?: string }) {
     </button>
   );
 
+  // What the voice asked for, as the buttons would have done it.
+  const onVoice = (action: JobVoiceAction) => {
+    if (action.kind === 'room') {
+      // Saying the room she is already in must not split it in two.
+      if (open?.roomKey === action.roomKey && (open?.taskKey ?? undefined) === action.taskKey) return;
+      void send({ action: 'room', roomKey: action.roomKey, ...(action.taskKey ? { taskKey: action.taskKey } : {}) });
+    } else if (action.kind === 'pause') {
+      if (open) void send({ action: 'pause' });
+    } else if (action.kind === 'leave') {
+      if (open) void send({ action: 'pause' });
+      setLeaving(true);
+    }
+  };
+
+  // Rendered above both the working view and the leaving question, so the
+  // camera keeps filming while she answers "¿hubo que repetir algo?".
+  const handsFreeEl =
+    handsFree && job ? <HandsFree ref={hfRef} rooms={job.rooms} current={open} onAction={onVoice} /> : null;
+
+  const stopFilming = async () => {
+    const summary = (await hfRef.current?.stop()) ?? null;
+    if (summary) setRecording(summary);
+    setHandsFree(false);
+  };
+
   // ── Leaving: one question, so a fast room that was redone is not fast ────
-  if (leaving) {
-    const finish = (body: Record<string, unknown>) => {
+  const leavingView = !leaving ? null : (() => {
+    const finish = async (body: Record<string, unknown>) => {
+      setBusy(true);
+      await stopFilming();
       setLeaving(false);
       setRedoRooms(null);
       void send({ action: 'end', ...body });
     };
     return (
-      <div className="space-y-5">
+      <>
         <div className="rounded-2xl border p-5 dark:border-white/10">
           <h2 className="font-semibold">¿Hubo que repetir algo?</h2>
           <p className="mt-1.5 text-sm text-slate-600 dark:text-slate-400">
@@ -430,12 +536,15 @@ export function JobTimer({ analysisId }: { analysisId?: string }) {
           Volver, todavía no me voy
         </button>
         {error && <p className="text-sm text-red-600">{error}</p>}
-      </div>
+      </>
     );
-  }
+  })();
 
   return (
     <div className="space-y-5">
+      {handsFreeEl}
+      {leavingView ?? (
+      <>
       {state.otherJob && (
         <div className="rounded-2xl border-2 border-amber-400 bg-amber-50 p-4 dark:bg-amber-950/30">
           <p className="text-sm font-medium text-amber-900 dark:text-amber-200">
@@ -562,6 +671,23 @@ export function JobTimer({ analysisId }: { analysisId?: string }) {
         moviendo muebles. Ese tiempo cuenta igual, pero no es de un cuarto.
       </p>
 
+      {job && (
+        <button
+          type="button"
+          onClick={async () => {
+            if (handsFree) {
+              await stopFilming();
+            } else {
+              unlockAudio();
+              setHandsFree(true);
+            }
+          }}
+          className="min-h-[48px] w-full rounded-xl border-2 text-sm font-medium dark:border-white/15"
+        >
+          {handsFree ? 'Apagar manos libres' : 'Activar manos libres (cámara y voz)'}
+        </button>
+      )}
+
       {/* A wrong segment is marked, not deleted — see excludeSegment(). */}
       {closed.length > 0 && (
         <div className="rounded-2xl border p-4 dark:border-white/10">
@@ -603,6 +729,8 @@ export function JobTimer({ analysisId }: { analysisId?: string }) {
       </button>
 
       {error && <p className="text-sm text-red-600">{error}</p>}
+      </>
+      )}
     </div>
   );
 }

@@ -200,7 +200,9 @@ export async function POST(req: Request) {
       if (job && body.roomKey) {
         const room = findRoom(job.rooms, body.roomKey);
         if (!room) return NextResponse.json({ error: 'unknown_room' }, { status: 422 });
-        const extra = body.taskKey ? room.extras.find((e) => e.taskKey === body.taskKey) : undefined;
+        // Any object of the room the walkthrough saw — the paid extras on the
+        // buttons, and the rest by voice in hands-free mode.
+        const extra = body.taskKey ? room.tasks.find((e) => e.taskKey === body.taskKey) : undefined;
         if (body.taskKey && !extra) return NextResponse.json({ error: 'unknown_task' }, { status: 422 });
         await startRoom(loggedBy, room.type, extra?.label ?? body.task, {
           roomKey: room.key,
