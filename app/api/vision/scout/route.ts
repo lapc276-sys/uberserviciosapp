@@ -1,12 +1,12 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
-import { scoutRoom } from '@/lib/vision/scout';
+import { scoutRoom, sceneVerdict } from '@/lib/vision/scout';
 import { questionsForRoom, MAX_QUESTIONS_PER_ROOM } from '@/lib/vision/upsell';
 import { isDeepService } from '@/lib/vision/model';
 import { validateFrames } from '@/lib/vision/input';
 import { ROOM_TYPES, type RoomType } from '@/lib/vision/types';
 import { rateLimit, clientIp } from '@/lib/rate-limit';
-import { roomRemark } from '@/lib/vision/remarks';
+import { objectNoun, roomRemark } from '@/lib/vision/remarks';
 import { LANGS } from '@/lib/capture/lang';
 
 /**
@@ -38,6 +38,11 @@ const schema = z.object({
   serviceSlug: z.string().min(1),
   /** The walkthrough's language; the questions and the remark come back in it. */
   lang: z.enum(LANGS).optional(),
+  /**
+   * The customer is pointing at something the walkthrough missed ("¿me salté
+   * algo?"). The answer is what it is, not questions about it.
+   */
+  pointed: z.boolean().optional(),
 });
 
 /** Nothing to ask. Used for every failure, deliberately indistinguishable. */
@@ -57,8 +62,23 @@ export async function POST(req: Request) {
   // in that the other closed.
   if (validateFrames(frames) !== null) return NextResponse.json(SILENT);
 
-  const result = await scoutRoom(frames, roomType as RoomType);
+  const result = await scoutRoom(frames, roomType as RoomType, { pointed: parsed.data.pointed });
   if (!result.ok) return NextResponse.json(SILENT);
+
+  // Before a single question: is this the room at all? A car answered as a
+  // kitchen is where "ya vi el microondas" came from, so a room that is not
+  // there gets no questions and no remark — only the fact, to say out loud.
+  const verdict = sceneVerdict(roomType as RoomType, result.scene, result.sceneConfidence);
+  if (!verdict.matches) {
+    return NextResponse.json({ ...SILENT, scouted: true, mismatch: { saw: verdict.saw } });
+  }
+
+  if (parsed.data.pointed) {
+    const found = [...new Set(result.objects.filter((o) => o.confidence >= 0.5).map((o) => o.name))]
+      .map((name) => ({ name, label: objectNoun(name, roomType as RoomType, lang) }))
+      .filter((o): o is { name: string; label: string } => o.label !== null);
+    return NextResponse.json({ ...SILENT, scouted: true, found });
+  }
 
   // Room for the repair question, every depth question and the two tidying
   // ones. The depth list is already capped inside questionsForRoom; this

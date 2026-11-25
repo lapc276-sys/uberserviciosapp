@@ -233,7 +233,12 @@ export interface AnalyzerInput {
  */
 export interface VisionAnalyzer {
   readonly name: PropertyAnalysis['source'];
-  analyze(input: AnalyzerInput): Promise<{ rooms: RawRoomObservation[]; warnings: string[] }>;
+  analyze(input: AnalyzerInput): Promise<{
+    rooms: RawRoomObservation[];
+    warnings: string[];
+    /** Spaces whose frames showed no home at all — a car, a street. */
+    notAHome?: number;
+  }>;
 }
 
 export const EMPTY_SOIL: SoilScores = {

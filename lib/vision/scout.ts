@@ -1,5 +1,6 @@
 import {
   EMPTY_SOIL,
+  ROOM_TYPES,
   SOIL_DIMENSIONS,
   type DetectedDamage,
   type DetectedObject,
@@ -31,9 +32,17 @@ import { ISSUES, coerceConditions, type ObjectCondition } from './remarks';
 
 const MAX_SCOUT_FRAMES = 4;
 
-const SYSTEM_PROMPT = `You are looking at frames from one room of a home, captured seconds ago by someone walking through it with a phone.
+const SYSTEM_PROMPT = `You are looking at frames captured seconds ago by someone walking through a home with a phone.
 
-Your only job is to say what is physically in this room and how cluttered it is. Do NOT estimate time, price, or effort.
+Your only job is to say what is physically in front of the camera and how cluttered it is. Do NOT estimate time, price, or effort.
+
+FIRST, before anything else, say what the frames actually show, as "scene":
+- one of ${ROOM_TYPES.filter((t) => t !== 'other').join(', ')} — when they show that room of a home or office
+- "none" — when they do not show the inside of a home or office at all: the inside of a car, a street, a parking lot, a shop, a screen, a person, a hand over the lens
+- "unclear" — when they are too dark, too blurry or too close to tell
+and "sceneConfidence", 0.0-1.0.
+
+You will be told which room the person was ASKED to film. That is what they were asked, not proof of what is in the frames: people test this app in cars and offices. Never report an object because that room usually has one, or because you were told the room's name. If the scene is "none", report no objects, no damage and no clutter.
 
 List the objects you can actually see, using EXACTLY these names — anything else is discarded:
 
@@ -53,9 +62,15 @@ And count, roughly, three things you can see:
 ${damagePromptSection()}
 
 Respond ONLY with JSON:
-{"objects":[{"name":"oven","count":1,"confidence":0.0-1.0,"dirt":0,"issue":"grease"}],"clutter":0,"tidying":{"toClear":0,"elsewhere":0,"dishes":0},"damage":[{"kind":"cabinet","confidence":0.0-1.0}]}`;
+{"scene":"kitchen","sceneConfidence":0.0-1.0,"objects":[{"name":"oven","count":1,"confidence":0.0-1.0,"dirt":0,"issue":"grease"}],"clutter":0,"tidying":{"toClear":0,"elsewhere":0,"dishes":0},"damage":[{"kind":"cabinet","confidence":0.0-1.0}]}`;
+
+/** What the frames show, by the model's account, before any object is listed. */
+export type Scene = RoomType | 'none' | 'unclear';
 
 export interface ScoutResult {
+  /** "none" for a car or a street; "unclear" when it could not tell. */
+  scene: Scene;
+  sceneConfidence: number;
   objects: DetectedObject[];
   soil: SoilScores;
   /** What the questions about tidying and dishes are built from. */
@@ -68,11 +83,73 @@ export interface ScoutResult {
   ok: boolean;
 }
 
-const NOTHING: ScoutResult = { objects: [], soil: { ...EMPTY_SOIL }, ok: false };
+const NOTHING: ScoutResult = { scene: 'unclear', sceneConfidence: 0, objects: [], soil: { ...EMPTY_SOIL }, ok: false };
+
+/**
+ * Rooms whose objects are the expensive questions — the oven inside, the
+ * shower scrubbed — and which no other room can pass for. A pan of an office
+ * answered as a kitchen is how "I can see the microwave" got said in a car.
+ * A bedroom that turns out to be a study is still the same clean, and asking
+ * about it would only interrupt.
+ */
+const DISTINCTIVE = new Set<RoomType>(['kitchen', 'bathroom', 'laundry']);
+
+/** One open-plan space seen from different corners. */
+const OPEN_PLAN = new Set<RoomType>(['kitchen', 'dining_room', 'living_room']);
+
+/** Below this the model is unsure enough that saying so would be the insult. */
+export const MISMATCH_CONFIDENCE = 0.6;
+
+export interface SceneVerdict {
+  /** False when the walkthrough should stop and say what it saw. */
+  matches: boolean;
+  /** What was seen instead, when it does not match. */
+  saw?: RoomType | 'none';
+}
+
+/**
+ * Whether the room the person was asked to film is the room in the frames.
+ *
+ * Errs towards "matches": a false alarm stops somebody in their own kitchen
+ * to say it is not a kitchen, which is the one thing worse than a missed
+ * one. So "unclear" always passes, a different room only fails for the rooms
+ * nothing else can pass for, and every failure needs a confident model.
+ */
+export function sceneVerdict(asked: RoomType, scene: Scene, confidence: number): SceneVerdict {
+  if (scene === 'unclear' || confidence < MISMATCH_CONFIDENCE) return { matches: true };
+  if (scene === 'none') return { matches: false, saw: 'none' };
+  if (scene === asked || asked === 'other') return { matches: true };
+  // A Brooklyn kitchen is often a wall of the living room: a pan of it that
+  // reads as "living room" is the right room, not a wrong one.
+  if (OPEN_PLAN.has(asked) && OPEN_PLAN.has(scene)) return { matches: true };
+  if (!DISTINCTIVE.has(asked)) return { matches: true };
+  return { matches: false, saw: scene };
+}
 
 /** Exported for tests: what a model reply is allowed to become. */
+function coerceScene(value: unknown): Scene {
+  const s = String(value ?? '').trim().toLowerCase().replace(/\s+/g, '_');
+  if (s === 'none' || s === 'unclear') return s;
+  return (ROOM_TYPES as readonly string[]).includes(s) && s !== 'other' ? (s as RoomType) : 'unclear';
+}
+
 export function coerceScout(parsed: unknown): ScoutResult {
-  const raw = parsed as { objects?: unknown; clutter?: unknown; tidying?: unknown; damage?: unknown };
+  const raw = parsed as {
+    scene?: unknown;
+    sceneConfidence?: unknown;
+    objects?: unknown;
+    clutter?: unknown;
+    tidying?: unknown;
+    damage?: unknown;
+  };
+  // A reply without a scene is from before the question existed, or a model
+  // that skipped it: "unclear", which never stops anybody.
+  const scene = coerceScene(raw?.scene);
+  const sceneConfidence = Math.max(0, Math.min(Number(raw?.sceneConfidence) || 0, 1));
+  if (scene === 'none' && sceneConfidence >= MISMATCH_CONFIDENCE) {
+    // Nothing of a home in the frames: whatever it listed, it imagined.
+    return { scene, sceneConfidence, objects: [], soil: { ...EMPTY_SOIL }, conditions: [], ok: true };
+  }
   const objects = Array.isArray(raw?.objects)
     ? raw.objects
         .filter((o): o is Record<string, unknown> => typeof o === 'object' && o !== null)
@@ -95,6 +172,8 @@ export function coerceScout(parsed: unknown): ScoutResult {
   soil.clutter = Number.isFinite(clutter) ? Math.max(0, Math.min(100, Math.round(clutter))) : 0;
 
   return {
+    scene,
+    sceneConfidence,
     objects,
     soil,
     tidying: coerceTidying(raw?.tidying),
@@ -118,7 +197,7 @@ export function coerceScout(parsed: unknown): ScoutResult {
 export async function scoutRoom(
   frames: string[],
   roomType: RoomType,
-  options: { signal?: AbortSignal } = {},
+  options: { signal?: AbortSignal; pointed?: boolean } = {},
 ): Promise<ScoutResult> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey || frames.length === 0) return NOTHING;
@@ -142,7 +221,14 @@ export async function scoutRoom(
           {
             role: 'user',
             content: [
-              { type: 'text', text: `This is a ${roomType}. List what you can see in it.` },
+              {
+                type: 'text',
+                // Said as what was asked, never as a fact: "This is a kitchen"
+                // is how a car seat became a microwave.
+                text: options.pointed
+                  ? `The person was asked to point the camera at something in the ${roomType} that a walkthrough missed. Say the scene, then list only the object or objects at the centre of the frame.`
+                  : `The person was asked to film the ${roomType}. Say what the frames actually show, then list what you can see.`,
+              },
               ...looked.map((url) => ({
                 type: 'image_url' as const,
                 image_url: { url, detail: 'low' as const },

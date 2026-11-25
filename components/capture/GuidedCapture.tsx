@@ -8,6 +8,7 @@ import {
   buildPlan,
   captionFor,
   droppedNote,
+  joinList,
   estimateWalkSeconds,
   shortenedNote,
   wordsFor,
@@ -50,6 +51,8 @@ import {
   type SpeechRecognitionLike,
 } from '@/lib/speech';
 import { COPY } from '@/lib/capture/copy';
+import { POINTED_TITLE, POINTED_TITLE_EN, SAY_ROOM_CHECK, aRoom, theSpace } from '@/lib/capture/roomcheck';
+import type { RoomType } from '@/lib/vision/types';
 import {
   LANGS,
   LANG_NAMES,
@@ -360,6 +363,19 @@ export function GuidedCapture({
    * watching a spinner.
    */
   const [scouted, setScouted] = useState<Record<string, RoomQuestion[]>>({});
+  /**
+   * Spaces whose pan was not the room asked for — a car, an office where the
+   * kitchen should be. Filled by the scout; see lib/capture/roomcheck.ts.
+   * The value is what was seen instead.
+   */
+  const [mismatch, setMismatch] = useState<Record<string, RoomType | 'none'>>({});
+  const mismatchSaid = useRef<Set<string>>(new Set());
+  /** "¿Me salté algo?": which space to point in, while choosing. */
+  const [choosingMissed, setChoosingMissed] = useState(false);
+  /** What each pointed frame turned out to be, by step id. */
+  const [pointed, setPointed] = useState<
+    Record<string, { status: 'looking' | 'found' | 'unknown' | 'saved'; labels: string[] }>
+  >({});
   const [answers, setAnswers] = useState<Answers>({});
   /** Where the walkthrough resumes once the questions are answered. */
   const [gateNext, setGateNext] = useState<number | null>(null);
@@ -490,7 +506,26 @@ export function GuidedCapture({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ frames, roomType, serviceSlug, lang: langRef.current }),
         });
-        const { data } = await readJson<{ questions?: RoomQuestion[]; remark?: string | null }>(res);
+        const { data } = await readJson<{
+          questions?: RoomQuestion[];
+          remark?: string | null;
+          mismatch?: { saw: RoomType | 'none' };
+        }>(res);
+        // Not the room asked for: no questions and no remark about it — only
+        // the fact, said as the room is left (or shown at the review if the
+        // answer comes back later than that).
+        if (data?.mismatch?.saw) {
+          const saw = data.mismatch.saw;
+          setMismatch((prev) => ({ ...prev, [spaceKey]: saw }));
+          return;
+        }
+        // A re-filmed space that is now the right room clears the notice.
+        setMismatch((prev) => {
+          if (!(spaceKey in prev)) return prev;
+          const next = { ...prev };
+          delete next[spaceKey];
+          return next;
+        });
         if (data?.remark) remarksRef.current[spaceKey] = data.remark;
         // A broken thing belongs to THIS space, not to every bathroom: the
         // server only knows the room type, so the walkthrough names the place.
@@ -503,6 +538,39 @@ export function GuidedCapture({
       }
     },
     [serviceSlug],
+  );
+
+  /**
+   * What the customer pointed at, named back to them: "Veo la lavadora".
+   * Not awaited, never fatal — the frame goes to the analysis either way,
+   * captioned as something the walkthrough missed.
+   */
+  const identifyPointed = useCallback(
+    async (step: CaptureStep, frames: string[]) => {
+      setPointed((prev) => ({ ...prev, [step.id]: { status: 'looking', labels: [] } }));
+      try {
+        const res = await fetch('/api/vision/scout', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ frames, roomType: step.roomType, serviceSlug, lang: langRef.current, pointed: true }),
+        });
+        const { data } = await readJson<{ found?: { name: string; label: string }[]; scouted?: boolean }>(res);
+        const labels = (data?.found ?? []).map((f) => f.label);
+        if (labels.length) {
+          setPointed((prev) => ({ ...prev, [step.id]: { status: 'found', labels } }));
+          talk(SAY_ROOM_CHECK[langRef.current].found(joinList(labels, langRef.current)));
+        } else if (data?.scouted) {
+          setPointed((prev) => ({ ...prev, [step.id]: { status: 'unknown', labels: [] } }));
+          talk(SAY_ROOM_CHECK[langRef.current].unknown);
+        } else {
+          // Nobody looked (no model configured): kept for the analysis.
+          setPointed((prev) => ({ ...prev, [step.id]: { status: 'saved', labels: [] } }));
+        }
+      } catch {
+        setPointed((prev) => ({ ...prev, [step.id]: { status: 'saved', labels: [] } }));
+      }
+    },
+    [serviceSlug, talk],
   );
 
   const advanceRef = useRef<(action: 'capture' | 'skip', collected?: string[]) => void>(() => {});
@@ -534,7 +602,11 @@ export function GuidedCapture({
         // The pan is the only step that sees the whole room, so it is the one
         // worth asking the model about. Fired and not awaited.
         if (step.mode === 'pan') void scoutSpace(step.spaceKey, step.roomType, step.spaceLabel, frames);
+        if (step.pointed) void identifyPointed(step, frames);
       }
+
+      // Pointing at nothing after all: the step was never part of the plan.
+      if (action === 'skip' && step.pointed) setSteps((prev) => prev.filter((s) => s.id !== step.id));
 
       setError('');
 
@@ -559,7 +631,9 @@ export function GuidedCapture({
       // type, so the second bathroom's "¿la ducha a fondo?" was answered in the
       // first — stopping somebody to show them a card with nothing to answer,
       // and waiting for them to say "seguir", is the conversation stalling.
-      if (leavingSpace && pending?.some((q) => answers[q.id] === undefined)) {
+      // And a room that was not the room asked for stops here too, to say so
+      // while the person is still standing where they filmed it.
+      if (leavingSpace && (mismatch[step.spaceKey] || pending?.some((q) => answers[q.id] === undefined))) {
         setGateNext(next);
         setHeard('');
         setStage('questions');
@@ -580,7 +654,7 @@ export function GuidedCapture({
         setIndex(next);
       }
     },
-    [index, steps, grabFrame, stopStream, stopVoice, retakeOf, scouted, scoutSpace, answers, takeRemark, talk],
+    [index, steps, grabFrame, stopStream, stopVoice, retakeOf, scouted, scoutSpace, identifyPointed, mismatch, answers, takeRemark, talk],
   );
 
   /** Closes the question card and puts the walkthrough back where it was. */
@@ -629,8 +703,21 @@ export function GuidedCapture({
    * would undo that. Answered by touch, they are looking at the card already
    * and may want to change an answer, so the button is theirs to press.
    */
+  const gateSpace = stage === 'questions' ? steps[index] : undefined;
+  const gateMismatch = gateSpace ? mismatch[gateSpace.spaceKey] : undefined;
+
   useEffect(() => {
     if (stage !== 'questions') return;
+    if (gateSpace && gateMismatch && !mismatchSaid.current.has(gateSpace.spaceKey)) {
+      mismatchSaid.current.add(gateSpace.spaceKey);
+      talk(
+        SAY_ROOM_CHECK[langRef.current].mismatch(
+          gateMismatch,
+          theSpace(gateSpace.roomType, wordsFor(gateSpace, langRef.current).spaceLabel, langRef.current),
+        ),
+      );
+      return;
+    }
     if (openQuestion) {
       // The room's remark opens its first question: "La cocina se ve muy
       // bien… ¿Quieres que limpiemos el horno por dentro?"
@@ -647,7 +734,7 @@ export function GuidedCapture({
     // Keyed on the question, not the object: re-running for the same open
     // question would read it out again on every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stage, openQuestion?.id]);
+  }, [stage, openQuestion?.id, gateMismatch]);
 
   // ── The closing chat ───────────────────────────────────────────────────────
 
@@ -1100,6 +1187,106 @@ export function GuidedCapture({
     setError('');
   }
 
+  /** Forgets everything the scout said about a space. */
+  function forgetSpace(key: string) {
+    setMismatch((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+    setScouted((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+    delete remarksRef.current[key];
+    toldRemarks.current.delete(key);
+    mismatchSaid.current.delete(key);
+  }
+
+  /**
+   * Films a space again from its first step — the answer to "esto parece un
+   * coche" when the person simply was not in the kitchen yet.
+   */
+  function redoSpace(key: string) {
+    const first = steps.findIndex((s) => s.spaceKey === key);
+    if (first < 0) return;
+    setShots((prev) => prev.filter((s) => s.step.spaceKey !== key));
+    forgetSpace(key);
+    setGateNext(null);
+    setError('');
+    setStage('guiding');
+    setIndex(first);
+  }
+
+  /**
+   * Takes a space out of the walkthrough entirely — the answer to "esto parece
+   * una oficina" in an office with no kitchen. Its frames are discarded, so
+   * the price can never include it, and its steps go too, so the review does
+   * not list them as skipped.
+   */
+  function dropSpace(key: string) {
+    const resumeAt = gateNext ?? index + 1;
+    const removedBefore = steps.slice(0, resumeAt).filter((s) => s.spaceKey === key).length;
+    const remaining = steps.filter((s) => s.spaceKey !== key);
+    setShots((prev) => prev.filter((s) => s.step.spaceKey !== key));
+    forgetSpace(key);
+    setSteps(remaining);
+    if (stage !== 'questions') return;
+    const next = resumeAt - removedBefore;
+    setGateNext(null);
+    if (next >= remaining.length) {
+      stopStream();
+      stopVoice();
+      talk(SAY_CHAT[langRef.current].done);
+      setIndex(Math.max(0, remaining.length - 1));
+      setStage('review');
+    } else {
+      setStage('guiding');
+      setIndex(next);
+    }
+  }
+
+  /**
+   * "¿Me salté algo? Enséñamelo." One extra step, in the space it belongs to,
+   * captioned so the analysis knows the customer pointed at it. Runs through
+   * the retake path, so it comes back to the review when taken.
+   */
+  function pointAtMissed(space: { spaceKey: string; roomType: RoomType; spaceLabel: string; spaceLabelEn: string } | null) {
+    setChoosingMissed(false);
+    const n = steps.filter((s) => s.pointed).length + 1;
+    const where = space ?? {
+      spaceKey: `extra-${n}`,
+      roomType: 'other' as RoomType,
+      spaceLabel: COPY.es.otherSpot,
+      spaceLabelEn: COPY.en.otherSpot,
+    };
+    const step: CaptureStep = {
+      id: `${where.spaceKey}-pointed-${n}`,
+      spaceKey: where.spaceKey,
+      roomType: where.roomType,
+      spaceLabel: where.spaceLabel,
+      title: POINTED_TITLE,
+      spoken: SAY_ROOM_CHECK.es.point,
+      after: SAY_ROOM_CHECK.es.pointAfter,
+      en: {
+        title: POINTED_TITLE_EN,
+        spoken: SAY_ROOM_CHECK.en.point,
+        after: SAY_ROOM_CHECK.en.pointAfter,
+        spaceLabel: where.spaceLabelEn,
+      },
+      mode: 'settle',
+      frames: 1,
+      optional: true,
+      pointed: true,
+    };
+    // Right after its space's last step, so a space's frames stay together.
+    const last = steps.map((s) => s.spaceKey).lastIndexOf(where.spaceKey);
+    const at = last >= 0 ? last + 1 : steps.length;
+    setSteps([...steps.slice(0, at), step, ...steps.slice(at)]);
+    void retake(at);
+  }
+
   function setCount(key: string, delta: number) {
     setSelection((prev) => {
       const next = Math.max(0, Math.min((prev[key] ?? 0) + delta, MAX_SPACES));
@@ -1350,7 +1537,46 @@ export function GuidedCapture({
             in this room — see lib/vision/upsell.ts — because a question about
             an oven in a kitchen with no oven teaches the customer that the
             price is guesswork too. */}
-        {stage === 'questions' && gateNext !== null && (
+        {/* The room asked for is not the room in the frames: say what it
+            looks like instead, and let them re-film it or drop it. Dropped,
+            it is never priced — the answer to an office with no kitchen in
+            the middle of a pitch. */}
+        {stage === 'questions' && gateNext !== null && gateSpace && gateMismatch && (
+          <div className="space-y-3 rounded-2xl border-2 border-amber-500 bg-amber-50 p-4 dark:bg-amber-950/30" data-testid="room-mismatch">
+            <p className="flex items-start gap-2 text-base font-semibold text-amber-950 dark:text-amber-100">
+              <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
+              {copy.mismatchTitle(gateMismatch === 'none' ? null : aRoom(gateMismatch, lang))}
+            </p>
+            <p className="text-sm text-amber-900 dark:text-amber-200">
+              {copy.mismatchBody(theSpace(gateSpace.roomType, wordsFor(gateSpace, lang).spaceLabel, lang))}
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => redoSpace(gateSpace.spaceKey)}
+                className="min-h-[52px] rounded-xl bg-amber-600 px-2 text-sm font-semibold text-white"
+              >
+                {copy.redoSpace(wordsFor(gateSpace, lang).spaceLabel)}
+              </button>
+              <button
+                type="button"
+                onClick={() => dropSpace(gateSpace.spaceKey)}
+                className="min-h-[52px] rounded-xl border-2 border-amber-600 px-2 text-sm font-semibold text-amber-900 dark:text-amber-100"
+              >
+                {copy.dropSpace(wordsFor(gateSpace, lang).spaceLabel)}
+              </button>
+            </div>
+            <button
+              type="button"
+              onClick={resumeFromQuestions}
+              className="min-h-[40px] w-full text-sm text-amber-900/70 underline dark:text-amber-200/70"
+            >
+              {copy.keepAnyway}
+            </button>
+          </div>
+        )}
+
+        {stage === 'questions' && gateNext !== null && !gateMismatch && (
           <div className="space-y-3 rounded-2xl border-2 border-brand-500 bg-brand-50 p-4 dark:bg-brand-950/30">
             <p className="text-sm font-medium text-brand-900 dark:text-brand-200">
               {roomQuestions.length === 1 ? copy.oneQuestion : copy.someQuestions}
@@ -1599,15 +1825,54 @@ export function GuidedCapture({
           list.push(shot);
           bySpace.set(name, list);
         }
-        const skipped = steps.filter((st) => !shots.some((sh) => sh.step.id === st.id));
+        const skipped = steps.filter((st) => !st.pointed && !shots.some((sh) => sh.step.id === st.id));
 
         return (
           <div className="space-y-4">
-            {[...bySpace.entries()].map(([label, list]) => (
+            {[...bySpace.entries()].map(([label, list]) => {
+              const key = list[0].step.spaceKey;
+              const saw = mismatch[key];
+              const pan = steps.findIndex((st) => st.spaceKey === key && st.mode === 'pan');
+              const pointedHere = list.filter((sh) => sh.step.pointed);
+              return (
               <div key={label}>
                 <p className="mb-1.5 text-sm font-medium">
                   {label} <span className="text-slate-400">· {list.length}</span>
                 </p>
+                {/* The scout answered after the room was left: the same notice,
+                    here, where it can still be acted on. */}
+                {saw && stage === 'review' && (
+                  <div className="mb-2 rounded-xl border border-amber-400 bg-amber-50 p-3 text-sm dark:bg-amber-950/30" data-testid="late-mismatch">
+                    <p className="font-medium text-amber-950 dark:text-amber-100">
+                      {copy.lateMismatch(saw === 'none' ? null : aRoom(saw, lang))}
+                    </p>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {pan >= 0 && (
+                        <button type="button" onClick={() => retake(pan)} className="rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white">
+                          {copy.redoPan}
+                        </button>
+                      )}
+                      <button type="button" onClick={() => dropSpace(key)} className="rounded-lg border border-amber-600 px-3 py-1.5 text-xs font-semibold">
+                        {copy.dropSpace(label)}
+                      </button>
+                    </div>
+                  </div>
+                )}
+                {pointedHere.map((sh) => {
+                  const result = pointed[sh.step.id];
+                  if (!result) return null;
+                  return (
+                    <p key={sh.step.id} className="mb-1.5 text-xs text-slate-600 dark:text-slate-300" data-testid="pointed-result">
+                      {result.status === 'looking'
+                        ? copy.pointLooking
+                        : result.status === 'found'
+                          ? copy.pointFound(joinList(result.labels, lang))
+                          : result.status === 'unknown'
+                            ? copy.pointUnknown
+                            : copy.pointSaved}
+                    </p>
+                  );
+                })}
                 <div className="grid grid-cols-4 gap-2">
                   {list.map((shot) => (
                     <button
@@ -1629,7 +1894,50 @@ export function GuidedCapture({
                   ))}
                 </div>
               </div>
-            ))}
+              );
+            })}
+
+            {/* "¿Me salté algo?" — the customer knows the house; the script
+                does not. Pointing beats describing: the model then sees it. */}
+            {stage === 'review' && shots.length > 0 && (
+              <div className="rounded-xl border border-dashed p-3">
+                {!choosingMissed ? (
+                  <button
+                    type="button"
+                    onClick={() => setChoosingMissed(true)}
+                    className="inline-flex min-h-[44px] w-full items-center justify-center gap-2 text-sm font-semibold text-brand-700 dark:text-brand-300"
+                  >
+                    <Camera className="h-4 w-4" /> {copy.missedButton}
+                  </button>
+                ) : (
+                  <>
+                    <p className="text-sm font-medium">{copy.missedWhere}</p>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {[...new Map(shots.map((sh) => [sh.step.spaceKey, sh.step])).values()].map((st) => (
+                        <button
+                          key={st.spaceKey}
+                          type="button"
+                          onClick={() =>
+                            pointAtMissed({
+                              spaceKey: st.spaceKey,
+                              roomType: st.roomType,
+                              spaceLabel: st.spaceLabel,
+                              spaceLabelEn: st.en?.spaceLabel ?? st.spaceLabel,
+                            })
+                          }
+                          className="min-h-[40px] rounded-full border px-3 text-sm"
+                        >
+                          {wordsFor(st, lang).spaceLabel}
+                        </button>
+                      ))}
+                      <button type="button" onClick={() => pointAtMissed(null)} className="min-h-[40px] rounded-full border px-3 text-sm">
+                        {copy.otherSpot}
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
 
             {skipped.length > 0 && (
               <div className="rounded-xl border border-dashed p-3">

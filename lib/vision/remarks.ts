@@ -118,6 +118,11 @@ export function namedObjects(): string[] {
   return Object.keys(NOUN);
 }
 
+/** "la lavadora" / "the washer", or null for an object not worth naming. */
+export function objectNoun(name: string, room: RoomType, lang: Lang): string | null {
+  return nounFor(name, room, lang);
+}
+
 function nounFor(name: string, room: RoomType, lang: Lang): string | null {
   const entry = NOUN[name];
   if (!entry) return null;

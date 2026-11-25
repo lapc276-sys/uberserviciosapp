@@ -98,7 +98,7 @@ export async function POST(req: Request) {
     `[vision] start frames=${frames.length} captioned=${captions?.length ?? 0} payload=${payloadMb.toFixed(2)}MB engine=${analyzer.name}`,
   );
 
-  const { rooms, warnings } = await analyzer.analyze({ frames, captions, focus: parsed.data.focus, serviceSlug });
+  const { rooms, warnings, notAHome = 0 } = await analyzer.analyze({ frames, captions, focus: parsed.data.focus, serviceSlug });
   console.log(`[vision] done in ${Date.now() - started}ms rooms=${rooms.length}`);
 
   const analysis = buildAnalysis(rooms, {
@@ -111,8 +111,15 @@ export async function POST(req: Request) {
   if (analysis.rooms.length === 0) {
     return NextResponse.json(
       {
+        // "no_home": the frames showed something that is not a home — the
+        // inside of a car, an office with no kitchen. Said plainly instead of
+        // priced: a quote for a kitchen nobody filmed is the demo that ends a
+        // pitch. The page words it in the customer's language.
+        reason: notAHome > 0 ? 'no_home' : 'no_rooms',
         error:
-          'We couldn’t identify any rooms in that footage. Try a slower walkthrough with better lighting, or book with our quick questionnaire.',
+          notAHome > 0
+            ? 'That footage doesn’t show the inside of a home, so there is nothing to price.'
+            : 'We couldn’t identify any rooms in that footage. Try a slower walkthrough with better lighting, or book with our quick questionnaire.',
         warnings: analysis.warnings,
       },
       { status: 422 },

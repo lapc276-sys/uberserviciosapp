@@ -29,10 +29,13 @@ You receive still frames sampled from a walkthrough video of a home or business.
 
 Identify each DISTINCT physical room visible across the frames. Multiple frames often show the SAME room from different angles — do not double-count. Prefer under-reporting rooms over inventing them.
 
-Frames may be captioned. A caption looks like "[kitchen-1] kitchen — Dentro del microondas (Cocina)". When captions are present they are ground truth recorded at capture time, not guesses:
-- The bracketed id identifies the physical space. Every frame sharing an id is the SAME room. Report exactly one room per distinct id, no more and no fewer.
-- Use the caption's room type rather than inferring one from the pixels.
-- The Spanish text says what the camera was aimed at, so judge that surface. A frame captioned "Dentro del horno" is scored on the inside of the oven, not on the kitchen around it.
+Frames may be captioned. A caption looks like "[kitchen-1] kitchen — Dentro del microondas (Cocina)". It was recorded at capture time and says what the person was ASKED to film. It is reliable about which frames belong together, and is NOT proof of what is in them — people try this app in cars and offices:
+- The bracketed id identifies the physical space. Every frame sharing an id is the SAME room. Report exactly one entry per distinct id, no more and no fewer.
+- Give an entry the caption's room type when its frames are consistent with it; that is what stops four angles of one bathroom becoming two bathrooms. When the frames clearly show a different kind of room, report the type you see.
+- When an id's frames show no room of a home or office at all — the inside of a car, a street, a shop, a screen, darkness — report that entry with type "none" and no objects.
+- Never report an object because a caption names it or because that kind of room usually has one. A frame captioned "Dentro del horno" that shows a car seat contains no oven.
+- The Spanish text says what the camera was aimed at, so judge that surface. A frame captioned "Dentro del horno" that does show an oven is scored on the inside of the oven, not on the kitchen around it.
+- A frame captioned "Algo que faltaba, señalado por el cliente" is the customer pointing at something the walkthrough missed. If it is really there, count it in that room.
 - Score each room from all of its frames together. A close-up of clean countertops does not make the room clean if its floor frame is filthy.
 - An uncaptioned frame is an extra the person added; assign it to a captioned space if it clearly belongs to one, otherwise treat it as its own room.
 
@@ -78,7 +81,7 @@ Be conservative and evidence-based. If a frame is blurry, dark, or ambiguous, lo
 Respond ONLY with JSON matching:
 {"rooms":[{"type":"kitchen","confidence":0.0-1.0,"objects":[{"name":"oven","count":1,"confidence":0.0-1.0}],"materials":[{"name":"natural_stone","confidence":0.0-1.0}],"tidying":{"toClear":0,"elsewhere":0,"dishes":0},"damage":[{"kind":"cabinet","confidence":0.0-1.0}],"soil":{"dust":0,"grease":0,"stains":0,"clutter":0,"hair":0,"trash":0,"mold":0},"notes":"short observation"}],"warnings":["..."]}
 
-Valid room types: ${ROOM_TYPES.join(', ')}.`;
+Valid room types: ${ROOM_TYPES.join(', ')}, and "none" for frames that show no room of a home or office.`;
 
 function coerceRoomType(value: unknown): RoomType {
   const s = String(value ?? '').toLowerCase().replace(/\s+/g, '_');
@@ -98,9 +101,19 @@ function coerceSoil(raw: any): SoilScores {
  * Exported for tests: this is the gate every model reply passes through, and
  * what it lets in becomes minutes and money.
  */
-export function coerceObservations(parsed: any): { rooms: RawRoomObservation[]; warnings: string[] } {
-  const rawRooms = Array.isArray(parsed?.rooms) ? parsed.rooms : [];
-  const rooms: RawRoomObservation[] = rawRooms.slice(0, 30).map((r: any) => ({
+export function coerceObservations(parsed: any): {
+  rooms: RawRoomObservation[];
+  warnings: string[];
+  /** Spaces whose frames showed no home at all: a car, a street. Never priced. */
+  notAHome: number;
+} {
+  const all = Array.isArray(parsed?.rooms) ? parsed.rooms.slice(0, 30) : [];
+  // Checked before the type is coerced, because an unknown type becomes
+  // "other" — a priced room — and "a car" must become nothing.
+  const isNone = (r: any) => String(r?.type ?? '').trim().toLowerCase() === 'none';
+  const rawRooms = all.filter((r: any) => !isNone(r));
+  const notAHome = all.length - rawRooms.length;
+  const rooms: RawRoomObservation[] = rawRooms.map((r: any) => ({
     type: coerceRoomType(r?.type),
     confidence: Math.max(0, Math.min(Number(r?.confidence) || 0.5, 1)),
     objects: Array.isArray(r?.objects)
@@ -138,11 +151,21 @@ export function coerceObservations(parsed: any): { rooms: RawRoomObservation[]; 
     notes: typeof r?.notes === 'string' ? r.notes.slice(0, 280) : undefined,
   }));
 
-  const warnings = Array.isArray(parsed?.warnings)
+  const warnings: string[] = Array.isArray(parsed?.warnings)
     ? parsed.warnings.filter((w: any) => typeof w === 'string').slice(0, 5)
     : [];
 
-  return { rooms, warnings };
+  // Said, never silently dropped: somebody who filmed a car as their kitchen
+  // should read that the kitchen was not priced, not wonder why it is cheap.
+  if (notAHome > 0) {
+    warnings.push(
+      notAHome === 1
+        ? 'One space did not show the inside of a home and was not priced.'
+        : `${notAHome} spaces did not show the inside of a home and were not priced.`,
+    );
+  }
+
+  return { rooms, warnings, notAHome };
 }
 
 export const visionLlmAnalyzer: VisionAnalyzer = {
@@ -179,7 +202,7 @@ export const visionLlmAnalyzer: VisionAnalyzer = {
                 {
                   type: 'text',
                   text: captions?.length
-                    ? `Analyze these ${frames.length} captioned frames from a guided walkthrough. The captions were recorded as each shot was taken — trust them for room identity.`
+                    ? `Analyze these ${frames.length} captioned frames from a guided walkthrough. The captions were recorded as each shot was taken: trust them for which frames are one space, and the pictures for what is in it.`
                     : `Analyze these ${frames.length} frames from a property walkthrough.`,
                 },
                 // The customer's own words about what matters to them. It

@@ -500,6 +500,11 @@ export interface CaptureStep {
   /** Frames this step contributes. 1 for `settle`, more for a pan. */
   frames: number;
   optional: boolean;
+  /**
+   * Added at the review by the customer pointing at something the walkthrough
+   * missed ("¿me salté algo?"). Not part of any plan; see GuidedCapture.
+   */
+  pointed?: boolean;
 }
 
 /** A step's words in the walkthrough's language. Spanish fields are the canonical ones. */

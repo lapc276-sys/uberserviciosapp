@@ -235,6 +235,44 @@ Y lo que no está claro no es una respuesta: "no sé" o "sí, pero no el horno"
 dejan la pregunta abierta. Un "sí" mal oído suma minutos a la factura de
 alguien.
 
+### Al modelo nunca se le dice qué va a ver
+
+Probando en un coche, el recorrido pidió la cocina y el bot dijo "ya vi el
+microondas". La mirada rápida le decía al modelo *"This is a kitchen"*, y el
+análisis final le decía que los pies de foto eran la verdad y que usara su tipo
+de cuarto "en vez de los píxeles". Dicho que era una cocina, encontró una.
+
+Ahora:
+
+- **Primero la escena, después los objetos** (`lib/vision/scout.ts`). El
+  modelo dice qué muestran las imágenes (`scene`: un tipo de cuarto, `none`
+  para un coche o una calle, `unclear` si no se distingue) y solo entonces
+  lista. Con `none`, `coerceScout` tira todo lo que haya listado.
+- **`sceneVerdict` se equivoca a favor de no molestar**: `unclear` nunca para,
+  hace falta confianza ≥ 0,6, una cocina vista como sala es la misma cocina
+  (planta abierta), y un cuarto distinto solo cuenta para cocina, baño y
+  lavadero. Decirle a alguien en su cocina que no es una cocina es peor que no
+  avisar.
+- **Si no cuadra, no hay preguntas ni comentario**: el recorrido dice lo que
+  parece ("Esto parece una oficina, y yo buscaba la cocina") y deja
+  **repetirla** o **quitarla**. Quitada, sus fotos y sus pasos desaparecen: no
+  llega al precio. Si la respuesta llega tarde, el aviso sale en la revisión.
+- **En el análisis final los pies de foto agrupan, las imágenes deciden.** Un
+  `[kitchen-1]` que muestra un coche sale como `none` y no se cobra
+  (`notAHome`); si no queda ningún cuarto, la ruta responde `no_home` y la
+  página dice "no vi el interior de una casa" en vez de dar un precio.
+- **"¿Me salté algo? Enséñamelo"** en la revisión: el cliente apunta, la
+  mirada rápida dice qué es ("Veo la lavadora") y la foto va al análisis con el
+  pie "Algo que faltaba, señalado por el cliente". Se cobra si el modelo lo ve,
+  como todo.
+- **El modo demostración (sin `OPENAI_API_KEY`) se dice en pantalla.** Se
+  inventa una cocina a partir del número de fotos; nunca puede parecer una
+  cotización real.
+
+Lo que se ha probado es la lógica, con el modelo simulado
+(`tests/room-check.*`). Que GPT-4o reconozca un coche como `none` es el prompt,
+y solo se comprueba con la clave puesta y un coche de verdad.
+
 ### Los daños se preguntan, no se cobran
 
 `lib/vision/damage.ts`. Cuando el recorrido ve algo roto (pared, gabinete,
@@ -450,7 +488,10 @@ duplique, y que el detector no se active con el teléfono quieto.
 `conversation.spec.ts` comprueba que las respuestas (el horno por dentro, la
 reparación, la charla del final) llegan al precio y al mensaje, en vez de
 perderse por el camino como les pasaba en la página de las otras empresas.
-`english.spec.ts` recorre lo mismo en un teléfono en inglés. El resto de specs
+`english.spec.ts` recorre lo mismo en un teléfono en inglés.
+`room-check.spec.ts` comprueba que un cuarto que no estaba (un coche, una
+oficina) se puede quitar y entonces no llega al precio, que se puede repetir,
+y que lo que el cliente señala llega al análisis. El resto de specs
 corren con el navegador en `es-US` (`playwright.config.ts`): leen palabras en
 español de la pantalla, y el recorrido ahora habla el idioma del teléfono.
 

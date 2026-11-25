@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { MessageCircle, Loader2, Camera, ChevronDown } from 'lucide-react';
+import { MessageCircle, Loader2, Camera, ChevronDown, AlertTriangle } from 'lucide-react';
 import { GuidedCapture, type GuidedResult } from '@/components/capture/GuidedCapture';
 import { readJson } from '@/lib/http';
 import { services } from '@/lib/config/services';
@@ -43,6 +43,8 @@ interface Priced {
   recommendedPros?: number;
   /** False when the size is past anything actually quoted. */
   quoted?: boolean;
+  /** Priced by the stand-in that runs without a vision model. */
+  demo?: boolean;
 }
 
 const HOME_SERVICES = ['house-cleaning', 'deep-cleaning', 'move-out-cleaning'];
@@ -119,10 +121,26 @@ export function QuickQuote({ locale }: { locale: Locale }) {
       });
       const { data, failure } = await readJson<any>(res);
       if (failure || !data || !res.ok) {
+        // Filmed somewhere that is not a home — a car, an office. Said in
+        // their language, plainly: there is nothing to price, not an error.
+        if (data?.reason === 'no_home') {
+          setError(
+            locale === 'es'
+              ? 'En lo que grabaste no vi el interior de una casa, así que no hay nada que cotizar. Pruébalo dentro de una casa.'
+              : "I couldn't see the inside of a home in what you filmed, so there is nothing to price. Try it inside a home.",
+          );
+          return;
+        }
         setError(failure ?? data?.error ?? t.contactFormError);
         return;
       }
-      setPriced({ ...data.quote, estimatedMinutes: data.analysis?.totalMinutes });
+      setPriced({
+        ...data.quote,
+        estimatedMinutes: data.analysis?.totalMinutes,
+        // The stand-in that runs without a vision model invents a kitchen
+        // from the number of frames. It must never pass for a real look.
+        demo: data.analysis?.source === 'heuristic',
+      });
     } catch {
       setError(t.contactFormError);
     } finally {
@@ -193,6 +211,17 @@ export function QuickQuote({ locale }: { locale: Locale }) {
         </div>
       ) : priced ? (
         <div className="space-y-4">
+          {priced.demo && (
+            <p
+              className="flex items-start gap-2 rounded-xl bg-amber-50 p-3 text-sm font-medium text-amber-900 dark:bg-amber-950/30 dark:text-amber-200"
+              data-testid="demo-quote"
+            >
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              {locale === 'es'
+                ? 'Demostración: la IA que mira las fotos no está conectada, así que este precio no sale de lo que grabaste.'
+                : 'Demo: the AI that looks at the photos is not connected, so this price does not come from what you filmed.'}
+            </p>
+          )}
           <div>
             <p className="text-sm text-slate-500 dark:text-slate-400">{t.calcResult}</p>
             <p className="mt-1 text-4xl font-semibold tracking-tight">
@@ -245,6 +274,14 @@ export function QuickQuote({ locale }: { locale: Locale }) {
           >
             ← {locale === 'es' ? 'Volver al formulario' : 'Back to the form'}
           </button>
+          {/* A camera price that failed used to be invisible here — the form
+              below is where errors showed, and the form is hidden. "No vi una
+              casa" in particular has to be read where the camera was. */}
+          {error && (
+            <p className="rounded-xl bg-red-50 p-3 text-sm text-red-700 dark:bg-red-950/30 dark:text-red-300" data-testid="camera-error">
+              {error}
+            </p>
+          )}
           {/* The page's language is the walkthrough's starting language; the
               walkthrough still lets them switch. */}
           <GuidedCapture onComplete={priceFromCamera} locale={locale} />

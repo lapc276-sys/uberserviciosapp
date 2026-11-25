@@ -59,6 +59,23 @@ export interface CaptureCopy {
   no: string;
   carryOn: string;
   unansweredStandard: string;
+  // The room in the frames is not the room asked for (lib/capture/roomcheck.ts)
+  /** `saw` is "una oficina" / "an office", or null for "not a home at all". */
+  mismatchTitle: (saw: string | null) => string;
+  mismatchBody: (space: string) => string;
+  redoSpace: (label: string) => string;
+  dropSpace: (label: string) => string;
+  keepAnyway: string;
+  lateMismatch: (saw: string | null) => string;
+  redoPan: string;
+  // Pointing at something missed
+  missedButton: string;
+  missedWhere: string;
+  otherSpot: string;
+  pointLooking: string;
+  pointFound: (things: string) => string;
+  pointUnknown: string;
+  pointSaved: string;
   // Review
   reviewTitle: string;
   reviewIntro: string;
@@ -129,6 +146,21 @@ export const COPY: Record<Lang, CaptureCopy> = {
     no: 'No',
     carryOn: 'Seguir',
     unansweredStandard: 'Lo que no contestes se queda como en una limpieza normal',
+    mismatchTitle: (saw) => (saw ? `Esto parece ${saw}` : 'Esto parece estar fuera de una casa'),
+    mismatchBody: (space) =>
+      `Buscaba ${space}. Si te equivocaste de sitio, repítelo. Si aquí no hay, quítalo: lo que no veo, no lo cobro.`,
+    redoSpace: (label) => `Repetir ${label.toLowerCase()}`,
+    dropSpace: (label) => `Quitar ${label.toLowerCase()}`,
+    keepAnyway: 'Dejarlo así',
+    lateMismatch: (saw) => (saw ? `Esto no parece lo que pedí: parece ${saw}.` : 'Esto parece estar fuera de una casa.'),
+    redoPan: 'Repetir la vista general',
+    missedButton: '¿Me salté algo? Enséñamelo',
+    missedWhere: '¿En qué espacio está?',
+    otherSpot: 'Otro sitio',
+    pointLooking: 'Mirando qué es…',
+    pointFound: (things) => `Señalado: ${things}`,
+    pointUnknown: 'No lo reconocí: escríbelo en la nota del final.',
+    pointSaved: 'Guardado: se mira en el análisis.',
     reviewTitle: '¿Está todo?',
     reviewIntro: 'Esto es lo que tengo. Toca cualquier foto para repetirla, o añade un espacio que falte.',
     skipped: (n) => `Te saltaste ${n}:`,
@@ -204,6 +236,21 @@ export const COPY: Record<Lang, CaptureCopy> = {
     no: 'No',
     carryOn: 'Continue',
     unansweredStandard: 'Anything you leave unanswered stays as in a standard clean',
+    mismatchTitle: (saw) => (saw ? `This looks like ${saw}` : 'This looks like it is outside a home'),
+    mismatchBody: (space) =>
+      `I was looking for ${space}. If you were in the wrong spot, film it again. If there isn't one here, remove it: I don't charge for what I can't see.`,
+    redoSpace: (label) => `Film the ${label.toLowerCase()} again`,
+    dropSpace: (label) => `Remove the ${label.toLowerCase()}`,
+    keepAnyway: 'Keep it anyway',
+    lateMismatch: (saw) => (saw ? `This doesn't look like what I asked for: it looks like ${saw}.` : 'This looks like it is outside a home.'),
+    redoPan: 'Film the overview again',
+    missedButton: 'Did I miss something? Show me',
+    missedWhere: 'Which space is it in?',
+    otherSpot: 'Another spot',
+    pointLooking: 'Looking at what it is…',
+    pointFound: (things) => `Pointed out: ${things}`,
+    pointUnknown: "I didn't recognise it: write it in the note at the end.",
+    pointSaved: 'Saved: it is looked at in the analysis.',
     reviewTitle: 'Is that everything?',
     reviewIntro: 'This is what I have. Tap any picture to retake it, or add a space that is missing.',
     skipped: (n) => `You skipped ${n}:`,
