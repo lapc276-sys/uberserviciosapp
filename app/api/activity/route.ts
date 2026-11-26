@@ -1,8 +1,6 @@
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
 import { z } from 'zod';
-import { PRO_SESSION_COOKIE, verifyProSession } from '@/lib/pro-auth';
-import { SESSION_COOKIE, verifySessionToken } from '@/lib/auth';
+import { whoIsLogging, type Who } from '@/lib/activity/who';
 import {
   addQualityCheck,
   cancelSession,
@@ -48,24 +46,6 @@ import { ROOM_TYPES } from '@/lib/vision/types';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-
-interface Who {
-  loggedBy: string;
-  proId?: string;
-  email: string;
-  name?: string;
-}
-
-async function whoIsLogging(): Promise<Who | null> {
-  const jar = await cookies();
-  const [pro, admin] = await Promise.all([
-    verifyProSession(jar.get(PRO_SESSION_COOKIE)?.value),
-    verifySessionToken(jar.get(SESSION_COOKIE)?.value),
-  ]);
-  if (pro?.email) return { loggedBy: pro.email, proId: pro.proId, email: pro.email, name: pro.name };
-  if (admin?.email) return { loggedBy: admin.email, email: admin.email };
-  return null;
-}
 
 const schema = z.object({
   action: z.enum(['start', 'room', 'pause', 'end', 'cancel', 'exclude']),

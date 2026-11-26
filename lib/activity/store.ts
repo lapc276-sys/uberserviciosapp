@@ -269,6 +269,16 @@ export async function openSession(loggedBy: string): Promise<Session | null> {
   return row ? fromRow(row) : null;
 }
 
+/** Who logged a session, open or closed: the owner of everything recorded in it. */
+export async function sessionLoggedBy(sessionId: string): Promise<string | null> {
+  if (!sessionId || sessionId.length > 64) return null;
+  if (!isDbConfigured || !prisma) return memory.find((s) => s.id === sessionId)?.loggedBy ?? null;
+  const row = await prisma.activitySession
+    .findUnique({ where: { id: sessionId }, select: { loggedBy: true } })
+    .catch(() => null);
+  return row?.loggedBy ?? null;
+}
+
 export async function startSession(
   loggedBy: string,
   label?: string,

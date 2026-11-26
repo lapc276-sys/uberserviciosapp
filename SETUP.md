@@ -348,10 +348,12 @@ vez por reserva) y las campañas cada martes.
 
 Solo hace falta si el equipo graba con **manos libres** en `/pilot/tiempo`.
 Sin este paso todo funciona igual: los tiempos se guardan, y el video se queda
-en el teléfono con un botón para guardarlo al terminar.
+en el teléfono con un botón para guardarlo al terminar (un archivo .zip que
+luego se puede subir con el Paso 13).
 
-Una hora de trabajo grabada pesa unos 150–350 MB. El teléfono la sube
-directamente a R2 en partes de 30 segundos; no pasa por Replit.
+Una hora de trabajo grabada pesa hasta unos 350 MB. El teléfono la sube
+directamente a R2 en partes de 30 segundos que se reproducen solas; no pasa
+por Replit. Cómo se guarda todo y por qué: `docs/DATOS.md`.
 
 1. **[dash.cloudflare.com](https://dash.cloudflare.com)** → **R2** → **Create bucket** → nombre `klaudy-trabajos`.
 2. En el bucket → **Settings** → **CORS policy** → **Edit**, y pega esto (cambia la dirección por la tuya):
@@ -385,6 +387,46 @@ directamente a R2 en partes de 30 segundos; no pasa por Replit.
 
 ---
 
+## Paso 13 — Procesar los videos (pipeline de datos) · Gratis · ~20 min
+
+Solo hace falta cuando ya hay videos (Paso 12). Revisa cada grabación (que
+no falte ninguna parte y que los bytes sean los que grabó el teléfono), saca
+fotogramas con su hora exacta, resume el movimiento, y prepara los datasets
+para entrenar. Es Python, vive en la carpeta `pipeline/` y usa la misma base
+de datos y el mismo bucket que la app: **no hay Secrets nuevos**.
+
+1. En Replit, en la pestaña **Shell**:
+   ```bash
+   pip install -r pipeline/requirements.txt
+   ```
+   Y en **Tools → Dependencies → System**, añade el paquete `ffmpeg`.
+2. Compruébalo: procesa lo que esté pendiente y termina.
+   ```bash
+   cd pipeline && python -m klaudy_pipeline run --once
+   ```
+   Escribe una línea por trabajo hecho (`"ok": true`).
+3. **Deployments → Scheduled**, dos tareas:
+   - cada 5 minutos: `cd pipeline && python -m klaudy_pipeline run --once`
+   - cada hora: `cd pipeline && python -m klaudy_pipeline sweep`
+4. Cuando quieras un dataset:
+   ```bash
+   cd pipeline && python -m klaudy_pipeline export trabajos --description "primer corte"
+   ```
+   Queda en el bucket, en `datasets/trabajos/v1/`, y la próxima vez será `v2`.
+
+Otras órdenes, para cuando hagan falta:
+
+- `ingest-zip archivo.zip` — sube un video que se quedó en el teléfono.
+- `delete-recording <id> --reason "lo pidió"` — borra una grabación entera.
+- `withdraw-consent <workerId>` — saca a una persona de los datasets siguientes.
+- `purge --older-than-days 365` — dice qué borraría por antigüedad; con
+  `--apply` lo borra. Nada se borra solo.
+
+✅ **Resultado:** después de un trabajo con manos libres, a los ~10 minutos
+la grabación tiene sus fotogramas y su revisión hechas.
+
+---
+
 ## ✅ Checklist final
 
 | Paso | Cuenta | Variable(s) | ¿Listo? |
@@ -402,6 +444,7 @@ directamente a R2 en partes de 30 segundos; no pasa por Replit.
 | 10b | Messenger / Instagram | `META_VERIFY_TOKEN`, `META_PAGE_TOKEN`, `META_APP_SECRET` | ☐ |
 | 11 | Tareas programadas | `CRON_SECRET`, `CRON_TARGET_URL` | ☐ |
 | 12 | Videos del equipo (R2) | `STORAGE_S3_ENDPOINT`, `STORAGE_S3_BUCKET`, `STORAGE_S3_ACCESS_KEY_ID`, `STORAGE_S3_SECRET_ACCESS_KEY` | ☐ |
+| 13 | Pipeline de datos | — (usa las del 2 y el 12) | ☐ |
 
 Todas van en **Replit → Secrets**, y después de cada tanda: **volver a publicar**.
 

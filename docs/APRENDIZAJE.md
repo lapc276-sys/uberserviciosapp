@@ -387,17 +387,20 @@ Se alimenta, por orden de importancia hoy:
 **Un cuarto con `redo` no cuenta para el ritmo de nadie.** Rápido y mal no
 cuenta como rápido.
 
-### `JobRecording` — NUEVA (25 nov)
+### `JobRecording` y la capa cruda — NUEVAS (25–26 nov)
 
-El video de un trabajo grabado con manos libres.
+El video de un trabajo grabado con manos libres, con todo lo necesario para
+fiarse de él dentro de un año: cada parte de 30 s (`VideoSegment`) con su
+huella SHA-256, los sensores de movimiento (`SensorChunk`), cada
+interrupción (`RecordingEvent`) y los dos consentimientos
+(`RecordingConsent`).
 
-| Campo | Para qué |
-|---|---|
-| `sessionId` | De qué trabajo. |
-| `startedAt` | El segundo 0 del video, **en el mismo reloj que los cuartos**. Inicio de un cuarto − esto = dónde empieza en el video (`videoOffsetSeconds()`). |
-| `mimeType`, `chunkSeconds` | Formato y duración de cada parte (30 s). |
-| `storagePrefix` | Dónde están las partes en el almacenamiento; vacío si el video se quedó en el teléfono. |
-| `chunkIndexes`, `kilobytes` | Qué partes llegaron. Un hueco es un trozo de película perdido, no un tiempo perdido: los tiempos salen de los cuartos. |
+`startedAt` es el segundo 0 del video **en el mismo reloj que los cuartos**:
+inicio de un cuarto − esto = dónde empieza en el video (`videoOffsetMs()`).
+Un hueco en el video es un trozo de película perdido, no un tiempo perdido:
+los tiempos salen de los cuartos.
+
+Diseño completo, pipeline de procesado y datasets: **`docs/DATOS.md`**.
 
 ### El perfil — calculado, no guardado
 
@@ -564,10 +567,23 @@ aprende de basura.
 - Probado con cámara falsa: órdenes, subida de 3 partes, y el video guardado
   en el teléfono se reproduce entero (VP8, 640×480).
 
-**Falta del video:** el paso 2 (cortar el video por objeto con la IA y sacar
-el antes y el después), el paso 3 (pantalla para confirmar la línea de
-tiempo) y medirlo con un teléfono de verdad: batería, calor, y si la voz se
-entiende con la aspiradora encendida.
+**Datos para entrenar (paso 2 del video).** ✅ **Construido el 26 nov 2026.**
+`docs/DATOS.md`.
+
+- Partes de video **independientes** (cada una se reproduce sola), H.264
+  donde el teléfono lo ofrece, cada una con su SHA-256.
+- Sensores de movimiento del teléfono, reloj sincronizado con el servidor,
+  registro de interrupciones, pausa de privacidad, recuperación si la página
+  muere, y ZIP si no hay nube.
+- Consentimiento del limpiador (una vez) y del cliente (cada trabajo) antes
+  de grabar: fontanería técnica, el texto lo revisará un abogado.
+- Pipeline en Python (`pipeline/`): valida cada grabación, saca fotogramas
+  con su hora exacta, resume el movimiento y exporta datasets versionados.
+
+**Falta del video:** reconocer la actividad con un modelo y sacar el antes y
+el después, la pantalla para que una persona corrija etiquetas, la app
+nativa de Android para jornadas largas, y medirlo con un teléfono de verdad:
+batería, calor, y si la voz se entiende con la aspiradora encendida.
 
 **Fase 2 — El perfil.** Cuando haya ~2 trabajos por persona.
 

@@ -7,8 +7,10 @@ import type { Session, Segment, SessionSpan } from '@/lib/activity/store';
 import type { JobRoom } from '@/lib/workers/job';
 import type { DurationEstimate } from '@/lib/workers/pace';
 import type { JobVoiceAction } from '@/lib/workers/voice';
-import { HandsFree, unlockAudio, type HandsFreeHandle, type RecordingSummary } from './HandsFree';
-import { downloadRecording, forgetRecording } from './recordingStore';
+import { HandsFree, unlockAudio, type HandsFreeHandle, type HandsFreeSetup, type RecordingSummary } from './HandsFree';
+import { HandsFreeConsent } from './HandsFreeConsent';
+import { Leftovers } from './Leftovers';
+import { exportRecording, forgetRecording } from './recordingStore';
 
 /**
  * The job timer, as it is actually used: one hand, often a glove, in a
@@ -130,10 +132,15 @@ export function JobTimer({ analysisId }: { analysisId?: string }) {
   const [leaving, setLeaving] = useState(false);
   const [redoRooms, setRedoRooms] = useState<string[] | null>(null);
   const [otherRooms, setOtherRooms] = useState(false);
-  // Hands-free: the phone on the head or chest films, the voice marks.
-  const [handsFree, setHandsFree] = useState(false);
+  // Hands-free: the phone on the head or chest films, the voice marks. On
+  // once both consents are in (HandsFreeConsent); asking = that screen is up.
+  const [hfSetup, setHfSetup] = useState<HandsFreeSetup | null>(null);
+  const [askingHf, setAskingHf] = useState(false);
+  const handsFree = hfSetup !== null;
   const [recording, setRecording] = useState<RecordingSummary | null>(null);
   const [savedNote, setSavedNote] = useState('');
+  // Bumped to look for video an earlier page left on the phone.
+  const [scanKey, setScanKey] = useState(0);
   const hfRef = useRef<HandsFreeHandle>(null);
   // The job's names, kept for the summary after the job closes.
   const lastJob = useRef<JobView | null>(null);
@@ -266,7 +273,9 @@ export function JobTimer({ analysisId }: { analysisId?: string }) {
                 <button
                   type="button"
                   onClick={async () => {
-                    const n = await downloadRecording(recording.recordingId, `trabajo-${new Date().toISOString().slice(0, 10)}`);
+                    // A ZIP with every segment, the motion data and a
+                    // manifest: the same unit an upload would have made.
+                    const n = await exportRecording(recording.recordingId, `trabajo-${new Date().toISOString().slice(0, 10)}`);
                     setSavedNote(n ? 'Guardado. Cuando lo tengas a salvo, libera el espacio.' : 'No quedaba video en el teléfono.');
                   }}
                   className="mt-3 min-h-[48px] w-full rounded-xl border-2 font-semibold dark:border-white/20"
@@ -300,6 +309,9 @@ export function JobTimer({ analysisId }: { analysisId?: string }) {
             setDone(null);
             setRecording(null);
             setSavedNote('');
+            // Whatever of that video is still on the phone shows up, or
+            // uploads, in the card on the next screen.
+            setScanKey((k) => k + 1);
             void send(null);
           }}
           className="min-h-[56px] w-full rounded-xl border-2 text-base font-semibold dark:border-white/20"
@@ -316,6 +328,7 @@ export function JobTimer({ analysisId }: { analysisId?: string }) {
     const estimate = state.estimate;
     return (
       <div className="space-y-5">
+        <Leftovers scanKey={scanKey} />
         {job && (
           <div className="rounded-2xl border p-5 dark:border-white/10">
             <h2 className="font-semibold">Este trabajo</h2>
@@ -362,11 +375,11 @@ export function JobTimer({ analysisId }: { analysisId?: string }) {
           </div>
         </div>
 
-        {job && (
+        {job && !askingHf && (
           <button
             type="button"
             aria-pressed={handsFree}
-            onClick={() => setHandsFree(!handsFree)}
+            onClick={() => (handsFree ? setHfSetup(null) : setAskingHf(true))}
             className={`w-full rounded-2xl border-2 p-4 text-left ${
               handsFree ? 'border-red-400 bg-red-50 dark:border-red-800 dark:bg-red-950/30' : 'dark:border-white/15'
             }`}
@@ -380,6 +393,15 @@ export function JobTimer({ analysisId }: { analysisId?: string }) {
               “horno”, “baño dos”, “termino”.
             </span>
           </button>
+        )}
+        {job && askingHf && (
+          <HandsFreeConsent
+            onReady={(setup) => {
+              setHfSetup(setup);
+              setAskingHf(false);
+            }}
+            onCancel={() => setAskingHf(false)}
+          />
         )}
 
         <button
@@ -459,12 +481,12 @@ export function JobTimer({ analysisId }: { analysisId?: string }) {
   // Rendered above both the working view and the leaving question, so the
   // camera keeps filming while she answers "¿hubo que repetir algo?".
   const handsFreeEl =
-    handsFree && job ? <HandsFree ref={hfRef} rooms={job.rooms} current={open} onAction={onVoice} /> : null;
+    hfSetup && job ? <HandsFree ref={hfRef} rooms={job.rooms} current={open} onAction={onVoice} setup={hfSetup} /> : null;
 
   const stopFilming = async () => {
     const summary = (await hfRef.current?.stop()) ?? null;
     if (summary) setRecording(summary);
-    setHandsFree(false);
+    setHfSetup(null);
   };
 
   // ── Leaving: one question, so a fast room that was redone is not fast ────
@@ -545,6 +567,7 @@ export function JobTimer({ analysisId }: { analysisId?: string }) {
       {handsFreeEl}
       {leavingView ?? (
       <>
+      <Leftovers scanKey={scanKey} />
       {state.otherJob && (
         <div className="rounded-2xl border-2 border-amber-400 bg-amber-50 p-4 dark:bg-amber-950/30">
           <p className="text-sm font-medium text-amber-900 dark:text-amber-200">
@@ -671,16 +694,21 @@ export function JobTimer({ analysisId }: { analysisId?: string }) {
         moviendo muebles. Ese tiempo cuenta igual, pero no es de un cuarto.
       </p>
 
-      {job && (
+      {job && askingHf && (
+        <HandsFreeConsent
+          onReady={(setup) => {
+            setHfSetup(setup);
+            setAskingHf(false);
+          }}
+          onCancel={() => setAskingHf(false)}
+        />
+      )}
+      {job && !askingHf && (
         <button
           type="button"
           onClick={async () => {
-            if (handsFree) {
-              await stopFilming();
-            } else {
-              unlockAudio();
-              setHandsFree(true);
-            }
+            if (handsFree) await stopFilming();
+            else setAskingHf(true);
           }}
           className="min-h-[48px] w-full rounded-xl border-2 text-sm font-medium dark:border-white/15"
         >

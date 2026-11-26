@@ -433,9 +433,11 @@ se puede tocar, así que cada cuarto **y cada objeto** se marca diciéndolo
 - **Los bytes van del teléfono al almacenamiento** con una URL firmada
   (`lib/storage/s3.ts`, SigV4 sin SDK, probado contra el ejemplo publicado de
   AWS). El servidor nunca los recibe. Sin las cuatro variables `STORAGE_S3_*`
-  el video se queda en el teléfono y se descarga al final.
-- **El segundo 0 del video es la hora del servidor**, el mismo reloj que los
-  cuartos: inicio del cuarto − inicio de la grabación = dónde está en el video.
+  el video se queda en el teléfono y se guarda al final como ZIP.
+- **El segundo 0 del video está en la hora del servidor**, el mismo reloj que
+  los cuartos: inicio del cuarto − inicio de la grabación = dónde está en el
+  video. El teléfono mide con su reloj monotónico y una corrección medida
+  contra el servidor (`lib/recording/format.ts`).
 - **Esto no es el archivo de fotogramas del cliente.** `VISION_ARCHIVE_MODE`
   sigue apagado con sus tres puertas; esto es video del equipo en su trabajo,
   en su propia tabla (`JobRecording`).
@@ -443,6 +445,42 @@ se puede tocar, así que cada cuarto **y cada objeto** se marca diciéndolo
 Los umbrales del video (480p, 15 fps, 0,8 Mbit/s, partes de 30 s) están
 puestos, no medidos en un teléfono de verdad: batería y calor en 3 horas están
 por medir.
+
+### Lo crudo no se toca; lo que se concluye va al lado
+
+`docs/DATOS.md`. El video, los sensores, los eventos y lo que declaró el
+limpiador son la capa **cruda**: se escriben una vez y no se editan. Todo lo
+que alguien concluye de ellos va **al lado**, con autor y versión.
+
+- **Cada parte de video es un archivo completo.** Un `MediaRecorder` nuevo
+  cada 30 s, con 300 ms de solape (`components/pilot/capture.ts`). El
+  `timeslice` de un solo grabador, que era lo de antes, da trozos de UN archivo
+  donde solo el primero tiene cabecera: perder el 3 arruinaba del 4 en
+  adelante. No vuelvas a él.
+- **Un recibo se escribe una vez** (`recordPiece`). Uno repetido con otra huella
+  se anota como `piece_conflict`, nunca se aplica.
+- **Los eventos son idempotentes por `seq`**: se reenvían sin miedo (reintento,
+  `sendBeacon` al cerrar, recuperación al día siguiente).
+- **La recuperación no toca grabaciones vivas**: ni las de esta página
+  (`ACTIVE_RECORDINGS`) ni las de otra pestaña (latido de menos de 3 min).
+  Recuperar una grabación en marcha la cerraría a mitad de trabajo.
+- **Sin los dos consentimientos no se graba**, y lo decide el servidor, no la
+  pantalla. El texto está versionado: cambiarlo obliga a pedirlo otra vez.
+- **El pipeline (`pipeline/`, Python) no escribe bajo `recordings/`**, salvo al
+  importar un ZIP cuyas huellas coinciden con las del teléfono. Sus salidas
+  llevan `PIPELINE_VERSION`; si cambias lo que produce un paso, súbela.
+- **Los hallazgos de calidad nombran defectos, no los arreglan.** Un hueco
+  explicado por una pausa de privacidad es `info`; uno sin explicación,
+  `warning`. Se resuelven con `resolvedAt`, no se borran.
+- **Corregir una etiqueta es una fila nueva** con `supersedesId`; la de la
+  máquina sobrevive.
+- **`lib/recording/format.ts` y `pipeline/klaudy_pipeline/formats.py` son
+  espejo** (nombres de piezas, formato de sensores). Cambia los dos o ninguno.
+- **Nada se borra solo.** `purge` sin `--apply` solo cuenta.
+
+Pruebas: `npx tsx --test tests/recordings.test.ts` y, con `DATABASE_URL`,
+`pipeline/.venv/bin/python -m pytest pipeline/tests` (crea y borra su propio
+esquema; no toca las tablas de la app).
 
 ## Convenciones
 
@@ -494,7 +532,16 @@ oficina) se puede quitar y entonces no llega al precio, que se puede repetir,
 y que lo que el cliente señala llega al análisis. El resto de specs
 corren con el navegador en `es-US` (`playwright.config.ts`): leen palabras en
 español de la pantalla, y el recorrido ahora habla el idioma del teléfono.
+`hands-free.spec.ts` graba un trabajo con manos libres sin bucket: que no se
+graba nada antes de marcar el consentimiento del cliente, que la pausa de
+privacidad parte el video en dos archivos y queda en el registro, y que el
+ZIP lleva exactamente los bytes que el teléfono firmó. Necesita el login de
+admin (`ADMIN_EMAIL`/`ADMIN_PASSWORD`, del entorno o de `.env.local`); sin
+él se salta.
 
 Si tocas `lib/capture/scene.ts`, `lib/capture/guide.ts` o
 `components/capture/GuidedCapture.tsx`, **ejecútalos**. Un fallo ahí no aparece
-en pantalla: aparece en la cocina de un cliente.
+en pantalla: aparece en la cocina de un cliente. Lo mismo con
+`components/pilot/capture.ts`, `HandsFree.tsx` y `recordingStore.ts`: un fallo
+ahí es película perdida, y no se ve hasta que alguien busca un video que no
+está.

@@ -1,36 +1,43 @@
 'use client';
 
 import { useEffect, useImperativeHandle, useRef, useState, type Ref } from 'react';
-import { Mic, MicOff, CloudUpload, Smartphone } from 'lucide-react';
+import { Mic, MicOff, CloudUpload, Smartphone, Pause, Play, BatteryLow } from 'lucide-react';
 import type { JobRoom } from '@/lib/workers/job';
+import type { CaptureConfig } from '@/lib/activity/recordings';
 import { parseJobVoice, type JobVoiceAction } from '@/lib/workers/voice';
-import { chunksOf, deleteChunk, putChunk } from './recordingStore';
+import {
+  ACTIVE_RECORDINGS,
+  deviceInfo,
+  digest,
+  EventLog,
+  isQuotaError,
+  post,
+  SegmentRecorder,
+  SensorRecorder,
+  sensorsUnavailable,
+  syncClock,
+  telemetry,
+  uploadPieces,
+  watchPressure,
+  type CapturedSegment,
+  type CapturedSensors,
+} from './capture';
+import { eventsOf, forgetRecording, piecesOf, putPiece, putRecording, updateRecording } from './recordingStore';
 
 /**
  * Hands-free timing: the phone strapped to the head or chest films the job,
  * and the cleaner marks each room and object by saying its name.
  *
- * Three decisions shape it.
- *
  * It answers with beeps and vibration, never with speech. A phone that said
  * "horno" back would hear itself say "horno" — the same trap the walkthrough
  * avoids (CLAUDE.md, "Nada de lo que dice el bot puede ser una respuesta").
  *
- * Every 30-second piece of video is written to the phone first and deleted
- * only once the bucket confirms it, so a basement with no signal delays the
- * upload instead of losing the film.
- *
- * And the video is 480p at 15 frames a second, ~0.8 Mbit/s. Recognising
- * "she is cleaning the oven" needs nothing more, and three hours of it is a
- * size a phone battery and a home connection can carry.
- *
- * Only the cleaner's spoken commands are used — the microphone is not
- * recorded into the video. Smaller files, and no recording of conversations
- * in somebody's home.
+ * What it records is the raw layer of the dataset (docs/DATOS.md):
+ * independent 30-second video segments, motion sensor chunks, and a log of
+ * every interruption, each checksummed and written to the phone before it is
+ * uploaded. Only the cleaner's spoken commands are used: the microphone is
+ * never recorded into the video.
  */
-
-const CHUNK_MS = 30_000;
-const BITRATE = 800_000;
 
 export interface RecordingSummary {
   recordingId: string;
@@ -44,6 +51,13 @@ export interface RecordingSummary {
 export interface HandsFreeHandle {
   /** Stops filming and listening, waits for the last piece, and says where the video is. */
   stop: () => Promise<RecordingSummary | null>;
+}
+
+export interface HandsFreeSetup {
+  config: CaptureConfig;
+  uploads: boolean;
+  /** The worker's wording version, when it is being accepted now; and the customer's yes. */
+  consent: { worker?: string; customer: boolean };
 }
 
 // ── Beeps ───────────────────────────────────────────────────────────────────
@@ -104,17 +118,24 @@ function newRecognition(): Recognition | null {
   return Ctor ? new Ctor() : null;
 }
 
+/**
+ * H.264 in MP4 first: it is what the data spec asks for, what current
+ * Chrome on Android records, and what phones have a hardware encoder for —
+ * probably less heat and battery over three hours than VP8, which many
+ * phones encode in software. Not measured on a phone yet. VP8 in WebM where
+ * H.264 is not offered; Safari only records MP4 anyway.
+ */
+const MIME_PREFERENCE = ['video/mp4;codecs=avc1.42E01E', 'video/mp4;codecs=avc1', 'video/webm;codecs=vp8', 'video/webm', 'video/mp4'];
+
 function pickMime(): string | null {
   if (typeof MediaRecorder === 'undefined') return null;
-  // VP8 before VP9: a phone encodes it with less heat and battery, and the
-  // file is for recognising objects, not for watching.
-  for (const t of ['video/webm;codecs=vp8', 'video/webm', 'video/mp4']) {
+  for (const t of MIME_PREFERENCE) {
     if (MediaRecorder.isTypeSupported(t)) return t;
   }
   return null;
 }
 
-type WakeLock = { release: () => Promise<void> };
+type WakeLock = { release: () => Promise<void>; addEventListener?: (type: 'release', cb: () => void) => void };
 
 function clock(ms: number): string {
   const s = Math.floor(ms / 1000);
@@ -122,23 +143,45 @@ function clock(ms: number): string {
   return `${Math.floor(s / 3600)}:${pad(Math.floor((s % 3600) / 60))}:${pad(s % 60)}`;
 }
 
+type Camera = 'starting' | 'recording' | 'paused' | 'unavailable' | 'full' | 'lost' | 'stopped';
+
+const UNAVAILABLE: Record<string, string> = {
+  consent_required: 'Falta aceptar la grabación: apaga y vuelve a activar manos libres.',
+  customer_consent_required: 'Falta confirmar que el cliente lo sabe: apaga y vuelve a activar manos libres.',
+  no_open_job: 'No hay un trabajo abierto todavía.',
+  default: 'Este teléfono no graba desde el navegador. Los tiempos se miden igual.',
+};
+
+interface Rec {
+  id: string;
+  mime: string;
+  uploads: boolean;
+  /** performance.now() at the recording's t0. */
+  t0: number;
+}
+
 export function HandsFree({
   ref,
   rooms,
   current,
   onAction,
+  setup,
 }: {
   ref?: Ref<HandsFreeHandle>;
   rooms: JobRoom[];
   current: { roomKey?: string } | null;
   onAction: (action: JobVoiceAction) => void;
+  setup: HandsFreeSetup;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const [camera, setCamera] = useState<'starting' | 'recording' | 'unavailable' | 'stopped'>('starting');
+  const [camera, setCamera] = useState<Camera>('starting');
+  const [why, setWhy] = useState('');
   const [voice, setVoice] = useState<'on' | 'off' | 'unsupported' | 'blocked'>('off');
   const [heard, setHeard] = useState<{ text: string; did: string } | null>(null);
   const [uploads, setUploads] = useState<boolean | null>(null);
   const [counts, setCounts] = useState({ uploaded: 0, onPhone: 0 });
+  const [sensing, setSensing] = useState(false);
+  const [battery, setBattery] = useState<number | null>(null);
   const [startedAt, setStartedAt] = useState<number | null>(null);
   const [now, setNow] = useState(() => Date.now());
 
@@ -151,64 +194,90 @@ export function HandsFree({
   onActionRef.current = onAction;
 
   const streamRef = useRef<MediaStream | null>(null);
-  const recorderRef = useRef<MediaRecorder | null>(null);
+  const segmentsRef = useRef<SegmentRecorder | null>(null);
+  const sensorsRef = useRef<SensorRecorder | null>(null);
+  const logRef = useRef<EventLog | null>(null);
+  const recRef = useRef<Rec | null>(null);
   const recognitionRef = useRef<Recognition | null>(null);
   const listeningRef = useRef(false);
   const wakeRef = useRef<WakeLock | null>(null);
-  const recordingRef = useRef<{ id: string; mime: string; uploads: boolean } | null>(null);
-  const indexRef = useRef(0);
   const writesRef = useRef<Promise<unknown>>(Promise.resolve());
   const uploadsRef = useRef<Promise<unknown>>(Promise.resolve());
   const uploadedRef = useRef(0);
+  const endMonoRef = useRef(0);
+  const cleanupRef = useRef<(() => void)[]>([]);
+  const stoppedRef = useRef(false);
 
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
   }, []);
 
-  const post = (body: Record<string, unknown>) =>
-    fetch('/api/recordings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-
   async function refreshCounts(): Promise<void> {
-    const rec = recordingRef.current;
+    const rec = recRef.current;
     if (!rec) return;
-    const left = await chunksOf(rec.id).catch(() => []);
+    const left = await piecesOf(rec.id).catch(() => []);
     setCounts({ uploaded: uploadedRef.current, onPhone: left.length });
   }
 
-  /** Uploads every piece still on the phone, oldest first; stops at the first failure. */
   async function flush(): Promise<void> {
-    const rec = recordingRef.current;
-    if (!rec?.uploads) return refreshCounts();
-    const left = await chunksOf(rec.id).catch(() => []);
-    for (const piece of left) {
-      try {
-        const signed = await post({ action: 'chunk', recordingId: rec.id, index: piece.index });
-        if (!signed.ok) break;
-        const { url, contentType } = (await signed.json()) as { url: string; contentType: string };
-        const put = await fetch(url, { method: 'PUT', headers: { 'Content-Type': contentType }, body: piece.blob });
-        if (!put.ok) break;
-        await post({ action: 'uploaded', recordingId: rec.id, index: piece.index, kilobytes: piece.blob.size / 1024 });
-        await deleteChunk(rec.id, piece.index);
+    const rec = recRef.current;
+    if (!rec) return;
+    if (rec.uploads) {
+      await uploadPieces(rec.id, () => {
         uploadedRef.current += 1;
-      } catch {
-        break; // No signal: the piece waits on the phone for the next try.
-      }
+      });
     }
+    await logRef.current?.flush();
     await refreshCounts();
   }
 
-  function onPiece(blob: Blob): void {
-    const rec = recordingRef.current;
-    if (!rec || blob.size === 0) return;
-    const index = ++indexRef.current;
-    writesRef.current = writesRef.current
-      .then(() => putChunk({ recordingId: rec.id, index, mimeType: rec.mime, blob }))
-      .catch(() => {})
-      .then(() => {
-        uploadsRef.current = uploadsRef.current.then(flush);
-        return refreshCounts();
-      });
+  /** Every piece: checksummed, written to the phone, then queued for upload. */
+  function keep(kind: 'video' | 'sensors', piece: CapturedSegment | CapturedSensors): void {
+    const rec = recRef.current;
+    if (!rec) return;
+    // Every step inside catches: one piece that fails must not stop the
+    // chain, or every piece after it would never be written.
+    writesRef.current = writesRef.current.then(async () => {
+      let sum: Awaited<ReturnType<typeof digest>>;
+      try {
+        sum = await digest(piece.blob);
+      } catch (err) {
+        logRef.current?.add('store_error', { kind, index: piece.index, name: (err as Error)?.name ?? 'digest' });
+        return;
+      }
+      endMonoRef.current = Math.max(endMonoRef.current, piece.monoEndMs);
+      try {
+        await putPiece({
+          recordingId: rec.id,
+          kind,
+          index: piece.index,
+          mimeType: kind === 'video' ? rec.mime : 'application/gzip',
+          blob: piece.blob,
+          bytes: sum.bytes,
+          sha256: sum.sha256,
+          crc32: sum.crc32,
+          monoStartMs: piece.monoStartMs,
+          monoEndMs: piece.monoEndMs,
+          ...('samples' in piece ? { samples: piece.samples, streams: piece.streams } : {}),
+          createdAt: Date.now(),
+        });
+        void updateRecording(rec.id, { endMonoMs: endMonoRef.current }).catch(() => {});
+      } catch (err) {
+        if (isQuotaError(err)) {
+          // A full phone stops the camera instead of failing piece after
+          // piece; the timing goes on, and the log says when and why.
+          logRef.current?.add('storage_full', { kind, index: piece.index });
+          await segmentsRef.current?.stop();
+          setCamera('full');
+        } else {
+          logRef.current?.add('store_error', { kind, index: piece.index, name: (err as Error)?.name ?? 'error' });
+        }
+        return;
+      }
+      uploadsRef.current = uploadsRef.current.then(flush).catch(() => {});
+      await refreshCounts().catch(() => {});
+    });
   }
 
   function listen(): void {
@@ -240,7 +309,17 @@ export function HandsFree({
                   ? '⏹ Para terminar, toca Me voy'
                   : 'No es una orden',
         });
-        if (action.kind !== 'unknown') onActionRef.current(action);
+        if (action.kind !== 'unknown') {
+          // What was heard and when, on the phone's clock: the raw half of a
+          // marker, next to the server's timestamp for the room. Anything
+          // that was not a command is not written anywhere.
+          logRef.current?.add('voice_marker', {
+            text: text.trim().slice(0, 80),
+            action: action.kind,
+            ...(action.kind === 'room' ? { roomKey: action.roomKey, taskKey: action.taskKey ?? null } : {}),
+          });
+          onActionRef.current(action);
+        }
       }
     };
     // Recognition ends itself after silence; it is restarted for as long as
@@ -272,7 +351,11 @@ export function HandsFree({
   async function keepAwake(): Promise<void> {
     try {
       const nav = navigator as unknown as { wakeLock?: { request: (type: 'screen') => Promise<WakeLock> } };
-      wakeRef.current = (await nav.wakeLock?.request('screen')) ?? null;
+      const lock = (await nav.wakeLock?.request('screen')) ?? null;
+      lock?.addEventListener?.('release', () => {
+        if (!stoppedRef.current) logRef.current?.add('wake_lock_lost');
+      });
+      wakeRef.current = lock;
     } catch {
       /* not supported, or the tab is hidden */
     }
@@ -285,13 +368,68 @@ export function HandsFree({
     } catch {
       /* already stopped */
     }
+    for (const undo of cleanupRef.current.splice(0)) undo();
     streamRef.current?.getTracks().forEach((t) => t.stop());
     void wakeRef.current?.release().catch(() => {});
     wakeRef.current = null;
   }
 
+  /** Lifecycle of the page, as events: each one is a possible hole in the film. */
+  function watch(track: MediaStreamTrack): void {
+    const log = () => logRef.current;
+    const on = (target: EventTarget, type: string, fn: () => void) => {
+      target.addEventListener(type, fn);
+      cleanupRef.current.push(() => target.removeEventListener(type, fn));
+    };
+    on(document, 'visibilitychange', () => {
+      const visible = document.visibilityState === 'visible';
+      log()?.add(visible ? 'visible' : 'hidden');
+      // The screen lock is dropped when the tab is hidden; take it back.
+      if (visible && listeningRef.current) void keepAwake();
+    });
+    on(document, 'freeze', () => log()?.add('frozen'));
+    on(document, 'resume', () => log()?.add('resumed'));
+    on(window, 'pagehide', () => {
+      log()?.add('pagehide');
+      log()?.beacon();
+    });
+    on(window, 'offline', () => log()?.add('offline'));
+    on(window, 'online', () => {
+      log()?.add('online');
+      uploadsRef.current = uploadsRef.current.then(flush).catch(() => {});
+    });
+    on(track, 'mute', () => log()?.add('camera_muted'));
+    on(track, 'unmute', () => log()?.add('camera_unmuted'));
+    on(track, 'ended', () => {
+      if (stoppedRef.current) return;
+      log()?.add('camera_ended');
+      void segmentsRef.current?.stop();
+      setCamera('lost');
+    });
+
+    const minute = setInterval(() => {
+      void (async () => {
+        const rec = recRef.current;
+        const pending = rec ? (await piecesOf(rec.id).catch(() => [])).length : 0;
+        const snap = await telemetry(streamRef.current?.getVideoTracks()[0] ?? null, pending);
+        const b = snap.battery as { level: number; charging: boolean } | null;
+        setBattery(b && !b.charging ? b.level : null);
+        log()?.add('telemetry', snap);
+        if (rec) void updateRecording(rec.id, { heartbeatAt: Date.now() }).catch(() => {});
+      })();
+    }, 60_000);
+    // Two clocks drift apart over three hours; a fresh fix every ten minutes
+    // lets the pipeline correct for it instead of trusting the first one.
+    const resync = setInterval(() => {
+      void syncClock(3).then((fix) => fix && log()?.add('clock_sync', { ...fix }));
+    }, 10 * 60_000);
+    cleanupRef.current.push(() => clearInterval(minute), () => clearInterval(resync));
+    cleanupRef.current.push(watchPressure((state) => log()?.add('pressure', { state })));
+  }
+
   useEffect(() => {
     let cancelled = false;
+    const { config } = setup;
 
     void (async () => {
       await keepAwake();
@@ -302,9 +440,9 @@ export function HandsFree({
           stream = await navigator.mediaDevices.getUserMedia({
             video: {
               facingMode: { ideal: 'environment' },
-              width: { ideal: 640 },
-              height: { ideal: 480 },
-              frameRate: { ideal: 15, max: 15 },
+              width: { ideal: Math.round((config.maxHeight * 4) / 3) },
+              height: { ideal: config.maxHeight },
+              frameRate: { ideal: config.frameRate, max: config.frameRate },
             },
             audio: false,
           });
@@ -319,6 +457,7 @@ export function HandsFree({
       // Voice works without the camera: the times still get measured.
       listen();
       if (!stream || !mime) {
+        setWhy(UNAVAILABLE.default);
         setCamera('unavailable');
         return;
       }
@@ -327,75 +466,167 @@ export function HandsFree({
         videoRef.current.srcObject = stream;
         void videoRef.current.play().catch(() => {});
       }
+      const track = stream.getVideoTracks()[0];
+      const settings = track.getSettings();
 
-      const res = await post({ action: 'start', mimeType: mime, chunkSeconds: CHUNK_MS / 1000 }).catch(() => null);
-      const data = res?.ok ? ((await res.json()) as { recordingId: string; uploads: boolean }) : null;
-      if (cancelled || !data) {
-        if (!data) setCamera('unavailable');
+      const fix = await syncClock(5);
+      const t0 = performance.now();
+      const res = await post({
+        action: 'start',
+        mimeType: mime,
+        consent: setup.consent,
+        clock: { t0EpochMs: performance.timeOrigin + t0, ...(fix ?? {}) },
+        capture: {
+          mimeType: mime,
+          width: settings.width ?? null,
+          height: settings.height ?? null,
+          frameRate: settings.frameRate ?? null,
+          facingMode: settings.facingMode ?? null,
+          videoBitsPerSecond: config.videoBitsPerSecond,
+          segmentSeconds: config.segmentSeconds,
+          audio: false,
+        },
+        device: deviceInfo(),
+      }).catch(() => null);
+      const data = res?.ok
+        ? ((await res.json()) as { recordingId: string; sessionId: string; startedAt: string; uploads: boolean; clockTrusted: boolean })
+        : null;
+      if (cancelled) return;
+      if (!data) {
+        const failure = res ? ((await res.json().catch(() => ({}))) as { error?: string }).error : undefined;
+        setWhy(UNAVAILABLE[failure ?? ''] ?? UNAVAILABLE.default);
+        setCamera('unavailable');
         return;
       }
-      recordingRef.current = { id: data.recordingId, mime: mime.split(';')[0], uploads: data.uploads };
-      setUploads(data.uploads);
 
-      const recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: BITRATE });
-      recorder.ondataavailable = (e) => onPiece(e.data);
-      recorder.start(CHUNK_MS);
-      recorderRef.current = recorder;
+      const base = mime.split(';')[0];
+      recRef.current = { id: data.recordingId, mime: base, uploads: data.uploads, t0 };
+      ACTIVE_RECORDINGS.add(data.recordingId);
+      await putRecording({
+        heartbeatAt: Date.now(),
+        recordingId: data.recordingId,
+        sessionId: data.sessionId,
+        mimeType: base,
+        uploads: data.uploads,
+        t0EpochMs: performance.timeOrigin + t0,
+        startedAt: data.startedAt,
+        clockOffsetMs: fix?.offsetMs,
+        clockRttMs: fix?.rttMs,
+        capture: { mimeType: mime, width: settings.width, height: settings.height, frameRate: settings.frameRate },
+        device: deviceInfo(),
+      }).catch(() => {});
+      setUploads(data.uploads);
+      const log = new EventLog(data.recordingId, t0);
+      logRef.current = log;
+
+      const segments = new SegmentRecorder(stream, {
+        mimeType: mime,
+        videoBitsPerSecond: config.videoBitsPerSecond,
+        segmentMs: config.segmentSeconds * 1000,
+        t0,
+        onSegment: (s) => keep('video', s),
+        onError: (error) => log.add('recorder_error', { error }),
+      });
+      try {
+        segments.start();
+      } catch {
+        setWhy(UNAVAILABLE.default);
+        setCamera('unavailable');
+        return;
+      }
+      segmentsRef.current = segments;
+      log.add('recorder_started', { trustedClock: data.clockTrusted });
+
+      const missing = sensorsUnavailable();
+      if (missing) {
+        log.add('sensors_unavailable', { reason: missing });
+      } else {
+        const sensors = new SensorRecorder(t0, config.segmentSeconds * 1000, (c) => keep('sensors', c));
+        sensors.start();
+        sensorsRef.current = sensors;
+        setSensing(true);
+      }
+
+      watch(track);
       setStartedAt(Date.now());
       setCamera('recording');
     })();
 
-    // The screen lock is dropped when the tab is hidden; take it back.
-    const onVisible = () => {
-      if (document.visibilityState === 'visible' && listeningRef.current) void keepAwake();
-    };
-    const onOnline = () => {
-      uploadsRef.current = uploadsRef.current.then(flush);
-    };
-    document.addEventListener('visibilitychange', onVisible);
-    window.addEventListener('online', onOnline);
-
     return () => {
       cancelled = true;
-      document.removeEventListener('visibilitychange', onVisible);
-      window.removeEventListener('online', onOnline);
-      const recorder = recorderRef.current;
-      if (recorder && recorder.state !== 'inactive') recorder.stop();
+      // Unmounted without stop() — navigating away mid-job: whatever is in
+      // the recorders is still written to the phone, for recovery later.
+      if (!stoppedRef.current) {
+        void segmentsRef.current?.stop();
+        void sensorsRef.current?.stop();
+      }
+      if (recRef.current) ACTIVE_RECORDINGS.delete(recRef.current.id);
       release();
     };
     // Mounting is starting; the latest props are read through refs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  async function pauseCamera(): Promise<void> {
+    await segmentsRef.current?.stop();
+    logRef.current?.add('privacy_pause');
+    setCamera('paused');
+  }
+
+  function resumeCamera(): void {
+    try {
+      segmentsRef.current?.start();
+      logRef.current?.add('privacy_resume');
+      setCamera('recording');
+    } catch {
+      setWhy(UNAVAILABLE.default);
+      setCamera('unavailable');
+    }
+  }
+
   useImperativeHandle(ref, () => ({
     async stop() {
+      stoppedRef.current = true;
       listeningRef.current = false;
-      const recorder = recorderRef.current;
-      if (recorder && recorder.state !== 'inactive') {
-        // The last piece arrives in a final dataavailable, before 'stop'.
-        await new Promise<void>((resolve) => {
-          recorder.addEventListener('stop', () => resolve(), { once: true });
-          recorder.stop();
-        });
-      }
+      await segmentsRef.current?.stop();
+      await sensorsRef.current?.stop();
       release();
       setCamera('stopped');
-      const rec = recordingRef.current;
+      const rec = recRef.current;
       if (!rec) return null;
       await writesRef.current;
       // Give the last uploads a moment; whatever does not make it stays on
-      // the phone and is offered as a download.
-      await Promise.race([(uploadsRef.current = uploadsRef.current.then(flush)), new Promise((r) => setTimeout(r, 20_000))]);
-      await post({ action: 'stop', recordingId: rec.id }).catch(() => {});
-      const left = await chunksOf(rec.id).catch(() => []);
+      // the phone and is uploaded later or saved as a ZIP.
+      await Promise.race([(uploadsRef.current = uploadsRef.current.then(flush).catch(() => {})), new Promise((r) => setTimeout(r, 20_000))]);
+      const endMonoMs = Math.max(endMonoRef.current, Math.round(performance.now() - rec.t0));
+      const stopped = await post({ action: 'stop', recordingId: rec.id, endMonoMs })
+        .then((r) => r.ok)
+        .catch(() => false);
+      if (stopped) await updateRecording(rec.id, { stoppedAt: new Date().toISOString(), endMonoMs }).catch(() => {});
+      const [left, events] = await Promise.all([piecesOf(rec.id).catch(() => []), eventsOf(rec.id).catch(() => [])]);
+      // Everything is in the bucket and the log was received: nothing left
+      // on the phone to keep.
+      if (rec.uploads && stopped && left.length === 0 && events.every((e) => e.posted)) {
+        await forgetRecording(rec.id).catch(() => {});
+      }
+      ACTIVE_RECORDINGS.delete(rec.id);
       return { recordingId: rec.id, mimeType: rec.mime, uploaded: uploadedRef.current, onPhone: left.length, uploads: rec.uploads };
     },
   }));
 
+  const filming = camera === 'recording' || camera === 'paused';
+
   return (
     <div className="rounded-2xl border-2 border-red-300 p-3 dark:border-red-900/60" data-testid="hands-free">
       <div className="flex gap-3">
-        <video ref={videoRef} muted playsInline className="h-[72px] w-24 shrink-0 rounded-lg bg-slate-900 object-cover" />
+        <div className="relative h-[72px] w-24 shrink-0">
+          <video ref={videoRef} muted playsInline className="h-full w-full rounded-lg bg-slate-900 object-cover" />
+          {camera === 'paused' && (
+            <span className="absolute inset-0 flex items-center justify-center rounded-lg bg-slate-900/80 text-xs font-semibold text-white">
+              En pausa
+            </span>
+          )}
+        </div>
         <div className="min-w-0 flex-1 text-sm">
           {camera === 'recording' && (
             <p className="flex items-center gap-1.5 font-semibold text-red-600">
@@ -403,21 +634,56 @@ export function HandsFree({
               Grabando {startedAt ? clock(now - startedAt) : ''}
             </p>
           )}
+          {camera === 'paused' && <p className="font-semibold text-slate-700 dark:text-slate-200">Cámara en pausa: no se graba nada</p>}
           {camera === 'starting' && <p className="text-slate-500">Encendiendo la cámara…</p>}
-          {camera === 'unavailable' && (
-            <p className="text-amber-700 dark:text-amber-400">Este teléfono no graba desde el navegador. Los tiempos se miden igual.</p>
+          {camera === 'unavailable' && <p className="text-amber-700 dark:text-amber-400">{why}</p>}
+          {camera === 'full' && (
+            <p className="text-amber-700 dark:text-amber-400">El teléfono se quedó sin espacio y la cámara se paró. Los tiempos se siguen midiendo.</p>
+          )}
+          {camera === 'lost' && (
+            <p className="text-amber-700 dark:text-amber-400">La cámara se cortó (otra app la usa o el teléfono la apagó). Los tiempos se siguen midiendo.</p>
           )}
           {camera === 'stopped' && <p className="text-slate-500">Grabación terminada.</p>}
           {uploads !== null && (
-            <p className="mt-0.5 flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
+            <p className="mt-0.5 flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400" data-testid="hands-free-pieces">
               {uploads ? <CloudUpload className="h-3.5 w-3.5" /> : <Smartphone className="h-3.5 w-3.5" />}
               {uploads
                 ? `${counts.uploaded} ${counts.uploaded === 1 ? 'parte subida' : 'partes subidas'}${counts.onPhone ? ` · ${counts.onPhone} esperando señal` : ''}`
                 : `Guardándose en este teléfono · ${counts.onPhone} ${counts.onPhone === 1 ? 'parte' : 'partes'}`}
+              {sensing ? ' · con movimiento' : ''}
+            </p>
+          )}
+          {battery !== null && battery < 0.2 && (
+            <p className="mt-0.5 flex items-center gap-1.5 text-xs font-medium text-amber-700 dark:text-amber-400">
+              <BatteryLow className="h-3.5 w-3.5" /> Batería al {Math.round(battery * 100)}%
             </p>
           )}
         </div>
       </div>
+
+      {/* Someone walks in, a bathroom is occupied: one tap and nothing is
+          kept until the next. The pause itself goes in the log, so a gap in
+          the film is never mistaken for a lost piece. */}
+      {filming && (
+        <button
+          type="button"
+          data-testid="privacy-pause"
+          onClick={() => (camera === 'paused' ? resumeCamera() : void pauseCamera())}
+          className={`mt-2 inline-flex min-h-[44px] w-full items-center justify-center gap-2 rounded-xl border-2 text-sm font-semibold ${
+            camera === 'paused' ? 'border-red-400 text-red-700 dark:text-red-300' : 'dark:border-white/15'
+          }`}
+        >
+          {camera === 'paused' ? (
+            <>
+              <Play className="h-4 w-4" /> Seguir grabando
+            </>
+          ) : (
+            <>
+              <Pause className="h-4 w-4" /> Pausar cámara
+            </>
+          )}
+        </button>
+      )}
 
       <p className="mt-2 flex items-center gap-1.5 text-sm">
         {voice === 'on' ? <Mic className="h-4 w-4 text-brand-600" /> : <MicOff className="h-4 w-4 text-slate-400" />}

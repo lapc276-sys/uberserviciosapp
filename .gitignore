@@ -32,3 +32,8 @@ yarn-error.log*
 
 # Screenshots taken to review the page; regenerable, not source.
 /capturas/
+
+# Python pipeline
+/pipeline/.venv/
+__pycache__/
+.pytest_cache/
