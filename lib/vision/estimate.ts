@@ -7,11 +7,17 @@ import {
   type SoilScores,
   type SoilDimension,
   type ConditionLevel,
+  type ProductPreference,
 } from './types';
 import { planSupplies } from './supplies';
+import { knownMaterials, materialMinutes, materialNote } from './materials';
+import { tidyingMinutes } from './tidying';
+import { buildCrewPlan } from './plan';
 import {
   ROOM_BASE_MINUTES,
   objectMinutesFor,
+  depthChoiceFor,
+  type DepthChoices,
   HOUSEHOLD_SIGNALS,
   countCapFor,
   MAX_OBJECT_MINUTES_MULTIPLE,
@@ -87,13 +93,21 @@ function roomMinutes(
   soil: SoilScores,
   baseOverrides: Partial<Record<RawRoomObservation['type'], number>>,
   serviceSlug: string,
-): { scalable: number; objectMinutes: number } {
+  depthChoices?: DepthChoices,
+): { scalable: number; objectMinutes: number; materialMinutes: number; tidyMinutes: number } {
   const base = baseOverrides[room.type] ?? ROOM_BASE_MINUTES[room.type] ?? ROOM_BASE_MINUTES.other;
   const weights = soilWeightsFor(room.type);
 
+  // When the room was counted, clutter is priced from the count below and
+  // must leave the soil sum here — otherwise the same forty socks are charged
+  // once as a score and again as items. The score still exists for the
+  // condition label and the questions; it just stops being minutes. A room
+  // that was not counted keeps the old behaviour exactly.
+  const counted = Boolean(room.tidying);
+
   // Soil contributes its weighted minutes scaled by severity.
   const soilMinutes = (Object.keys(weights) as SoilDimension[]).reduce(
-    (sum, key) => sum + (soil[key] / 100) * weights[key],
+    (sum, key) => (counted && key === 'clutter' ? sum : sum + (soil[key] / 100) * weights[key]),
     0,
   );
 
@@ -104,7 +118,7 @@ function roomMinutes(
   // again below.
   const objectMinutes = room.objects.reduce((sum, obj) => {
     const key = obj.name.trim().toLowerCase();
-    const cost = objectMinutesFor(key, serviceSlug);
+    const cost = objectMinutesFor(key, serviceSlug, depthChoiceFor(key, room.type, depthChoices));
     if (!cost) return sum;
     const count = Math.max(1, Math.min(obj.count || 1, countCapFor(key)));
     const weight = Math.max(0.3, Math.min(obj.confidence || 0.5, 1));
@@ -116,7 +130,22 @@ function roomMinutes(
   // — wiping around a toaster is already inside the countertop time.
   const cappedObjects = Math.min(objectMinutes, base * MAX_OBJECT_MINUTES_MULTIPLE);
 
-  return { scalable: base + soilMinutes, objectMinutes: cappedObjects };
+  // Surfaces that need their own product and a slower hand. Kept apart from
+  // the object total so the cap above cannot swallow them, and returned
+  // separately for the same reason objects are: care for marble is the same
+  // extra pass on a maintenance clean as on a deep one, so the service
+  // multiplier must not scale it.
+  return {
+    scalable: base + soilMinutes,
+    objectMinutes: cappedObjects,
+    materialMinutes: materialMinutes(room.materials),
+    // Picking up forty socks is the same forty bends on a maintenance clean as
+    // on a deep one, so like objects and materials this is kept out of the
+    // service multiplier. Kept out of the object cap too: that cap exists
+    // because wiping round a toaster is already inside countertop time, and
+    // carrying the laundry to the bedroom is inside nothing.
+    tidyMinutes: tidyingMinutes(room.tidying, room.type, depthChoices).total,
+  };
 }
 
 /** Labels repeated room types as "Bedroom 2", "Bathroom 3", etc. */
@@ -153,11 +182,34 @@ export interface EstimateOptions {
   };
   /** Scales supply costs into the tenant's market. */
   supplyCostMultiplier?: number;
+  /**
+   * What the customer answered during the walkthrough about opening things up.
+   *
+   * These beat the service default in both directions — see objectMinutesFor.
+   * A standard clean where somebody said yes to the oven is no longer a
+   * standard clean's worth of oven, and the price has to say so before the
+   * crew arrives rather than after.
+   */
+  depthChoices?: DepthChoices;
+  /**
+   * What the customer asked the crew to clean with. Never moves the price —
+   * it changes which bottles the plan may order, so an "eco" customer is not
+   * sent a crew told to spray chlorine.
+   */
+  products?: ProductPreference;
 }
 
 export function buildAnalysis(
   observations: RawRoomObservation[],
-  { serviceSlug, source, warnings = [], calibration, supplyCostMultiplier }: EstimateOptions,
+  {
+    serviceSlug,
+    source,
+    warnings = [],
+    calibration,
+    supplyCostMultiplier,
+    depthChoices,
+    products,
+  }: EstimateOptions,
 ): PropertyAnalysis {
   const labels = labelRooms(observations);
 
@@ -173,20 +225,31 @@ export function buildAnalysis(
   const rooms: RoomAnalysis[] = observations.map((obs, i) => {
     const observed = normalizeSoil(obs.soil);
     const { soil, fired } = applyHouseholdSignals(observed, obs.objects);
-    const parts = roomMinutes(obs, soil, baseOverrides, serviceSlug);
-    const minutes = parts.scalable * multiplier + parts.objectMinutes * timeFactor;
+    const parts = roomMinutes(obs, soil, baseOverrides, serviceSlug, depthChoices);
+    const minutes =
+      parts.scalable * multiplier +
+      (parts.objectMinutes + parts.materialMinutes + parts.tidyMinutes) * timeFactor;
+    const materials = knownMaterials(obs.materials);
     return {
       type: obs.type,
       label: labels[i],
       confidence: Math.max(0, Math.min(obs.confidence ?? 0.5, 1)),
       objects: obs.objects.filter((o) => o.name?.trim()).slice(0, 25),
+      materials: materials.length ? materials : undefined,
+      tidying: obs.tidying,
+      // Carried, never priced: it reaches the crew as "it was already like
+      // this", through the plan's cautions.
+      damage: obs.damage?.length ? obs.damage : undefined,
       soil,
       condition: conditionFromIndex(soilIndex(soil, obs.type)),
       estimatedMinutes: Math.round(minutes),
       // Signals are appended to the note rather than hidden, so a pro who
       // wonders why a tidy-looking bedroom was budgeted for hair can read the
       // reason instead of distrusting the number.
-      notes: [obs.notes, fired.length ? `Señales: ${fired.join(', ')}` : '']
+      // Materials get the same treatment, and for a sharper reason: they add
+      // minutes, and a surcharge nobody can explain is exactly what pricing
+      // the surface instead of the neighbourhood was meant to avoid.
+      notes: [obs.notes, fired.length ? `Señales: ${fired.join(', ')}` : '', materialNote(obs.materials)]
         .filter(Boolean)
         .join(' · ') || undefined,
     };
@@ -211,11 +274,19 @@ export function buildAnalysis(
   const supplyPlan = planSupplies({
     soil: worstSoil,
     objects: rooms.flatMap((r) => r.objects),
+    materials: rooms.flatMap((r) => r.materials ?? []),
     roomTypes: rooms.map((r) => r.type),
     serviceSlug,
     totalMinutes: Math.round(totalMinutes),
     costMultiplier: supplyCostMultiplier,
   });
+  if (products === 'eco') {
+    // The packing list is shared with every job and names the usual bottles;
+    // this is the line that stops the usual bottles going into the van.
+    supplyPlan.safetyWarnings.push(
+      'Customer asked for eco products: pack a bleach-free mold remover, baking soda instead of oven cleaner, and an ammonia-free glass cleaner.',
+    );
+  }
 
   const confidence = rooms.length
     ? rooms.reduce((sum, r) => sum + r.confidence, 0) / rooms.length
@@ -233,10 +304,14 @@ export function buildAnalysis(
     recommendedPros: Math.max(1, Math.ceil(totalMinutes / MINUTES_PER_PRO)),
     suppliesNeeded: supplyPlan.lines.map((l) => l.name),
     supplyPlan,
+    // Built from the finished rooms and the packed van, so it can only ever
+    // name rooms that were priced and bottles that were packed.
+    crewPlan: buildCrewPlan(rooms, supplyPlan, { serviceSlug, depthChoices, products }),
     condition: conditionFromIndex(weightedIndex) as ConditionLevel,
     confidence: Number(confidence.toFixed(2)),
     source,
     warnings: allWarnings,
+    ...(depthChoices && Object.keys(depthChoices).length ? { depthChoices } : {}),
   };
 }
 

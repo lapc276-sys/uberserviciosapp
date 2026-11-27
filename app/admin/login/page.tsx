@@ -2,6 +2,7 @@ import { Suspense } from 'react';
 import type { Metadata } from 'next';
 import { buildMetadata } from '@/lib/seo';
 import { LoginForm } from '@/components/admin/LoginForm';
+import { site } from '@/lib/config/site';
 
 export const metadata: Metadata = buildMetadata({ title: 'Admin Sign In | Klaudy', path: '/admin/login', noindex: true });
 
@@ -10,7 +11,7 @@ export default function LoginPage() {
     <div className="grid min-h-screen place-items-center bg-slate-50 p-6 dark:bg-ink">
       <div className="w-full max-w-sm">
         <div className="mb-8 flex items-center justify-center gap-2 font-semibold">
-          <span className="grid h-9 w-9 place-items-center rounded-lg bg-brand-600 text-white">H</span>
+          <span className="grid h-9 w-9 place-items-center rounded-lg bg-brand-600 text-white">{site.name.charAt(0)}</span>
           <span className="text-lg">Klaudy Admin</span>
         </div>
         <div className="rounded-3xl border bg-white p-8 shadow-lift dark:bg-ink-soft">

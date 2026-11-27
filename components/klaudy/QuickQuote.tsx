@@ -1,8 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import { MessageCircle, Loader2, Camera, ChevronDown } from 'lucide-react';
-import { GuidedCapture } from '@/components/capture/GuidedCapture';
+import { MessageCircle, Loader2, Camera, ChevronDown, AlertTriangle } from 'lucide-react';
+import { GuidedCapture, type GuidedResult } from '@/components/capture/GuidedCapture';
 import { readJson } from '@/lib/http';
 import { services } from '@/lib/config/services';
 import { whatsappLink } from '@/lib/contact';
@@ -43,6 +43,8 @@ interface Priced {
   recommendedPros?: number;
   /** False when the size is past anything actually quoted. */
   quoted?: boolean;
+  /** Priced by the stand-in that runs without a vision model. */
+  demo?: boolean;
 }
 
 const HOME_SERVICES = ['house-cleaning', 'deep-cleaning', 'move-out-cleaning'];
@@ -60,6 +62,12 @@ export function QuickQuote({ locale }: { locale: Locale }) {
   const [error, setError] = useState('');
 
   const [cameraOpen, setCameraOpen] = useState(false);
+  /**
+   * What the walkthrough learned that the price does not carry: the spaces it
+   * filmed, and what the customer said about the day, products and repairs.
+   * Null for a questionnaire price.
+   */
+  const [walked, setWalked] = useState<{ spaces: string[]; notes?: string } | null>(null);
 
   const options = services.filter((s) => HOME_SERVICES.includes(s.slug));
 
@@ -67,6 +75,7 @@ export function QuickQuote({ locale }: { locale: Locale }) {
     setBusy(true);
     setError('');
     setPriced(null);
+    setWalked(null);
     try {
       const res = await fetch('/api/quote', {
         method: 'POST',
@@ -89,22 +98,49 @@ export function QuickQuote({ locale }: { locale: Locale }) {
     }
   }
 
-  async function priceFromCamera(frames: string[], captions: string[] | undefined, slug: string, focus?: string) {
+  async function priceFromCamera(result: GuidedResult) {
+    const { frames, captions, serviceSlug: slug, focus, depthChoices, visit } = result;
     setBusy(true);
     setError('');
     setPriced(null);
+    setWalked({ spaces: result.spaces, notes: result.notes });
     try {
       const res = await fetch('/api/vision/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ frames, captions, serviceSlug: slug, focus, city: 'Brooklyn' }),
+        body: JSON.stringify({
+          frames,
+          captions,
+          serviceSlug: slug,
+          focus,
+          depthChoices,
+          // Changes what the crew plan may spray, never the price.
+          products: visit?.products,
+          city: 'Brooklyn',
+        }),
       });
       const { data, failure } = await readJson<any>(res);
       if (failure || !data || !res.ok) {
+        // Filmed somewhere that is not a home — a car, an office. Said in
+        // their language, plainly: there is nothing to price, not an error.
+        if (data?.reason === 'no_home') {
+          setError(
+            locale === 'es'
+              ? 'En lo que grabaste no vi el interior de una casa, así que no hay nada que cotizar. Pruébalo dentro de una casa.'
+              : "I couldn't see the inside of a home in what you filmed, so there is nothing to price. Try it inside a home.",
+          );
+          return;
+        }
         setError(failure ?? data?.error ?? t.contactFormError);
         return;
       }
-      setPriced({ ...data.quote, estimatedMinutes: data.analysis?.totalMinutes });
+      setPriced({
+        ...data.quote,
+        estimatedMinutes: data.analysis?.totalMinutes,
+        // The stand-in that runs without a vision model invents a kitchen
+        // from the number of frames. It must never pass for a real look.
+        demo: data.analysis?.source === 'heuristic',
+      });
     } catch {
       setError(t.contactFormError);
     } finally {
@@ -140,11 +176,28 @@ export function QuickQuote({ locale }: { locale: Locale }) {
       ? `${propertyType === 'house' ? 'casa' : 'apartamento'} de ${bedrooms} hab y ${bathrooms} baño${bathrooms > 1 ? 's' : ''}`
       : `${bedrooms}-bed ${bathrooms}-bath ${propertyType}`;
 
-  const bookMessage = priced
-    ? locale === 'es'
-      ? `Hola, quiero limpieza en Brooklyn para un ${place}. La página me dio ${shownPrice}. ¿Cuándo tienes disponible?`
-      : `Hi, I need cleaning in Brooklyn for a ${place}. Your page quoted me ${shownPrice}. When are you available?`
-    : '';
+  /**
+   * A camera price describes the home that was filmed, not the questionnaire
+   * underneath it — whose untouched defaults said "1 hab y 1 baño" about a
+   * walkthrough of a three-bedroom flat. What the customer said in the
+   * closing chat (day, products, repairs) rides along, in their language as
+   * the walkthrough recorded it, so the owner reads it before replying.
+   */
+  const bookMessage = !priced
+    ? ''
+    : walked
+      ? [
+          locale === 'es'
+            ? `Hola, quiero limpieza en Brooklyn. Hice el recorrido con la cámara (${walked.spaces.join(', ')}) y la página me dio ${shownPrice}.`
+            : `Hi, I need cleaning in Brooklyn. I did the camera walkthrough (${walked.spaces.join(', ')}) and your page quoted me ${shownPrice}.`,
+          walked.notes,
+          locale === 'es' ? '¿Cuándo tienes disponible?' : 'When are you available?',
+        ]
+          .filter(Boolean)
+          .join(' ')
+      : locale === 'es'
+        ? `Hola, quiero limpieza en Brooklyn para un ${place}. La página me dio ${shownPrice}. ¿Cuándo tienes disponible?`
+        : `Hi, I need cleaning in Brooklyn for a ${place}. Your page quoted me ${shownPrice}. When are you available?`;
   const bookLink = priced ? whatsappLink(bookMessage) : null;
 
   return (
@@ -158,6 +211,17 @@ export function QuickQuote({ locale }: { locale: Locale }) {
         </div>
       ) : priced ? (
         <div className="space-y-4">
+          {priced.demo && (
+            <p
+              className="flex items-start gap-2 rounded-xl bg-amber-50 p-3 text-sm font-medium text-amber-900 dark:bg-amber-950/30 dark:text-amber-200"
+              data-testid="demo-quote"
+            >
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              {locale === 'es'
+                ? 'Demostración: la IA que mira las fotos no está conectada, así que este precio no sale de lo que grabaste.'
+                : 'Demo: the AI that looks at the photos is not connected, so this price does not come from what you filmed.'}
+            </p>
+          )}
           <div>
             <p className="text-sm text-slate-500 dark:text-slate-400">{t.calcResult}</p>
             <p className="mt-1 text-4xl font-semibold tracking-tight">
@@ -193,6 +257,7 @@ export function QuickQuote({ locale }: { locale: Locale }) {
             type="button"
             onClick={() => {
               setPriced(null);
+              setWalked(null);
               setCameraOpen(false);
             }}
             className="w-full text-sm font-medium text-slate-500 underline"
@@ -209,11 +274,17 @@ export function QuickQuote({ locale }: { locale: Locale }) {
           >
             ← {locale === 'es' ? 'Volver al formulario' : 'Back to the form'}
           </button>
-          <GuidedCapture
-            onComplete={({ frames, captions, serviceSlug: chosen, focus }) =>
-              priceFromCamera(frames, captions, chosen, focus)
-            }
-          />
+          {/* A camera price that failed used to be invisible here — the form
+              below is where errors showed, and the form is hidden. "No vi una
+              casa" in particular has to be read where the camera was. */}
+          {error && (
+            <p className="rounded-xl bg-red-50 p-3 text-sm text-red-700 dark:bg-red-950/30 dark:text-red-300" data-testid="camera-error">
+              {error}
+            </p>
+          )}
+          {/* The page's language is the walkthrough's starting language; the
+              walkthrough still lets them switch. */}
+          <GuidedCapture onComplete={priceFromCamera} locale={locale} />
         </div>
       ) : (
         <div className="space-y-5">

@@ -1,4 +1,5 @@
 import type { SupplyPlan } from './supplies';
+import type { CrewPlan } from './plan';
 
 /**
  * Domain model for AI property analysis.
@@ -24,6 +25,26 @@ export const ROOM_TYPES = [
 ] as const;
 
 export type RoomType = (typeof ROOM_TYPES)[number];
+
+/**
+ * The same names in Spanish, for everything the crew reads — the work plan
+ * and the notes. One table, so the plan and the notes cannot name the same
+ * room two different ways.
+ */
+export const ROOM_LABELS_ES: Record<RoomType, string> = {
+  kitchen: 'Cocina',
+  bathroom: 'Baño',
+  bedroom: 'Dormitorio',
+  living_room: 'Sala',
+  dining_room: 'Comedor',
+  office: 'Oficina',
+  laundry: 'Lavadero',
+  garage: 'Garaje',
+  stairs: 'Escaleras',
+  hallway: 'Pasillo',
+  patio: 'Patio',
+  other: 'Otro espacio',
+};
 
 export const ROOM_LABELS: Record<RoomType, string> = {
   kitchen: 'Kitchen',
@@ -64,12 +85,69 @@ export interface DetectedObject {
   confidence: number;
 }
 
+/**
+ * A surface the room is made of — see lib/vision/materials.ts.
+ *
+ * Separate from `DetectedObject` because it answers a different question: an
+ * object is something to clean, a material is how it has to be cleaned and
+ * what must not touch it.
+ */
+export interface DetectedMaterial {
+  /** A key of MATERIALS. Anything else is discarded on the way in. */
+  name: string;
+  /** 0–1. Warned about when weak, billed only when firm. */
+  confidence: number;
+}
+
+/**
+ * What the customer asked the crew to clean with, from the walkthrough's
+ * closing chat. Never changes the price; `eco` changes what the crew plan may
+ * spray, so the plan cannot order the bleach the customer said no to.
+ */
+export const PRODUCT_PREFERENCES = ['standard', 'eco', 'unscented', 'own'] as const;
+export type ProductPreference = (typeof PRODUCT_PREFERENCES)[number];
+
+/**
+ * Something visibly broken — see lib/vision/damage.ts.
+ *
+ * Never priced. It becomes a question to the customer ("¿quieres que te
+ * contactemos para arreglarlo?") and a note to the crew that it was already
+ * like that before they arrived.
+ */
+export interface DetectedDamage {
+  /** A key of DAMAGE. Anything else is discarded on the way in. */
+  kind: string;
+  /** 0–1. Asked about only when firm; noted for the crew when weaker. */
+  confidence: number;
+}
+
+/**
+ * Things to put away in a room, counted — see lib/vision/tidying.ts.
+ *
+ * Counts rather than a score because a score saturates: "messy" and "you
+ * cannot see the floor" both read near 100, and the second is an hour.
+ */
+export interface TidyingCounts {
+  /** On floors and counters, to be moved so they can be cleaned at all. */
+  toClear: number;
+  /** Of those, how many belong in a different room. Never more than toClear. */
+  elsewhere: number;
+  /** Dishes, pots and pans waiting to be washed. */
+  dishes: number;
+}
+
 export interface RoomAnalysis {
   type: RoomType;
   /** Human label, disambiguated when repeated ("Bedroom 2"). */
   label: string;
   confidence: number;
   objects: DetectedObject[];
+  /** Surfaces that changed the method, already filtered to known ones. */
+  materials?: DetectedMaterial[];
+  /** What had to be put away, when the analyzer counted it. */
+  tidying?: TidyingCounts;
+  /** Broken before anyone arrived, for the crew. Never part of the price. */
+  damage?: DetectedDamage[];
   soil: SoilScores;
   condition: ConditionLevel;
   /** Minutes of cleaning work, computed by the estimator (not the model). */
@@ -94,12 +172,23 @@ export interface PropertyAnalysis {
   suppliesNeeded: string[];
   /** Quantities, costs, PPE and never-mix warnings. See lib/vision/supplies.ts. */
   supplyPlan?: SupplyPlan;
+  /**
+   * The order to do the job in, for the person doing it. See lib/vision/plan.ts.
+   * Never feeds the price: its minutes sum to `totalMinutes` exactly.
+   */
+  crewPlan?: CrewPlan;
   condition: ConditionLevel;
   /** 0–1 overall confidence; drives how wide the quoted range is. */
   confidence: number;
   /** Which engine produced this — surfaced in the admin for auditing. */
   source: 'vision-llm' | 'heuristic';
   warnings: string[];
+  /**
+   * The customer's answers about opening things up, kept with the analysis
+   * they priced. The job timer reads them back to know which extras were
+   * sold ("el horno por dentro") and so which ones to time apart.
+   */
+  depthChoices?: Record<string, 'surface' | 'deep'>;
 }
 
 /** What a vision model is asked to return, before the estimator runs. */
@@ -107,6 +196,15 @@ export interface RawRoomObservation {
   type: RoomType;
   confidence: number;
   objects: DetectedObject[];
+  /** Absent from analyzers that do not look for surfaces. */
+  materials?: DetectedMaterial[];
+  /**
+   * Absent from analyzers that do not count. Without it the room falls back to
+   * the clutter score, exactly as before counting existed.
+   */
+  tidying?: TidyingCounts;
+  /** Absent from analyzers that do not look for it. */
+  damage?: DetectedDamage[];
   soil: SoilScores;
   notes?: string;
 }
@@ -135,7 +233,12 @@ export interface AnalyzerInput {
  */
 export interface VisionAnalyzer {
   readonly name: PropertyAnalysis['source'];
-  analyze(input: AnalyzerInput): Promise<{ rooms: RawRoomObservation[]; warnings: string[] }>;
+  analyze(input: AnalyzerInput): Promise<{
+    rooms: RawRoomObservation[];
+    warnings: string[];
+    /** Spaces whose frames showed no home at all — a car, a street. */
+    notAHome?: number;
+  }>;
 }
 
 export const EMPTY_SOIL: SoilScores = {

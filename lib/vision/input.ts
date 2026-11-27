@@ -136,13 +136,14 @@ export function validateFrames(frames: string[]): string | null {
 /**
  * The most frames one request may carry.
  *
- * Set by the guided walkthrough, which plans a fixed number of deliberate
- * shots and encodes each to `MAX_TOTAL_CHARS / frameCount`. More frames than
- * this means each one is compressed past the point where grout, film on a
- * countertop, or the inside of an oven is still legible — and an unreadable
- * frame costs a model call without improving the estimate.
+ * Set by the guided walkthrough (MAX_GUIDED_FRAMES in lib/capture/guide.ts),
+ * which plans a fixed number of deliberate shots and encodes each to a share
+ * of one size budget. More frames than this means each one is compressed past
+ * the point where grout, film on a countertop, or the inside of an oven is
+ * still legible — and an unreadable frame costs a model call without
+ * improving the estimate. The two numbers move together.
  */
-export const MAX_FRAMES = 24;
+export const MAX_FRAMES = 36;
 
 /** Long enough for "[bathroom-2] bathroom — Ducha o bañera (Baño 2)". */
 export const MAX_CAPTION_CHARS = 160;

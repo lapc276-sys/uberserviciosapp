@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { listPrice, SERVICE_MULTIPLIER } from '../lib/pricing/klaudy';
+import { listPrice, startingPrice, SERVICE_MULTIPLIER } from '../lib/pricing/klaudy';
+import { services } from '../lib/config/services';
 
 /**
  * The quoted prices, exactly.
@@ -64,6 +65,30 @@ test('marks sizes beyond anything actually quoted', () => {
   // than present a guess with the confidence of a real quote.
   assert.equal(listPrice({ bedrooms: 5, bathrooms: 2, serviceSlug: 'house-cleaning' }).quoted, false);
   assert.equal(listPrice({ bedrooms: 2, bathrooms: 4, serviceSlug: 'house-cleaning' }).quoted, false);
+});
+
+test('the headline price on a card is what the calculator will say', () => {
+  // The two numbers are read seconds apart — a card near the top, the
+  // calculator further down — and a customer who sees them disagree believes
+  // the smaller one. This is the bug the page shipped with: the cards were
+  // drawing on the marketplace config's `pricing.base`, which advertised an
+  // apartment at $89 while the calculator priced the same flat at $150.
+  for (const slug of Object.keys(SERVICE_MULTIPLIER)) {
+    const smallest = listPrice({ bedrooms: 1, bathrooms: 1, serviceSlug: slug }).price;
+    assert.equal(startingPrice(slug), smallest, `${slug} advertises a price it will not quote`);
+  }
+});
+
+test('no advertised price sits under the owner\'s floor', () => {
+  // Including the services whose multiplier is still inherited rather than
+  // quoted: an inherited number may be higher than the real one, which costs a
+  // negotiation, but it must never be lower, which costs the job's margin.
+  for (const s of services) {
+    assert.ok(
+      startingPrice(s.slug) >= 110,
+      `${s.slug} would advertise $${startingPrice(s.slug)}, under the $110 floor`,
+    );
+  }
 });
 
 test('never returns less than the smallest quoted job', () => {

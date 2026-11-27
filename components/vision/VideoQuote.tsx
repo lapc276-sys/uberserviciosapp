@@ -12,6 +12,7 @@ import type { VisionQuote } from '@/lib/vision/pricing';
 import { services } from '@/lib/config/services';
 import { cities } from '@/lib/config/cities';
 import { Button } from '@/components/ui/Button';
+import { CrewPlanView } from '@/components/vision/CrewPlanView';
 
 type Stage = 'idle' | 'extracting' | 'analyzing' | 'done' | 'error';
 
@@ -77,6 +78,7 @@ export function VideoQuote() {
     captions: string[] | undefined,
     service: string,
     focus?: string,
+    depthChoices?: Record<string, 'surface' | 'deep'>,
   ) {
     setError('');
     setAnalysis(null);
@@ -89,7 +91,9 @@ export function VideoQuote() {
       const res = await fetch('/api/vision/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ frames: extracted, captions, serviceSlug: service, city, focus }),
+        // The room questions are asked on this page too; their answers have
+        // to reach the price or the questions are theatre.
+        body: JSON.stringify({ frames: extracted, captions, serviceSlug: service, city, focus, depthChoices }),
       });
 
       const { data, failure } = await readJson<any>(res);
@@ -186,7 +190,9 @@ export function VideoQuote() {
               <div className="mx-auto max-w-md text-left">
                 <GuidedCapture
                   serviceSlug={serviceSlug}
-                  onComplete={({ frames: shot, captions, focus }) => analyze(shot, captions, serviceSlug, focus)}
+                  onComplete={({ frames: shot, captions, focus, depthChoices }) =>
+                    analyze(shot, captions, serviceSlug, focus, depthChoices)
+                  }
                   fallback={
                     <button
                       onClick={() => inputRef.current?.click()}
@@ -303,6 +309,12 @@ export function VideoQuote() {
               <Row label="Rooms analyzed" value={String(analysis.rooms.length)} />
               <Row label="AI confidence" value={`${Math.round(analysis.confidence * 100)}%`} />
             </div>
+
+            {analysis.crewPlan && analysis.crewPlan.steps.length > 0 && (
+              <div className="mt-5 border-t pt-4">
+                <CrewPlanView plan={analysis.crewPlan} />
+              </div>
+            )}
 
             {analysis.supplyPlan && analysis.supplyPlan.lines.length > 0 && (
               <div className="mt-5 border-t pt-4">

@@ -23,7 +23,7 @@ flowchart TD
     CAP["captionFor<br/>[kitchen-1] kitchen — Dentro del horno"]
 
     API["POST /api/vision/analyze"]
-    VAL["validateFrames + validateCaptions<br/>≤24 fotos · ≤4 MB · sin IP literales"]
+    VAL["validateFrames + validateCaptions<br/>≤36 fotos · ≤4 MB · sin IP literales"]
     VLM["visionLlmAnalyzer<br/>GPT-4o · detail:'low' · 85 tokens/imagen"]
     EST["buildAnalysis<br/>código determinista, sin IA"]
     PRICE["priceFromAnalysis<br/>tarifas del inquilino"]
@@ -196,6 +196,10 @@ flowchart LR
 
 Cada trabajo hace que el siguiente presupuesto sea mejor. El modelo de visión
 es de OpenAI y cualquiera puede llamarlo mañana; **esta tabla es tuya**.
+
+Cómo aprender además el ritmo de **cada persona** del equipo, y para qué se
+puede usar (y para qué no): `docs/APRENDIZAJE.md`. Cómo se graba, se guarda y
+se convierte en datasets el video del trabajo real: `docs/DATOS.md`.
 
 ### Estado real de la calibración
 

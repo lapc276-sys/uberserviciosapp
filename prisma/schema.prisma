@@ -463,6 +463,14 @@ model Tenant {
   slug         String  @unique
   name         String
   contactEmail String
+  /**
+   * Where a new lead is texted, when they gave a number.
+   *
+   * Optional because email always works and a phone number is the one field
+   * that makes somebody abandon a signup form. The notifier falls back to
+   * email alone when this is empty.
+   */
+  contactPhone String?
   plan         String  @default("trial")
   active       Boolean @default(true)
   monthlyQuota Int     @default(50)
@@ -569,6 +577,39 @@ model TenantLead {
  * the whole reason they exist is to produce labelled minutes for the time
  * model when there is nothing else to learn from.
  */
+/**
+ * The person whose pace is being learned — once, whether they log from the
+ * web timer or from Telegram. Before this existed the same cleaner was two
+ * people (an email and a chat id), and a per-person number split in half is
+ * two numbers that each need twice as long to mean anything.
+ *
+ * Deliberately no age, sex, body or nationality fields. See
+ * docs/APRENDIZAJE.md §5b: the person's own measured work beats any group
+ * average after eight rooms, so those columns would only add noise to the
+ * dataset that is the asset.
+ */
+model Worker {
+  id             String   @id @default(cuid())
+  /**
+   * The cleaning company this person works for. Null = Klaudy.
+   */
+  tenantId       String?
+  /**
+   * The marketplace pro this is, when they are one. Not a foreign key, like
+   * VisionFrameArchive.analysisId: a pro row can go for its own reasons.
+   */
+  proId          String?  @unique
+  email          String?  @unique
+  telegramChatId String?  @unique
+  name           String
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now())
+
+  sessions ActivitySession[]
+
+  @@index([tenantId])
+}
+
 model ActivitySession {
   id          String  @id @default(cuid())
   /**
@@ -578,6 +619,44 @@ model ActivitySession {
   label       String?
   serviceSlug String?
 
+  /**
+   * Who worked. Kept beside loggedBy, which stays for rows from before this.
+   */
+  workerId   String?
+  worker     Worker? @relation(fields: [workerId], references: [id])
+  /**
+   * The quote this job was priced from — the "predicted" half of every ratio
+   * the pace model learns from. Not a foreign key, for the same reason as the
+   * frame archive's.
+   */
+  analysisId String?
+  /**
+   * field | practice | test. `test` never reaches a calculation; the filter
+   * lives in one place (lib/workers/pace.ts) so it cannot be forgotten in one.
+   */
+  source     String  @default("field")
+  /**
+   * City of the property, copied from the analysis — the region of the
+   * global prior.
+   */
+  region     String?
+  /**
+   * People on the job. Segments are per person; this is the context.
+   */
+  crewSize   Int     @default(1)
+  /**
+   * Optional answer at the door: good | normal | tired. Recorded, not yet
+   * used for estimates — see docs/APRENDIZAJE.md §3d.
+   */
+  arrivalFeeling String?
+  /**
+   * Closed after the fact — "Me voy" was forgotten and the job was closed when
+   * the next one started. Its end is set to the last room's end, so its rooms
+   * still count; its door-to-door does not, because the packing-up at the end
+   * was never seen and overhead is exactly the number being measured.
+   */
+  closedLate     Boolean @default(false)
+
   startedAt    DateTime  @default(now())
   endedAt      DateTime?
   /**
@@ -585,10 +664,14 @@ model ActivitySession {
    */
   totalMinutes Int?
 
-  notes    String?
-  segments ActivitySegment[]
+  notes         String?
+  segments      ActivitySegment[]
+  qualityChecks QualityCheck[]
+  recordings    JobRecording[]
 
   @@index([loggedBy, startedAt])
+  @@index([workerId, startedAt])
+  @@index([analysisId])
 }
 
 /**
@@ -605,12 +688,421 @@ model ActivitySegment {
    */
   task     String?
 
+  /**
+   * Which room of the walkthrough ("bathroom-2"), not just which kind — so the
+   * minutes can be set against the prediction for that very room.
+   */
+  roomKey          String?
+  /**
+   * A paid extra timed on its own: a catalogue object plus its depth, e.g.
+   * oven + deep = "el horno por dentro". Never free text.
+   */
+  taskKey          String?
+  depth            String?
+  /**
+   * What the engine predicted for this room or extra, frozen when the segment
+   * started. If the constants change tomorrow, today's ratio still means what
+   * it meant today.
+   */
+  predictedMinutes Float?
+  /**
+   * Two people in the same room at once: counts for the company, not for
+   * either person's pace.
+   */
+  together         Boolean @default(false)
+  /**
+   * Marked wrong ("left the timer running through lunch"). Marked, never
+   * deleted: a record that can be edited without a trace is not ground truth.
+   */
+  excluded         Boolean @default(false)
+  excludedReason   String?
+
   startedAt DateTime
   endedAt   DateTime?
   minutes   Int?
 
   @@index([sessionId])
   @@index([roomType])
+}
+
+/**
+ * Video of a job, recorded hands-free from a phone on the head or chest. The
+ * RAW layer of the dataset (docs/DATOS.md): written once, never edited.
+ *
+ * startedAt is the phone's t0 placed on the server clock, so a room
+ * segment's startedAt minus this startedAt is where that room or object
+ * begins in the video. That one subtraction is what lets the footage be cut
+ * per object later — and what turns a job into labelled demonstrations
+ * rather than three hours of film.
+ *
+ * The bytes live in an S3-compatible bucket (lib/storage/s3.ts) as
+ * independent 30-second segments, uploaded by the phone directly. Without a
+ * bucket they stay on the phone, are exported as a ZIP, and can be ingested
+ * later (pipeline: ingest-zip); this row records that they exist either way.
+ */
+model JobRecording {
+  id           String          @id @default(cuid())
+  sessionId    String
+  session      ActivitySession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  /**
+   * The recording's t=0 on the SERVER clock. Every offset below — segment,
+   * sensor sample, event — is milliseconds from this instant on the phone's
+   * monotonic clock, and `clockOffsetMs` turns phone time into server time.
+   */
+  startedAt    DateTime        @default(now())
+  endedAt      DateTime?
+  mimeType     String
+  /** Configured length of each independent video segment. */
+  chunkSeconds Int
+  /**
+   * Bucket prefix: <prefix>/video/00001.webm, <prefix>/sensors/00001.jsonl.gz.
+   * Null when the recording stayed on the phone.
+   */
+  storagePrefix String?
+  /** Server UTC minus the phone's clock, from the best of several round trips. */
+  clockOffsetMs Float?
+  /** That round trip: the offset is good to about half of it. */
+  clockRttMs    Float?
+  /** What the camera actually delivered: width, height, frameRate, facingMode, bitrate. */
+  capture       Json?
+  /** The phone: user agent, platform, memory, cores, screen. No identifiers. */
+  device        Json?
+  /** Audio is off unless a consent says otherwise; recorded here either way. */
+  audio         Boolean  @default(false)
+  createdAt     DateTime @default(now())
+
+  segments     VideoSegment[]
+  sensorChunks SensorChunk[]
+  events       RecordingEvent[]
+  frames       ExtractedFrame[]
+
+  @@index([sessionId])
+}
+
+/**
+ * One independently playable piece of a recording, as uploaded. RAW: written
+ * once when the phone confirms the upload and never edited afterwards. What
+ * the pipeline later thinks of it goes to QualityFinding, not here.
+ */
+model VideoSegment {
+  id          String       @id @default(cuid())
+  recordingId String
+  recording   JobRecording @relation(fields: [recordingId], references: [id], onDelete: Cascade)
+  index       Int
+  objectKey   String
+  mimeType    String
+  bytes       Int
+  /** Computed on the phone before upload; the pipeline re-checks the object against it. */
+  sha256      String
+  /** Phone monotonic ms from the recording's t=0. Segments may overlap by a few ms: none is lost. */
+  monoStartMs Float
+  monoEndMs   Float
+  uploadedAt  DateTime     @default(now())
+
+  frames ExtractedFrame[]
+
+  @@unique([recordingId, index])
+  @@index([sha256])
+}
+
+/**
+ * Accelerometer, gyroscope and orientation, as gzipped JSONL in the bucket
+ * (format in lib/recording/format.ts). RAW. Samples are not rows: three hours
+ * at 60 Hz is 650,000 of them per recording.
+ *
+ * Lined up with the video by TIME, not by index: the sensors keep running
+ * through a privacy pause, when there is no video segment to pair with.
+ */
+model SensorChunk {
+  id          String       @id @default(cuid())
+  recordingId String
+  recording   JobRecording @relation(fields: [recordingId], references: [id], onDelete: Cascade)
+  index       Int
+  objectKey   String
+  bytes       Int
+  sha256      String
+  samples     Int
+  /** e.g. ["motion", "orientation"] — what the phone could provide. */
+  streams     String[]
+  monoStartMs Float
+  monoEndMs   Float
+  uploadedAt  DateTime     @default(now())
+
+  @@unique([recordingId, index])
+}
+
+/**
+ * Everything that happened to a recording that is not a frame: interruptions
+ * (screen hidden, camera lost, offline, page closed), privacy pauses, and a
+ * telemetry snapshot per segment (battery, storage, track settings). RAW.
+ */
+model RecordingEvent {
+  id          String        @id @default(cuid())
+  recordingId String?
+  recording   JobRecording? @relation(fields: [recordingId], references: [id], onDelete: Cascade)
+  sessionId   String?
+  /**
+   * The phone's own counter. With the unique index below it makes sending an
+   * event twice harmless — a retry, a beacon from a closing page and a
+   * recovery the next morning can all carry the same event. Null for events
+   * the server writes itself.
+   */
+  seq         Int?
+  kind        String
+  /** Phone monotonic ms from the recording's t=0, when there is a recording. */
+  monoMs      Float?
+  clientUtcMs Float?
+  serverAt    DateTime      @default(now())
+  data        Json?
+
+  @@unique([recordingId, seq])
+  @@index([recordingId, serverAt])
+  @@index([kind])
+}
+
+/**
+ * Who agreed to what, in which words. A recording without both a worker
+ * consent and a customer authorisation is refused by the API, and a dataset
+ * row without its consent trail is worth nothing to anyone who audits it.
+ */
+model RecordingConsent {
+  id          String    @id @default(cuid())
+  /** worker | customer */
+  kind        String
+  workerId    String
+  /** The job, for a customer authorisation; null for the worker's own standing consent. */
+  sessionId   String?
+  /** Version of the wording, e.g. "2026-11-v1". */
+  version     String
+  statement   String
+  video       Boolean   @default(true)
+  audio       Boolean   @default(false)
+  givenAt     DateTime  @default(now())
+  withdrawnAt DateTime?
+  /** Who pressed the button: the worker, attesting for the customer when kind = customer. */
+  recordedBy  String
+
+  @@index([workerId, kind])
+  @@index([sessionId])
+}
+
+/**
+ * A frame the pipeline pulled out of a segment. DERIVED and reproducible:
+ * the same segment, method and pipeline version give the same frames, each
+ * pointing back at its source and its exact presentation time.
+ */
+model ExtractedFrame {
+  id              String       @id @default(cuid())
+  recordingId     String
+  recording       JobRecording @relation(fields: [recordingId], references: [id], onDelete: Cascade)
+  segmentId       String
+  segment         VideoSegment @relation(fields: [segmentId], references: [id], onDelete: Cascade)
+  /** Presentation time inside the segment, from the container. */
+  ptsMs           Float
+  /** From the recording's t=0: the segment's start plus the pts. */
+  offsetMs        Float
+  objectKey       String
+  width           Int
+  height          Int
+  sha256          String
+  /** uniform | scene | motion */
+  method          String
+  pipelineVersion String
+  createdAt       DateTime     @default(now())
+
+  @@unique([segmentId, ptsMs, method, pipelineVersion])
+  @@index([recordingId, offsetMs])
+}
+
+/**
+ * Exactly which model said something: provider, model, version, prompt
+ * version and the configuration it ran with. An annotation from "gpt-4o"
+ * means nothing a year later; one from this row can be reproduced or
+ * discounted.
+ */
+model ModelVersion {
+  id            String   @id @default(cuid())
+  provider      String
+  model         String
+  version       String
+  promptVersion String   @default("")
+  configHash    String
+  config        Json
+  createdAt     DateTime @default(now())
+
+  annotations Annotation[]
+
+  @@unique([provider, model, version, promptVersion, configHash])
+}
+
+/**
+ * Every interpretation of a recording, from any source, in one timeline.
+ *
+ * APPEND-ONLY. A human correcting a model does not edit the model's row: a
+ * new row is written with source "human" and `supersedesId` pointing at it.
+ * The prediction, the correction and who made it all survive — which is
+ * what makes "how often is the model wrong" a query instead of a memory.
+ *
+ * kind: activity | action | task | object | surface | room | difficulty |
+ *       effort | quality | environment
+ * source: machine | worker | human
+ * reviewStatus: unreviewed | accepted | rejected | corrected
+ *
+ * Worker declarations made live (voice markers, timer taps) stay where they
+ * were recorded, in ActivitySegment; exports present them as source "worker".
+ */
+model Annotation {
+  id             String        @id @default(cuid())
+  kind           String
+  label          String
+  recordingId    String?
+  sessionId      String?
+  startOffsetMs  Float?
+  endOffsetMs    Float?
+  startAt        DateTime?
+  endAt          DateTime?
+  activeMs       Int?
+  waitingMs      Int?
+  repetitions    Int?
+  objectKey      String?
+  surface        String?
+  roomKey        String?
+  tools          String[]
+  /** Lighting, occupancy, pets — whatever the environment was. */
+  conditions     Json?
+  /** Kind-specific scores: difficulty indicators, effort scales, quality marks. */
+  attributes     Json?
+  /** Frames and segments this rests on: [{ segmentId, ptsMs }]. */
+  frameRefs      Json?
+  confidence     Float?
+  source         String
+  reviewStatus   String        @default("unreviewed")
+  modelVersionId String?
+  modelVersion   ModelVersion? @relation(fields: [modelVersionId], references: [id])
+  /** The worker or admin who made it, for worker and human sources. */
+  annotatorId    String?
+  supersedesId   String?
+  supersedes     Annotation?   @relation("Correction", fields: [supersedesId], references: [id])
+  supersededBy   Annotation[]  @relation("Correction")
+  createdAt      DateTime      @default(now())
+
+  @@index([recordingId, startOffsetMs])
+  @@index([sessionId])
+  @@index([kind, label])
+  @@index([supersedesId])
+}
+
+/**
+ * What the pipeline found wrong with the data — never fixed by guessing.
+ * The full list of kinds, with what each means, is KINDS in
+ * pipeline/klaudy_pipeline/findings.py (e.g. checksum_mismatch,
+ * missing_segment, corrupt_video, video_gap, sensor_gap, clock_untrusted).
+ * A finding is resolved by setting resolvedAt, never by deleting it.
+ */
+model QualityFinding {
+  id              String    @id @default(cuid())
+  recordingId     String?
+  sessionId       String?
+  segmentId       String?
+  kind            String
+  /** info | warning | error */
+  severity        String
+  details         Json?
+  pipelineVersion String
+  createdAt       DateTime  @default(now())
+  resolvedAt      DateTime?
+
+  @@index([recordingId])
+  @@index([kind])
+}
+
+/**
+ * The work queue between the app and the Python pipeline. Postgres rather
+ * than Redis at this scale: one less service to run, and FOR UPDATE SKIP
+ * LOCKED gives the same "one worker per job" guarantee. Redis is the move
+ * when jobs per second, not jobs per day, is the number.
+ */
+model ProcessingJob {
+  id          String    @id @default(cuid())
+  /** validate_recording | extract_frames | summarize_sensors | export_dataset */
+  kind        String
+  payload     Json
+  /** queued | running | done | failed */
+  status      String    @default("queued")
+  attempts    Int       @default(0)
+  maxAttempts Int       @default(5)
+  runAfter    DateTime  @default(now())
+  lockedAt    DateTime?
+  lockedBy    String?
+  error       String?
+  createdAt   DateTime  @default(now())
+  finishedAt  DateTime?
+
+  @@index([status, runAfter])
+}
+
+/**
+ * An immutable export: JSONL and Parquet files plus a manifest with their
+ * checksums, under datasets/<name>/v<version>/ in the bucket. A model
+ * trained on "v7" can always be traced to exactly the rows it saw.
+ */
+model DatasetVersion {
+  id              String   @id @default(cuid())
+  name            String
+  version         Int
+  description     String?
+  filters         Json
+  codeVersion     String
+  pipelineVersion String
+  manifestKey     String
+  counts          Json
+  createdAt       DateTime @default(now())
+
+  @@unique([name, version])
+}
+
+/** Every read, export or deletion of raw recordings, by whom and why. */
+model DataAccessLog {
+  id        String   @id @default(cuid())
+  actor     String
+  /** read | export | delete */
+  action    String
+  resource  String
+  reason    String?
+  createdAt DateTime @default(now())
+
+  @@index([resource])
+  @@index([createdAt])
+}
+
+/**
+ * Whether the work was good enough to count. A fast room that had to be
+ * redone is not fast, and the pace model skips it.
+ */
+model QualityCheck {
+  id        String          @id @default(cuid())
+  sessionId String
+  session   ActivitySession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  /**
+   * The room checked, or null for the whole job.
+   */
+  roomKey   String?
+  /**
+   * ok | redo
+   */
+  result    String
+  /**
+   * customer | photos | worker | supervisor
+   */
+  by        String
+  /**
+   * 0-100, when it came from the before/after photos or a rating.
+   */
+  score     Float?
+  note      String?
+  createdAt DateTime @default(now())
+
+  @@index([sessionId])
 }
 
 /**

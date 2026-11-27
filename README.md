@@ -37,7 +37,7 @@ This is the mechanism that satisfies *"escalar sin rehacer el sistema"*.
 - SEO-first: dynamic **metadata**, **JSON-LD** (Organization, LocalBusiness, Service, FAQ, Breadcrumb), **sitemap**, **robots**, **OpenGraph / Twitter cards**, canonical URLs
 - Integrations are **env-gated**: the whole platform runs with zero keys and lights up as you add them (OpenAI, Stripe, Resend, Twilio, Google Calendar, Supabase, Redis).
 
-Deploy target: **Vercel** + Cloudflare. Data layer (Phase 2): **Supabase / Postgres**.
+Deploy target: **Replit** (Autoscale, configured in `.replit`); **Vercel** works too from `vercel.json`, with no code changes. Data layer: **Postgres** (Replit's built-in database or Supabase).
 
 ---
 
@@ -152,7 +152,7 @@ video → frames (in-browser) → vision model → rooms + objects + soil scores
 - `/admin/analytics`: booked value, average ticket, lead→booking conversion, completion rate, recurring share
 - Conversion funnel (leads → bookings → completed), 14-day demand chart, booked value by service, bookings by city (with table view)
 - Zero chart dependencies (server-rendered), brand hue validated for light & dark surfaces, works on in-memory or DB data
-- `SETUP.md`: step-by-step account setup guide (Vercel → Supabase → Stripe → Resend → Twilio → WhatsApp → OpenAI → GA4/Pixel)
+- `SETUP.md`: step-by-step account setup guide (Replit → Postgres → Stripe → Resend → Twilio → WhatsApp → OpenAI → GA4/Pixel → scheduled tasks), with Vercel as an appendix
 
 
 
@@ -171,7 +171,7 @@ video → frames (in-browser) → vision model → rooms + objects + soil scores
 - **Resend** (`lib/email.ts`): branded HTML confirmation, reminder and review-request emails
 - **Twilio** (`lib/sms.ts`): SMS confirmations and reminders
 - **Automation pipeline** (`lib/automations.ts`) now fires real email + SMS + invoice on every booking (env-gated, dry-run without keys)
-- **Time-based automations** via `/api/cron/reminders` (Vercel Cron, hourly): 24h + 2h reminders and post-service review requests, each guarded by a per-booking flag so it fires exactly once
+- **Time-based automations** via `/api/cron/reminders` (hourly: a Replit scheduled task running `npm run cron:reminders`, or Vercel Cron): 24h + 2h reminders and post-service review requests, each guarded by a per-booking flag so it fires exactly once
 - Verified: booking → 24h reminder + review request sent once; second run is a no-op (idempotent); Stripe webhook rejects bad signatures (400)
 
 

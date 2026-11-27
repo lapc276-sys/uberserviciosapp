@@ -3,23 +3,69 @@
 Esta guía te lleva de cero a un negocio **en vivo y cobrando**, paso a paso.
 Cada pieza se activa sola al pegar su variable de entorno — no hay que tocar código.
 
-> **Estás en Replit.** Donde esta guía diga *"Vercel → Environment Variables"*,
-> lee **Replit → Secrets** (el candado en la barra lateral). Es lo mismo con
-> otro nombre. El Paso 1 sigue aquí por si algún día vuelves a Vercel; para
-> Replit basta importar el repo y pulsar **Deploy**.
+La app vive en **Replit**. Si algún día quieres llevarla a Vercel, está al
+final ([Alternativa: Vercel](#alternativa-vercel)); no hace falta cambiar código
+para ninguna de las dos.
 
 > **Regla de oro:** haz los pasos en orden. Los pasos 1–4 son el mínimo para operar y cobrar.
-> Todo lo demás se puede sumar después sin prisa.
+> Para que la **cotización por cámara** mire de verdad las fotos hace falta
+> también el **Paso 9 (OpenAI)**: sin esa clave el precio es una demostración
+> que no mira las fotos. Todo lo demás se puede sumar después sin prisa.
 
 ---
 
-## Paso 1 — Vercel (hosting) · Gratis · ~10 min
+## Paso 1 — Replit (hosting) · ~10 min
 
-1. Entra a **[vercel.com](https://vercel.com)** → **Sign Up** → elige **Continue with GitHub** (usa la cuenta dueña de este repo).
-2. Clic en **Add New… → Project**.
-3. Busca el repo **`uberserviciosapp`** → **Import**.
-4. En *Configure Project* no cambies nada (Vercel detecta Next.js solo) → **Deploy**.
-5. En ~2 minutos tendrás una URL tipo `https://uberserviciosapp.vercel.app`. **Guárdala.**
+### 1a. Traer el proyecto
+
+1. En Replit: **Create Repl → Import from GitHub** →
+   `lapc276-sys/uberserviciosapp`, rama `main`.
+   - Crea un Repl **nuevo** para esto. No reutilices uno que ya tengas para
+     otra cosa (KitchInspect, el de F1…): cada proyecto pisaría al otro.
+   - Si el trabajo más reciente todavía está en otra rama (las que empiezan por
+     `claude/`) y aún no se ha unido a `main`, elige esa rama hasta que se una.
+2. Replit detecta Node.js y lee el archivo `.replit` que ya está en el
+   repositorio. No hay que configurar nada más.
+
+### 1b. Secrets: dónde van todas las claves
+
+Panel izquierdo → **Secrets** (el icono del candado). **Cada vez que esta guía
+diga "añade la variable X", es aquí.** Mínimo para poder entrar al panel:
+
+| Clave | Valor |
+|---|---|
+| `AUTH_SECRET` | una cadena larga y aleatoria (ver Paso 3) |
+| `ADMIN_EMAIL` | tu correo |
+| `ADMIN_PASSWORD` | una contraseña larga |
+| `NEXT_PUBLIC_SITE_URL` | la dirección pública, sin barra final |
+
+`NEXT_PUBLIC_SITE_URL` la sabrás después de publicar. Ponla, vuelve a
+publicar, y ya queda bien.
+
+⚠️ **`NEXT_PUBLIC_` significa "esto se envía al navegador".** Va solo en la
+dirección web, que es pública de todas formas. Nunca se lo pongas a
+`AUTH_SECRET` ni a `ADMIN_PASSWORD` — cualquiera que abra tu web podría leerlas.
+
+⚠️ **Un secreto nuevo no entra solo en la web publicada.** Después de añadir o
+cambiar uno, **vuelve a publicar** (Deploy → *Redeploy*). Si un paso "no hace
+nada", casi siempre es esto.
+
+### 1c. Publicar
+
+Botón **Deploy** → **Autoscale**. Los comandos ya vienen puestos en `.replit`:
+
+- Build: `npm run build`
+- Run: `npm run start`
+
+El `start` escucha en `0.0.0.0` y en el puerto que Replit asigne. Comprobado
+arrancando en un puerto distinto del habitual.
+
+En unos minutos tendrás una dirección tipo `https://<nombre>.replit.app`.
+**Guárdala**: es tu `NEXT_PUBLIC_SITE_URL` hasta que tengas dominio propio.
+
+**Aviso de costes:** un Autoscale Deployment consume créditos de cómputo aparte
+de tu suscripción. Con poco tráfico suele ser insignificante, pero míralo antes
+de dejarlo corriendo — no vale la pena huir de una factura para encontrarse otra.
 
 ✅ **Resultado:** el sitio completo en vivo (páginas, SEO, cotizador, reservas en memoria, chatbot con reglas).
 
@@ -35,6 +81,9 @@ Replit levanta y apaga varios contenedores según la demanda. Con datos en
 memoria **cada contenedor tiene los suyos**: dos clientes cotizando a la vez
 pueden caer en contenedores distintos y ver cosas diferentes, y todo se borra
 cuando el contenedor duerme. No es "se reinicia": es que no hay una sola verdad.
+
+Por eso mismo el registro público de empresas (`/empezar`) **se niega** a
+funcionar sin base de datos: dos empresas podrían quedarse con el mismo enlace.
 
 ### Opción A — Postgres de Replit (lo más simple)
 
@@ -73,7 +122,12 @@ npm run db:seed    # admin + datos de ejemplo (opcional)
 > ⚠️ Usa `npm run db:push`, **nunca** `npx prisma db push`. `npx` se descarga
 > Prisma 7 y se lleva por delante `node_modules`; ya pasó una vez.
 
-Luego **Deploy → Redeploy**.
+**Cada vez que traigas código nuevo** que cambie `prisma/schema.prisma`, vuelve
+a ejecutar `npm run db:push` antes de publicar. Si no, la web intenta guardar
+en columnas que la base todavía no tiene y esa parte falla (por ejemplo, el
+cronómetro por persona del 24 nov 2026 añadió tablas nuevas).
+
+Luego **vuelve a publicar**.
 
 ✅ **Resultado:** reservas, clientes, inquilinos y —lo que más importa— las
 muestras de calibración de cada trabajo se guardan de verdad.
@@ -82,16 +136,16 @@ muestras de calibración de cada trabajo se guardan de verdad.
 
 ## Paso 3 — Acceso al panel admin · Gratis · ~5 min
 
-1. Genera un secreto (en cualquier terminal):
+1. Genera un secreto (en el **Shell** de Replit o cualquier terminal):
    ```bash
    openssl rand -base64 32
    ```
    (o usa un generador de contraseñas largo).
-2. En **Vercel → Environment Variables** añade:
+2. En **Replit → Secrets** añade:
    - `AUTH_SECRET` = el secreto generado
    - `ADMIN_EMAIL` = tu email (ej. `lapc9801@gmail.com`)
    - `ADMIN_PASSWORD` = una contraseña fuerte que tú elijas
-3. Redeploy.
+3. Vuelve a publicar.
 
 ✅ **Resultado:** entra a `https://TU-URL/admin/login` con ese email y contraseña. Panel protegido con roles.
 
@@ -106,10 +160,10 @@ muestras de calibración de cada trabajo se guardan de verdad.
    - URL: `https://TU-URL/api/stripe/webhook`
    - Eventos: `invoice.paid` y `invoice.payment_succeeded`
    - Copia el **Signing secret** (`whsec_…`).
-5. En **Vercel → Environment Variables**:
+5. En **Replit → Secrets**:
    - `STRIPE_SECRET_KEY` = `sk_…`
    - `STRIPE_WEBHOOK_SECRET` = `whsec_…`
-6. Redeploy.
+6. Vuelve a publicar.
 
 ✅ **Resultado:** cada reserva genera una **factura de Stripe** automática; al pagarse se marca PAID en tu panel.
 
@@ -133,8 +187,14 @@ Después, cada pro entra a `tudominio.com/pros/payouts` y completa su registro e
 ## Paso 5 — Dominio propio · ~$12/año · ~15 min
 
 1. Compra el dominio en **[namecheap.com](https://namecheap.com)** o **[cloudflare.com](https://cloudflare.com)** (ej. `homigoservices.com`).
-2. En **Vercel → Settings → Domains → Add** → escribe tu dominio → sigue las instrucciones (Vercel te da 2 registros DNS para copiar en Namecheap/Cloudflare).
-3. En **Environment Variables**: `NEXT_PUBLIC_SITE_URL` = `https://tudominio.com` → Redeploy.
+2. En Replit → **Deployments** → pestaña **Settings** → **Link a domain** →
+   escribe tu dominio. Replit te da los registros DNS (normalmente uno `A` y uno
+   `TXT`) para copiar en Namecheap/Cloudflare. Tarda desde minutos hasta unas
+   horas en verificarse.
+   - Si usas Cloudflare y Replit no consigue verificarlo, cambia esos registros
+     a *DNS only* (la nube gris en vez de la naranja) y vuelve a intentarlo.
+3. En **Secrets**: `NEXT_PUBLIC_SITE_URL` = `https://tudominio.com` (y
+   `CRON_TARGET_URL` igual, si ya hiciste el Paso 11) → vuelve a publicar.
 
 ✅ **Resultado:** URL profesional + SEO apuntando al dominio correcto.
 
@@ -145,12 +205,12 @@ Después, cada pro entra a `tudominio.com/pros/payouts` y completa su registro e
 1. Entra a **[resend.com](https://resend.com)** → **Sign up**.
 2. **Domains → Add Domain** → tu dominio → añade los registros DNS que te indica (en Namecheap/Cloudflare).
 3. **API Keys → Create API Key** → copia la key (`re_…`).
-4. En Vercel:
+4. En **Replit → Secrets**:
    - `RESEND_API_KEY` = `re_…`
    - `RESEND_FROM` = `Klaudy <hello@tudominio.com>`
-5. Redeploy.
+5. Vuelve a publicar.
 
-✅ **Resultado:** confirmaciones, recordatorios 24h/2h, solicitudes de reseña y win-back **por email, solos**.
+✅ **Resultado:** confirmaciones, recordatorios 24h/2h, solicitudes de reseña y win-back **por email, solos** (los recordatorios necesitan además el Paso 11).
 
 ---
 
@@ -159,9 +219,9 @@ Después, cada pro entra a `tudominio.com/pros/payouts` y completa su registro e
 1. Entra a **[twilio.com](https://twilio.com)** → crea cuenta → verifica tu teléfono.
 2. **Phone Numbers → Buy a Number** → compra un número de EE. UU. con SMS.
 3. En la **Console** copia: `Account SID` y `Auth Token`.
-4. En Vercel:
+4. En **Replit → Secrets**:
    - `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_PHONE_NUMBER` (formato `+1XXXXXXXXXX`)
-5. Redeploy.
+5. Vuelve a publicar.
 
 ✅ **Resultado:** SMS de confirmación y recordatorios + notificación al pro asignado.
 
@@ -174,7 +234,7 @@ Para que la IA **conteste el teléfono**:
 3. En **Call status changes**: pega `https://TU-URL/api/voice/status`, método **HTTP POST**.
 4. **Save.**
 
-Opcional en Vercel:
+Opcional en **Replit → Secrets**:
 - `VOICE_TRANSFER_NUMBER` = tu celular, para cuando el cliente pida hablar con una persona.
 - `TWILIO_VOICE` = otra voz de la lista de Twilio (por defecto `Polly.Joanna-Neural`).
 
@@ -194,7 +254,7 @@ Opcional en Vercel:
    - **Access token** (crea uno permanente en *Business Settings → System Users*) → `WHATSAPP_ACCESS_TOKEN`
 5. Inventa un texto secreto (ej. `homigo-verify-2026`) → `WHATSAPP_VERIFY_TOKEN`.
 6. En **App Settings → Basic** copia el **App Secret** → `WHATSAPP_APP_SECRET`.
-7. Pega esas 4 variables en Vercel → Redeploy.
+7. Pega esas 4 variables en **Replit → Secrets** → vuelve a publicar.
 8. De vuelta en Meta: **WhatsApp → Configuration → Webhook → Edit**:
    - Callback URL: `https://TU-URL/api/whatsapp`
    - Verify token: el mismo que inventaste
@@ -204,13 +264,22 @@ Opcional en Vercel:
 
 ---
 
-## Paso 9 — OpenAI (IA conversacional avanzada) · centavos por chat · ~5 min
+## Paso 9 — OpenAI (la IA que mira las fotos y conversa) · centavos por uso · ~5 min
 
 1. Entra a **[platform.openai.com](https://platform.openai.com)** → crea cuenta → **Billing** → añade $5–10 de crédito.
 2. **API Keys → Create new secret key** → copia (`sk-…`).
-3. En Vercel: `OPENAI_API_KEY` = `sk-…` → Redeploy.
+3. En **Replit → Secrets**: `OPENAI_API_KEY` = `sk-…` → vuelve a publicar.
 
-✅ **Resultado:** el chatbot y WhatsApp pasan de "reglas" a conversación natural completa. *(Sin esta key igual funcionan con el motor de reglas.)*
+✅ **Resultado:**
+- La **cotización por cámara** pasa de demostración a inspección real: la IA
+  puntúa la suciedad de cada cuarto, ve los objetos y lo que está roto, y el
+  código calcula el precio con eso. Sin la clave, el recorrido funciona igual
+  pero el precio sale de una plantilla que no mira las fotos (el análisis lleva
+  la advertencia *"Demo estimate"*).
+- El chatbot y WhatsApp pasan de "reglas" a conversación natural completa.
+
+> 🔒 Esta clave va **solo** en Secrets. No la pegues en un chat, en un correo
+> ni en una captura: quien la tenga gasta tu crédito.
 
 ---
 
@@ -223,7 +292,7 @@ Opcional en Vercel:
 
 **Google Analytics 4:**
 1. **[analytics.google.com](https://analytics.google.com)** → crea propiedad → copia el ID `G-XXXXXXX`.
-2. En Vercel: `NEXT_PUBLIC_GA_ID` = `G-XXXXXXX`.
+2. En **Replit → Secrets**: `NEXT_PUBLIC_GA_ID` = `G-XXXXXXX`.
 
 **Messenger + Instagram DM automáticos** (opcional):
 1. En la misma app de Meta que creaste para WhatsApp: **Add Product → Messenger → Settings**.
@@ -239,9 +308,122 @@ El panel **Marketing** te dirá cuántas reservas y cuánto dinero trajo cada ca
 
 **Meta Pixel** (para anuncios de Facebook/Instagram después):
 1. **Events Manager** en business.facebook.com → crea Pixel → copia el ID numérico.
-2. En Vercel: `NEXT_PUBLIC_META_PIXEL_ID` = ese ID.
+2. En **Replit → Secrets**: `NEXT_PUBLIC_META_PIXEL_ID` = ese ID.
 
-**Cron (recordatorios):** añade también `CRON_SECRET` = otro secreto generado (`openssl rand -base64 32`). Vercel Cron ya está configurado en `vercel.json` y corre cada hora.
+---
+
+## Paso 11 — Tareas programadas (recordatorios y campañas) · ~10 min
+
+Los recordatorios de 24 h / 2 h, las solicitudes de reseña y las campañas no
+los dispara nadie: los lanza un reloj. En Replit ese reloj se crea a mano, una
+vez: **Deployments → Scheduled**, una tarea por cada fila.
+
+| Tarea | Comando | Cuándo |
+|---|---|---|
+| Recordatorios | `npm run cron:reminders` | cada hora: `0 * * * *` |
+| Campañas | `npm run cron:campaigns` | martes 15:00 UTC: `0 15 * * 2` (si Replit pide zona horaria, elige UTC) |
+
+Necesitan dos secretos más:
+
+| Clave | Valor |
+|---|---|
+| `CRON_SECRET` | otra cadena aleatoria (`openssl rand -base64 32`) |
+| `CRON_TARGET_URL` | la misma dirección pública de la app |
+
+Hace falta `CRON_TARGET_URL` porque una tarea programada corre en un contenedor
+**distinto** al de la web: no puede llamarse a sí misma por `localhost`. Cuando
+cambies a dominio propio (Paso 5), cámbiala también.
+
+Si una tarea falla —clave incorrecta, web caída— el comando **termina con
+error**, así que Replit te la marca en rojo. Una tarea rota que apareciera en
+verde sería peor que no tener tarea: creerías que se enviaron recordatorios que
+nadie recibió.
+
+✅ **Resultado:** los recordatorios salen solos cada hora (cada uno una sola
+vez por reserva) y las campañas cada martes.
+
+---
+
+## Paso 12 — Guardar los videos del equipo (Cloudflare R2) · 10 GB gratis · ~15 min
+
+Solo hace falta si el equipo graba con **manos libres** en `/pilot/tiempo`.
+Sin este paso todo funciona igual: los tiempos se guardan, y el video se queda
+en el teléfono con un botón para guardarlo al terminar (un archivo .zip que
+luego se puede subir con el Paso 13).
+
+Una hora de trabajo grabada pesa hasta unos 350 MB. El teléfono la sube
+directamente a R2 en partes de 30 segundos que se reproducen solas; no pasa
+por Replit. Cómo se guarda todo y por qué: `docs/DATOS.md`.
+
+1. **[dash.cloudflare.com](https://dash.cloudflare.com)** → **R2** → **Create bucket** → nombre `klaudy-trabajos`.
+2. En el bucket → **Settings** → **CORS policy** → **Edit**, y pega esto (cambia la dirección por la tuya):
+   ```json
+   [
+     {
+       "AllowedOrigins": ["https://tudominio.com"],
+       "AllowedMethods": ["PUT"],
+       "AllowedHeaders": ["Content-Type"],
+       "MaxAgeSeconds": 3600
+     }
+   ]
+   ```
+   Sin esto el navegador del teléfono no deja subir nada, y los videos se
+   quedan en el teléfono.
+3. **R2** → **Manage R2 API Tokens** → **Create API token** → permiso
+   **Object Read & Write**, solo para ese bucket. Te enseña un **Access Key
+   ID** y un **Secret Access Key** una sola vez.
+4. En **Replit → Secrets**:
+   - `STORAGE_S3_ENDPOINT` = `https://<TU-ACCOUNT-ID>.r2.cloudflarestorage.com` (aparece en la página de R2)
+   - `STORAGE_S3_BUCKET` = `klaudy-trabajos`
+   - `STORAGE_S3_ACCESS_KEY_ID` = el Access Key ID
+   - `STORAGE_S3_SECRET_ACCESS_KEY` = el Secret Access Key
+5. Vuelve a publicar.
+
+✅ **Resultado:** en el cronómetro, con manos libres, pone "N partes subidas".
+
+> 💸 R2 da 10 GB gratis al mes y luego cobra por GB guardado, sin cobrar por
+> descargar (a noviembre de 2026; compruébalo en su página de precios). Sirve
+> también AWS S3: mismas variables, con su dirección.
+
+---
+
+## Paso 13 — Procesar los videos (pipeline de datos) · Gratis · ~20 min
+
+Solo hace falta cuando ya hay videos (Paso 12). Revisa cada grabación (que
+no falte ninguna parte y que los bytes sean los que grabó el teléfono), saca
+fotogramas con su hora exacta, resume el movimiento, y prepara los datasets
+para entrenar. Es Python, vive en la carpeta `pipeline/` y usa la misma base
+de datos y el mismo bucket que la app: **no hay Secrets nuevos**.
+
+1. En Replit, en la pestaña **Shell**:
+   ```bash
+   pip install -r pipeline/requirements.txt
+   ```
+   Y en **Tools → Dependencies → System**, añade el paquete `ffmpeg`.
+2. Compruébalo: procesa lo que esté pendiente y termina.
+   ```bash
+   cd pipeline && python -m klaudy_pipeline run --once
+   ```
+   Escribe una línea por trabajo hecho (`"ok": true`).
+3. **Deployments → Scheduled**, dos tareas:
+   - cada 5 minutos: `cd pipeline && python -m klaudy_pipeline run --once`
+   - cada hora: `cd pipeline && python -m klaudy_pipeline sweep`
+4. Cuando quieras un dataset:
+   ```bash
+   cd pipeline && python -m klaudy_pipeline export trabajos --description "primer corte"
+   ```
+   Queda en el bucket, en `datasets/trabajos/v1/`, y la próxima vez será `v2`.
+
+Otras órdenes, para cuando hagan falta:
+
+- `ingest-zip archivo.zip` — sube un video que se quedó en el teléfono.
+- `delete-recording <id> --reason "lo pidió"` — borra una grabación entera.
+- `withdraw-consent <workerId>` — saca a una persona de los datasets siguientes.
+- `purge --older-than-days 365` — dice qué borraría por antigüedad; con
+  `--apply` lo borra. Nada se borra solo.
+
+✅ **Resultado:** después de un trabajo con manos libres, a los ~10 minutos
+la grabación tiene sus fotogramas y su revisión hechas.
 
 ---
 
@@ -249,8 +431,8 @@ El panel **Marketing** te dirá cuántas reservas y cuánto dinero trajo cada ca
 
 | Paso | Cuenta | Variable(s) | ¿Listo? |
 |------|--------|-------------|---------|
-| 1 | Vercel | — | ☐ |
-| 2 | Supabase | `DATABASE_URL` | ☐ |
+| 1 | Replit (hosting) | — | ☐ |
+| 2 | Base de datos (Postgres de Replit o Supabase) | `DATABASE_URL` | ☐ |
 | 3 | Admin | `AUTH_SECRET`, `ADMIN_EMAIL`, `ADMIN_PASSWORD` | ☐ |
 | 4 | Stripe | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` | ☐ |
 | 5 | Dominio | `NEXT_PUBLIC_SITE_URL` | ☐ |
@@ -258,8 +440,13 @@ El panel **Marketing** te dirá cuántas reservas y cuánto dinero trajo cada ca
 | 7 | Twilio | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_PHONE_NUMBER` | ☐ |
 | 8 | WhatsApp | `WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_APP_SECRET` | ☐ |
 | 9 | OpenAI | `OPENAI_API_KEY` | ☐ |
-| 10 | GA4 / Pixel / Cron | `NEXT_PUBLIC_GA_ID`, `NEXT_PUBLIC_META_PIXEL_ID`, `CRON_SECRET` | ☐ |
+| 10 | GA4 / Pixel | `NEXT_PUBLIC_GA_ID`, `NEXT_PUBLIC_META_PIXEL_ID` | ☐ |
 | 10b | Messenger / Instagram | `META_VERIFY_TOKEN`, `META_PAGE_TOKEN`, `META_APP_SECRET` | ☐ |
+| 11 | Tareas programadas | `CRON_SECRET`, `CRON_TARGET_URL` | ☐ |
+| 12 | Videos del equipo (R2) | `STORAGE_S3_ENDPOINT`, `STORAGE_S3_BUCKET`, `STORAGE_S3_ACCESS_KEY_ID`, `STORAGE_S3_SECRET_ACCESS_KEY` | ☐ |
+| 13 | Pipeline de datos | — (usa las del 2 y el 12) | ☐ |
+
+Todas van en **Replit → Secrets**, y después de cada tanda: **volver a publicar**.
 
 **¿Dudas al hacer un paso?** Pídeme ayuda con el paso exacto y te guío en detalle.
 
@@ -355,7 +542,7 @@ habitación es una muestra etiquetada. Un trabajo pasa de valer 1 dato a valer
 ⚠️ **Ese token es la llave del bot.** Cualquiera que lo tenga puede controlarlo.
 No lo pegues en un chat ni en una captura.
 
-### Conectarlo (en Vercel → Settings → Environment Variables)
+### Conectarlo (en Replit → Secrets)
 
 | Variable | Valor |
 |---|---|
@@ -363,7 +550,7 @@ No lo pegues en un chat ni en una captura.
 | `TELEGRAM_WEBHOOK_SECRET` | invéntate una contraseña larga, la que sea |
 | `TELEGRAM_ALLOWED_CHATS` | (lo rellenas en el paso siguiente) |
 
-Vuelve a desplegar para que las variables entren.
+Vuelve a publicar para que las variables entren.
 
 ### Averiguar tu chat id
 
@@ -371,7 +558,7 @@ Escríbele **cualquier cosa a tu bot** desde Telegram. Te va a contestar:
 
 > Este bot es privado. Chat id: `123456789`
 
-Copia ese número, ponlo en **`TELEGRAM_ALLOWED_CHATS`** y vuelve a desplegar.
+Copia ese número, ponlo en **`TELEGRAM_ALLOWED_CHATS`** y vuelve a publicar.
 Si luego entra alguien más en tu equipo, se añade separado por comas:
 `123456789,987654321`.
 
@@ -424,92 +611,37 @@ mueve la mediana entera. No cambies precios con eso.
 
 ---
 
-## Desplegar en Replit (alternativa a Vercel)
+## Alternativa: Vercel
 
-La app es Next.js estándar. Lo único que estaba atado a Vercel eran las dos
-tareas programadas, y ya tienen equivalente aquí. **El proyecto puede vivir en
-cualquiera de las dos plataformas sin cambiar código** — el `vercel.json` y el
-`.replit` conviven, cada plataforma lee el suyo e ignora el otro.
+No hace falta. Está aquí por si algún día quieres mudar la app.
 
-### 1. Traer el proyecto
+La app es Next.js estándar, y el `vercel.json` y el `.replit` conviven en el
+repositorio: cada plataforma lee el suyo e ignora el otro. **Mudarse no
+cambia ni una línea de código.**
 
-En Replit: **Create Repl → Import from GitHub** →
-`lapc276-sys/uberserviciosapp`, rama `main`.
+### Cómo se publica allí
 
-Replit detecta Node.js y lee el archivo `.replit` que ya está en el repositorio.
+1. Entra a **[vercel.com](https://vercel.com)** → **Sign Up** → **Continue
+   with GitHub** (la cuenta dueña de este repo).
+2. **Add New… → Project** → busca **`uberserviciosapp`** → **Import**.
+3. En *Configure Project* no cambies nada (Vercel detecta Next.js solo) → **Deploy**.
+4. En ~2 minutos tendrás una URL tipo `https://uberserviciosapp.vercel.app`.
 
-### 2. Secretos
+### Qué cambia respecto a esta guía
 
-Panel izquierdo → **Secrets** (el icono del candado). Mínimo para poder entrar:
-
-| Clave | Valor |
+| En Replit | En Vercel |
 |---|---|
-| `AUTH_SECRET` | una cadena larga y aleatoria |
-| `ADMIN_EMAIL` | tu correo |
-| `ADMIN_PASSWORD` | una contraseña larga |
-| `NEXT_PUBLIC_SITE_URL` | la dirección pública, sin barra final |
+| **Secrets** | **Settings → Environment Variables** |
+| Volver a publicar (Deploy → *Redeploy*) | **Deployments → Redeploy** |
+| Deployments → Settings → **Link a domain** | **Settings → Domains → Add** |
+| Paso 11: tareas programadas a mano | **Nada**: `vercel.json` ya las trae. Solo pon `CRON_SECRET`; `CRON_TARGET_URL` no hace falta |
+| Base de datos: Postgres de Replit o Supabase | **Supabase** (Opción B del Paso 2, con el pooler) |
 
-`NEXT_PUBLIC_SITE_URL` la sabrás después de publicar. Ponla, vuelve a
-publicar, y ya queda bien.
+Lo demás —Stripe, Resend, Twilio, WhatsApp, OpenAI, Telegram— es idéntico:
+mismas claves, mismas direcciones con tu nueva URL delante.
 
-⚠️ **`NEXT_PUBLIC_` significa "esto se envía al navegador".** Va solo en la
-dirección web, que es pública de todas formas. Nunca se lo pongas a
-`AUTH_SECRET` ni a `ADMIN_PASSWORD` — cualquiera que abra tu web podría leerlas.
+### Y si algún día montas servidores propios
 
-### 3. Base de datos (opcional, pero merece la pena aquí)
-
-Replit trae **PostgreSQL integrado**: pestaña **Database** → crear. Te da una
-cadena de conexión; pégala como secreto `DATABASE_URL` y luego, en la consola:
-
-```
-npm run db:push
-```
-
-Sin esto la app funciona igual, pero los datos viven en memoria y **se pierden
-en cada reinicio** — incluidas tus muestras del piloto. Para recoger datos de
-verdad, esto no es opcional.
-
-### 4. Publicar
-
-Botón **Deploy** → **Autoscale**. Los comandos ya vienen puestos en `.replit`:
-
-- Build: `npm run build`
-- Run: `npm run start`
-
-El `start` escucha en `0.0.0.0` y en el puerto que Replit asigne. Comprobado
-arrancando en un puerto distinto del habitual.
-
-**Aviso de costes:** un Autoscale Deployment consume créditos de cómputo aparte
-de tu suscripción. Con poco tráfico suele ser insignificante, pero míralo antes
-de dejarlo corriendo — no vale la pena huir de una factura para encontrarse otra.
-
-### 5. Las dos tareas programadas
-
-En Vercel se configuraban solas desde `vercel.json`. En Replit se crean a mano:
-**Deployments → Scheduled**, una por cada tarea.
-
-| Tarea | Comando | Cuándo |
-|---|---|---|
-| Recordatorios | `npm run cron:reminders` | cada hora: `0 * * * *` |
-| Campañas | `npm run cron:campaigns` | martes 15:00: `0 15 * * 2` |
-
-Necesitan dos secretos más:
-
-| Clave | Valor |
-|---|---|
-| `CRON_SECRET` | una cadena aleatoria, la que quieras |
-| `CRON_TARGET_URL` | la misma dirección pública de la app |
-
-Hace falta `CRON_TARGET_URL` porque una tarea programada corre en un contenedor
-**distinto** al de la web: no puede llamarse a sí misma por `localhost`.
-
-Si una tarea falla —clave incorrecta, web caída— el comando **termina con
-error**, así que Replit te la marca en rojo. Una tarea rota que apareciera en
-verde sería peor que no tener tarea: creerías que se enviaron recordatorios que
-nadie recibió.
-
-### Qué NO cambia al mudarse
-
-Ni una línea de código de la aplicación. Y si algún día montas servidores
-propios, lo único que necesitas es Node y Postgres: `npm run build`,
-`npm run start`, y un cron del sistema llamando a esos dos comandos.
+Lo único que necesitas es Node y Postgres: `npm run build`, `npm run start`, y
+un cron del sistema llamando a `npm run cron:reminders` y
+`npm run cron:campaigns` con los mismos horarios del Paso 11.

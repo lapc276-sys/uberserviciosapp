@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { services } from '@/lib/config/services';
 import { createTenantLead, getTenantBySlug } from '@/lib/tenants/store';
+import { notifyTenantOfLead } from '@/lib/tenants/notify';
 import { rateLimit, clientIp } from '@/lib/rate-limit';
 
 /**
@@ -70,6 +71,24 @@ export async function POST(req: Request, { params }: { params: Promise<{ slug: s
   const d = parsed.data;
   await createTenantLead({
     tenantId: tenant.id,
+    name: d.name,
+    email: d.email || undefined,
+    phone: d.phone,
+    address: d.address,
+    notes: d.notes,
+    serviceSlug: d.serviceSlug,
+    quoteLow: d.quoteLow,
+    quoteHigh: d.quoteHigh,
+    currency: d.currency,
+    minutes: d.minutes,
+    condition: d.condition,
+  });
+
+  // Awaited rather than fired and forgotten: on a serverless runtime the
+  // process can be frozen the moment the response is returned, so work started
+  // after it may simply never run. `notifyTenantOfLead` swallows its own
+  // failures, so this cannot turn a saved lead into an error the customer sees.
+  await notifyTenantOfLead(tenant, {
     name: d.name,
     email: d.email || undefined,
     phone: d.phone,

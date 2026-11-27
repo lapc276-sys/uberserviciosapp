@@ -1,6 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { SAY } from '../lib/capture/quality';
+import { COMMANDS, SAY_CHAT } from '../lib/capture/conversation';
 
 /**
  * The walkthrough listens and speaks at the same time, on a device whose
@@ -20,11 +22,13 @@ const GUIDE = readFileSync(new URL('../lib/capture/guide.ts', import.meta.url), 
 const CAPTURE = readFileSync(new URL('../components/capture/GuidedCapture.tsx', import.meta.url), 'utf8');
 const SPEECH = readFileSync(new URL('../lib/speech.ts', import.meta.url), 'utf8');
 
-/** The command list, read out of the component so the test cannot drift. */
+/**
+ * The command words, both languages together: a line said in either language
+ * must not contain a command in either, because bilingual households switch
+ * and the recogniser does not always know which one it is hearing.
+ */
 function captureWords(): string[] {
-  const line = CAPTURE.match(/const SAY_CAPTURE = \[([^\]]*)\]/s);
-  assert.ok(line, 'SAY_CAPTURE not found');
-  return [...line[1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
+  return [...new Set([...COMMANDS.es.capture, ...COMMANDS.en.capture])];
 }
 
 /** Every line the phone says out loud, from both `spoken` and `after`. */
@@ -62,11 +66,23 @@ test('nothing the phone says can trigger the shutter', () => {
   );
 });
 
+test('nothing the bot says about a bad shot can trigger the shutter', () => {
+  // "Sujeta el teléfono quieto para la foto" would take the photo it asks for,
+  // pointed wherever the phone is while the person reads the sentence.
+  const words = captureWords();
+  const offenders: string[] = [];
+  for (const line of [...Object.values(SAY.es), ...Object.values(SAY.en), SAY_CHAT.es.done, SAY_CHAT.en.done]) {
+    const spoken = normalize(line).split(' ');
+    for (const w of words) if (spoken.includes(w)) offenders.push(`"${line}" contains "${w}"`);
+  }
+  assert.deepEqual(offenders, [], offenders.join('\n'));
+});
+
 test('commands are not words said by accident', () => {
   // Somebody walking a homeowner through their kitchen says these constantly
   // without addressing the app. Muting the microphone while the phone talks
   // does not help here — the person is the one saying them.
-  const filler = ['ya', 'ok', 'okay', 'ahora', 'si', 'bueno', 'claro'];
+  const filler = ['ya', 'ok', 'okay', 'ahora', 'si', 'bueno', 'claro', 'yes', 'yeah', 'now', 'so', 'well', 'right'];
   for (const w of captureWords()) {
     assert.ok(!filler.includes(w), `"${w}" is conversational filler, not a command`);
   }
@@ -102,7 +118,9 @@ test('voice honours the same lead-in as the shutter', () => {
 
 test('voice control still exists', () => {
   // The obvious overcorrection is muting the microphone and never unmuting.
-  const words = captureWords();
-  assert.ok(words.length >= 3, 'too few commands left to drive the walkthrough');
-  assert.ok(words.includes('listo'), '"listo" is the documented command and must survive');
+  for (const lang of ['es', 'en'] as const) {
+    assert.ok(COMMANDS[lang].capture.length >= 3, `too few ${lang} commands left to drive the walkthrough`);
+  }
+  assert.ok(COMMANDS.es.capture.includes('listo'), '"listo" is the documented command and must survive');
+  assert.ok(COMMANDS.en.capture.includes('ready'), '"ready" is the documented English command');
 });

@@ -100,7 +100,7 @@ export const COPY: Record<Locale, Copy> = {
     heroBadge: 'Brooklyn, NY',
     heroTitle: 'Limpieza en Brooklyn, con precio al instante',
     heroSub:
-      'Graba tu casa con el móvil siguiendo las instrucciones y recibes el precio al momento. Sin visita previa, sin esperar presupuesto, sin descargar nada.',
+      'Dime cuántas habitaciones y baños tienes y te doy el precio ahora mismo. Sin visita previa y sin esperar presupuesto. Si quieres el precio más exacto, la cámara lo afina.',
     heroCtaQuote: 'Calcular mi precio',
     heroCtaWhatsapp: 'Escríbeme por WhatsApp',
     heroNote: 'Se habla español y English',
@@ -110,16 +110,16 @@ export const COPY: Record<Locale, Copy> = {
     from: 'Desde',
 
     howTitle: 'Cómo funciona',
-    howSub: 'Tres pasos. El primero dura dos minutos.',
-    how1Title: 'Graba el recorrido',
+    howSub: 'Tres pasos. El primero dura menos de un minuto.',
+    how1Title: 'Dime el tamaño',
     how1Body:
-      'La app te va diciendo a dónde apuntar —encimeras, baño, dentro del microondas— y toma las fotos sola. Tú solo caminas.',
-    how2Title: 'Recibe el precio',
+      'Habitaciones, baños, y si es casa o apartamento. El precio aparece al momento, no en dos días.',
+    how2Title: 'Confírmalo por WhatsApp',
     how2Body:
-      'Verás cuánto cuesta, cuánto tiempo lleva y cuántas personas hacen falta. Al momento, no en dos días.',
-    how3Title: 'Agenda y listo',
+      'Un mensaje y elegimos día y hora. Ese precio es el que pagas; si el sitio está mucho peor de lo normal, te aviso antes de empezar.',
+    how3Title: 'Llego con todo',
     how3Body:
-      'Si te cuadra, elegimos día y hora. Llego con todo lo necesario y te dejo fotos del antes y el después.',
+      'Productos y equipo incluidos. Te dejo fotos del antes y el después. ¿Quieres el precio más afinado antes de reservar? Graba el recorrido con la cámara.',
 
     calcTitle: 'Calcula tu precio',
     calcSub: 'Dime el tamaño y te doy el precio ahora mismo.',
@@ -171,7 +171,7 @@ export const COPY: Record<Locale, Copy> = {
     heroBadge: 'Brooklyn, NY',
     heroTitle: 'Cleaning in Brooklyn, priced on the spot',
     heroSub:
-      'Walk through your place with your phone while the app tells you where to point. You get the price immediately — no site visit, no waiting on a quote, nothing to install.',
+      'Tell me how many bedrooms and bathrooms you have and I will price it right now. No site visit, no waiting on a quote. Want the price exact? The camera sharpens it.',
     heroCtaQuote: 'Get my price',
     heroCtaWhatsapp: 'Message me on WhatsApp',
     heroNote: 'English and Spanish spoken',
@@ -181,16 +181,16 @@ export const COPY: Record<Locale, Copy> = {
     from: 'From',
 
     howTitle: 'How it works',
-    howSub: 'Three steps. The first one takes two minutes.',
-    how1Title: 'Record the walkthrough',
+    howSub: 'Three steps. The first one takes under a minute.',
+    how1Title: 'Tell me the size',
     how1Body:
-      'The app tells you what to point at — counters, bathroom, inside the microwave — and takes each photo itself. You just walk.',
-    how2Title: 'Get the price',
+      'Bedrooms, bathrooms, house or apartment. The price appears right away, not in two days.',
+    how2Title: 'Confirm on WhatsApp',
     how2Body:
-      'You see the cost, how long it takes and how many people it needs. Right away, not in two days.',
-    how3Title: 'Book it',
+      'One message and we pick a day and time. That price is what you pay; if the place is far dirtier than usual, I tell you before I start.',
+    how3Title: 'I arrive with everything',
     how3Body:
-      'If it works for you, we pick a day and time. I arrive with everything needed and leave you before-and-after photos.',
+      'Supplies and equipment included. You get before-and-after photos. Want the price dialled in before booking? Record the walkthrough with the camera.',
 
     calcTitle: 'Get your price',
     calcSub: 'Tell me the size and I will price it right now.',

@@ -182,6 +182,7 @@ export default async function VisionAdminPage() {
                   <th className="p-4">Actual</th>
                   <th className="p-4">Quote</th>
                   <th className="p-4">Engine</th>
+                  <th className="p-4">Timer</th>
                 </tr>
               </thead>
               <tbody>
@@ -219,6 +220,14 @@ export default async function VisionAdminPage() {
                         >
                           {r.source === 'vision-llm' ? 'Vision AI' : 'Demo'}
                         </span>
+                      </td>
+                      <td className="p-4">
+                        {/* The crew's timer for this job: its rooms become the
+                            buttons, so every minute is set against this
+                            quote's prediction for that room. */}
+                        <a href={`/pilot/tiempo?analysis=${encodeURIComponent(r.id)}`} className="text-brand-600 underline">
+                          Open
+                        </a>
                       </td>
                     </tr>
                   );

@@ -1,12 +1,14 @@
 'use client';
 
-import { useState } from 'react';
-import { MessageCircle, Phone, Camera, MapPin, Check, Loader2, Languages } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { MessageCircle, Phone, MapPin, Check, Loader2, Languages } from 'lucide-react';
 import { QuickQuote } from '@/components/klaudy/QuickQuote';
+import { startingPrice } from '@/lib/pricing/klaudy';
 import { services } from '@/lib/config/services';
 import { site } from '@/lib/config/site';
 import { whatsappLink, telLink, OPENERS } from '@/lib/contact';
 import { COPY, DEFAULT_LOCALE, type Locale } from '@/lib/i18n';
+import { browserLanguages, phoneLanguage } from '@/lib/capture/lang';
 
 /**
  * The page that has to bring in work this month.
@@ -26,6 +28,15 @@ import { COPY, DEFAULT_LOCALE, type Locale } from '@/lib/i18n';
 export function Landing() {
   const [locale, setLocale] = useState<Locale>(DEFAULT_LOCALE);
   const t = COPY[locale];
+
+  // The phone's own language, once the page is in the browser: a Spanish
+  // phone gets the Spanish page without hunting for the switch. Read after
+  // mount, so the server's English first frame and the browser agree; the
+  // switch in the header still overrides it.
+  useEffect(() => {
+    const lang = phoneLanguage(browserLanguages()).lang;
+    if (lang && lang !== DEFAULT_LOCALE) setLocale(lang);
+  }, []);
 
   const [sent, setSent] = useState(false);
   const [sending, setSending] = useState(false);
@@ -112,7 +123,7 @@ export function Landing() {
               href="#precio"
               className="inline-flex min-h-[56px] items-center justify-center gap-2 rounded-xl bg-brand-600 px-6 text-base font-semibold text-white"
             >
-              <Camera className="h-5 w-5" /> {t.heroCtaQuote}
+              {t.heroCtaQuote}
             </a>
             {wa && (
               <a
@@ -138,8 +149,10 @@ export function Landing() {
                 <p className="mt-1.5 text-sm text-slate-600 dark:text-slate-400">
                   {locale === 'es' ? s.summaryEs : s.summary}
                 </p>
+                {/* The owner's list, not the marketplace config's `pricing.base`
+                    — see startingPrice(). */}
                 <p className="mt-3 text-sm font-medium">
-                  {t.from} ${s.pricing.base}
+                  {t.from} ${startingPrice(s.slug)}
                 </p>
               </div>
             ))}

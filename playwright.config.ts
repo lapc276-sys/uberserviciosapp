@@ -38,6 +38,11 @@ export default defineConfig({
     baseURL: process.env.BASE_URL ?? 'http://localhost:3000',
     trace: 'retain-on-failure',
     permissions: ['camera'],
+    // A Spanish phone, which is who the walkthrough is for first. It also
+    // matters mechanically: the walkthrough now speaks the phone's language,
+    // and the specs read Spanish words off the screen. English has its own
+    // spec, which sets its own locale.
+    locale: 'es-US',
     launchOptions: {
       ...(existsSync(SYSTEM_CHROMIUM) ? { executablePath: SYSTEM_CHROMIUM } : {}),
       args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'],

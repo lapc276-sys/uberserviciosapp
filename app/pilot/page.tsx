@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
-import { ScanEye } from 'lucide-react';
+import { ScanEye, Timer } from 'lucide-react';
 import { buildMetadata } from '@/lib/seo';
 import { PRO_SESSION_COOKIE, verifyProSession } from '@/lib/pro-auth';
 import { SESSION_COOKIE, verifySessionToken } from '@/lib/auth';
@@ -35,7 +35,7 @@ export default async function PilotPage() {
       <header className="border-b bg-white dark:bg-ink-soft">
         <div className="mx-auto flex h-14 max-w-lg items-center justify-between px-4">
           <Link href="/" className="flex items-center gap-2 font-semibold">
-            <span className="grid h-7 w-7 place-items-center rounded-lg bg-brand-600 text-white text-sm">H</span>
+            <span className="grid h-7 w-7 place-items-center rounded-lg bg-brand-600 text-white text-sm">{site.name.charAt(0)}</span>
             <span className="text-sm">{site.name} Pilot</span>
           </Link>
           <span className="inline-flex items-center gap-1.5 rounded-full bg-brand-50 px-2.5 py-1 text-xs font-medium text-brand-700 dark:bg-brand-950/40 dark:text-brand-300">
@@ -46,6 +46,19 @@ export default async function PilotPage() {
 
       <div className="mx-auto max-w-lg px-4 py-6">
         <PilotCapture capturedBy={capturedBy} />
+
+        {/* The timer is the other half of this page's job and it is used at a
+            different moment — capture before, timer during — so it gets its
+            own entry rather than being buried in the capture flow. */}
+        <Link
+          href="/pilot/tiempo"
+          className="mt-6 flex min-h-[64px] items-center justify-between gap-3 rounded-2xl border-2 px-4 font-semibold dark:border-white/20"
+        >
+          <span className="flex items-center gap-2">
+            <Timer className="h-5 w-5 text-brand-600" /> Cronometrar un trabajo
+          </span>
+          <span className="text-sm font-normal text-slate-500 dark:text-slate-400">Llegué →</span>
+        </Link>
 
         {/* Sized as a real tap target: this gets pressed with gloves on. */}
         <div className="mt-8 text-center">

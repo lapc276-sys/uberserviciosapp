@@ -7,6 +7,7 @@ import { services } from '@/lib/config/services';
 import { saveVisionAnalysis, createLead } from '@/lib/data';
 import { framesAreSafe, validateCaptions, FRAME_ERROR, MAX_FRAMES } from '@/lib/vision/input';
 import { archiveFrames } from '@/lib/vision/archive';
+import { PRODUCT_PREFERENCES } from '@/lib/vision/types';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -25,6 +26,16 @@ const schema = z.object({
    * talk the analyzer out of the grease in front of it.
    */
   focus: z.string().max(400).optional(),
+  /**
+   * What the customer answered in each room, keyed "<roomType>:<object>".
+   *
+   * Bounded because it comes from a browser: a map with ten thousand keys is
+   * not a walkthrough, and every key is checked against the object catalogue
+   * downstream anyway — an unknown one prices at zero rather than throwing.
+   */
+  depthChoices: z.record(z.string().max(60), z.enum(['surface', 'deep'])).optional(),
+  /** What the customer asked the crew to clean with. Shapes the crew plan, never the price. */
+  products: z.enum(PRODUCT_PREFERENCES).optional(),
   /**
    * Small copies of the frames, for the training archive. Sent separately from
    * `frames` so that what is analysed and what is retained are two decisions,
@@ -87,15 +98,28 @@ export async function POST(req: Request) {
     `[vision] start frames=${frames.length} captioned=${captions?.length ?? 0} payload=${payloadMb.toFixed(2)}MB engine=${analyzer.name}`,
   );
 
-  const { rooms, warnings } = await analyzer.analyze({ frames, captions, focus: parsed.data.focus, serviceSlug });
+  const { rooms, warnings, notAHome = 0 } = await analyzer.analyze({ frames, captions, focus: parsed.data.focus, serviceSlug });
   console.log(`[vision] done in ${Date.now() - started}ms rooms=${rooms.length}`);
 
-  const analysis = buildAnalysis(rooms, { serviceSlug, source: analyzer.name, warnings });
+  const analysis = buildAnalysis(rooms, {
+    serviceSlug,
+    source: analyzer.name,
+    warnings,
+    depthChoices: parsed.data.depthChoices,
+    products: parsed.data.products,
+  });
   if (analysis.rooms.length === 0) {
     return NextResponse.json(
       {
+        // "no_home": the frames showed something that is not a home — the
+        // inside of a car, an office with no kitchen. Said plainly instead of
+        // priced: a quote for a kitchen nobody filmed is the demo that ends a
+        // pitch. The page words it in the customer's language.
+        reason: notAHome > 0 ? 'no_home' : 'no_rooms',
         error:
-          'We couldn’t identify any rooms in that footage. Try a slower walkthrough with better lighting, or book with our quick questionnaire.',
+          notAHome > 0
+            ? 'That footage doesn’t show the inside of a home, so there is nothing to price.'
+            : 'We couldn’t identify any rooms in that footage. Try a slower walkthrough with better lighting, or book with our quick questionnaire.',
         warnings: analysis.warnings,
       },
       { status: 422 },
@@ -104,36 +128,59 @@ export async function POST(req: Request) {
 
   const quote = priceFromAnalysis(analysis, { serviceSlug, city });
 
-  const id = await saveVisionAnalysis({
-    serviceSlug,
-    city,
-    frameCount: frames.length,
-    analysis,
-    quote,
-    contactEmail: contact?.email,
-  });
+  /**
+   * Recording the quote must never cost the quote.
+   *
+   * This used to be awaited unguarded, so a database that was briefly
+   * unreachable turned a price that had already been computed into a 500 —
+   * and the person receiving it had just spent three minutes walking around
+   * their own apartment. Losing the row costs a training sample and an admin
+   * record; losing the customer costs the job.
+   *
+   * The same reasoning the archive below already runs on, applied one line
+   * earlier where it matters more.
+   */
+  let id: string | null = null;
+  try {
+    id = await saveVisionAnalysis({
+      serviceSlug,
+      city,
+      frameCount: frames.length,
+      analysis,
+      quote,
+      contactEmail: contact?.email,
+    });
+  } catch (err) {
+    console.error('[vision] could not store the analysis; returning the quote anyway', err);
+  }
 
   // Stored after the estimate is computed, and awaited only for its result —
   // archiveFrames never throws, so a failure here costs a training sample and
   // nothing else. The customer asked for a price, not to donate data.
-  const archived = await archiveFrames({
+  const archived = id
+    ? await archiveFrames({
     analysisId: id,
     frames: parsed.data.archiveFrames ?? [],
     captions,
     consentTraining: parsed.data.consentTraining === true,
-  });
+      })
+    : { stored: 0, mode: 'off' as const };
   if (archived.stored > 0) console.log(`[archive] kept ${archived.stored} ${archived.mode} frames for ${id}`);
 
   // A video walkthrough is high purchase intent — capture it even if they
   // abandon before booking.
   if (contact?.email || contact?.phone) {
-    await createLead({
-      name: contact.name,
-      email: contact.email,
-      phone: contact.phone,
-      source: 'vision_quote',
-      message: `Video quote · ${analysis.rooms.length} rooms · ${analysis.totalMinutes} min · $${quote.low}-$${quote.high}`,
-    });
+    try {
+      await createLead({
+        name: contact.name,
+        email: contact.email,
+        phone: contact.phone,
+        source: 'vision_quote',
+        message: `Video quote · ${analysis.rooms.length} rooms · ${analysis.totalMinutes} min · $${quote.low}-$${quote.high}`,
+      });
+    } catch (err) {
+      console.error('[vision] could not store the lead; returning the quote anyway', err);
+    }
   }
 
   return NextResponse.json({ id, analysis, quote });

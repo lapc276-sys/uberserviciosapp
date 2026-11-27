@@ -36,7 +36,7 @@ export function AdminShell({
     <div className="flex min-h-screen bg-slate-50 dark:bg-ink">
       <aside className="hidden w-60 shrink-0 flex-col border-r bg-white p-4 dark:bg-ink-soft lg:flex">
         <Link href="/" className="flex items-center gap-2 px-2 font-semibold">
-          <span className="grid h-8 w-8 place-items-center rounded-lg bg-brand-600 text-white">H</span>
+          <span className="grid h-8 w-8 place-items-center rounded-lg bg-brand-600 text-white">{site.name.charAt(0)}</span>
           {site.name}
         </Link>
         <nav className="mt-8 flex-1 space-y-1">
@@ -58,7 +58,7 @@ export function AdminShell({
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="flex h-16 items-center justify-between border-b bg-white px-6 dark:bg-ink-soft">
           <div className="flex items-center gap-2 lg:hidden">
-            <span className="grid h-8 w-8 place-items-center rounded-lg bg-brand-600 text-white">H</span>
+            <span className="grid h-8 w-8 place-items-center rounded-lg bg-brand-600 text-white">{site.name.charAt(0)}</span>
             <span className="font-semibold">{site.name}</span>
           </div>
           <div className="ml-auto flex items-center gap-4">

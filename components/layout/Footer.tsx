@@ -24,7 +24,7 @@ export function Footer() {
       <div className="container grid gap-10 py-14 md:grid-cols-5">
         <div className="md:col-span-2">
           <Link href="/" className="flex items-center gap-2 font-semibold">
-            <span className="grid h-8 w-8 place-items-center rounded-lg bg-brand-600 text-white">H</span>
+            <span className="grid h-8 w-8 place-items-center rounded-lg bg-brand-600 text-white">{site.name.charAt(0)}</span>
             {site.name}
           </Link>
           <p className="mt-4 max-w-xs text-sm text-slate-500 dark:text-slate-400">
